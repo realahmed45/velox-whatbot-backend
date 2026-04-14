@@ -13,6 +13,7 @@ const {
   sendWelcomeEmail,
   sendPasswordResetEmail,
 } = require("../services/emailService");
+const logger = require("../utils/logger");
 
 // @POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
@@ -45,13 +46,17 @@ const register = asyncHandler(async (req, res) => {
   });
 
   const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${verificationToken}`;
-  await sendVerificationEmail({ to: email, name, verificationUrl });
 
+  // Respond immediately — send email in background so the request doesn't hang
   res.status(201).json({
     success: true,
     message:
       "Registration successful. Please check your email to verify your account.",
   });
+
+  sendVerificationEmail({ to: email, name, verificationUrl }).catch((err) =>
+    logger.error("Verification email failed", { email, err: err.message }),
+  );
 });
 
 // @POST /api/auth/verify-email
