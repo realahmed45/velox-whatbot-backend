@@ -86,7 +86,7 @@ app.get("/health", (req, res) =>
 );
 
 // ─── Email Debug (remove after confirming email works) ─────
-app.get("/debug/test-email", async (req, res) => {
+app.get("/api/debug/test-email", async (req, res) => {
   try {
     const { sendVerificationEmail } = require("./src/services/emailService");
     const to = req.query.to || "realahmedali4@gmail.com";
