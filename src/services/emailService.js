@@ -8,13 +8,20 @@ const logger = require("../utils/logger");
 const FROM =
   process.env.EMAIL_FROM || "Velox Whatbot <noreply@velox-whatbot.com>";
 
+// Log credential status at startup so we can diagnose missing env vars
+logger.info("Email service init", {
+  BREVO_SMTP_USER: process.env.BREVO_SMTP_USER ? "SET" : "MISSING",
+  BREVO_SMTP_KEY: process.env.BREVO_SMTP_KEY ? "SET" : "MISSING",
+  EMAIL_FROM: FROM,
+});
+
 const transporter = nodemailer.createTransport({
   host: "smtp-relay.brevo.com",
   port: 587,
   secure: false,
   auth: {
-    user: process.env.BREVO_SMTP_USER, // your Brevo login email
-    pass: process.env.BREVO_SMTP_KEY, // SMTP key from Brevo dashboard
+    user: process.env.BREVO_SMTP_USER,
+    pass: process.env.BREVO_SMTP_KEY,
   },
 });
 
@@ -31,8 +38,13 @@ const sendEmail = async ({ to, subject, html, text }) => {
     logger.info(`Email sent to ${to}: ${subject} [${info.messageId}]`);
     return { success: true, id: info.messageId };
   } catch (err) {
-    logger.error("Email send exception", { error: err.message, to });
-    return { success: false, error: err.message };
+    logger.error("Email send FAILED", {
+      error: err.message,
+      code: err.code,
+      to,
+      subject,
+    });
+    throw err; // re-throw so callers can handle
   }
 };
 

@@ -85,6 +85,24 @@ app.get("/health", (req, res) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() }),
 );
 
+// ─── Email Debug (remove after confirming email works) ─────
+app.get("/debug/test-email", async (req, res) => {
+  try {
+    const { sendVerificationEmail } = require("./src/services/emailService");
+    const to = req.query.to || "realahmedali4@gmail.com";
+    await sendVerificationEmail({
+      to,
+      name: "Test User",
+      verificationUrl: `${process.env.CLIENT_URL}/verify-email?token=test123`,
+    });
+    res.json({ success: true, message: `Test email sent to ${to}` });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ success: false, error: err.message, code: err.code });
+  }
+});
+
 // ─── API Routes ────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/workspaces", workspaceRoutes);
