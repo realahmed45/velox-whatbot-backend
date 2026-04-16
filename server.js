@@ -66,7 +66,7 @@ app.use("/api/", rateLimiter);
 
 // ─── Health Check ──────────────────────────────────────────
 app.get("/health", (req, res) =>
-  res.json({ status: "ok", timestamp: new Date().toISOString() }),
+  res.json({ status: "ok", version: "6", timestamp: new Date().toISOString() }),
 );
 
 // ─── Email Debug (remove after confirming email works) ─────
