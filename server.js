@@ -38,7 +38,13 @@ app.use(
   }),
 );
 
-app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"] }));
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"],
+  }),
+);
 
 // ─── Body Parsing ──────────────────────────────────────────
 // WhatsApp webhook needs raw body for signature verification
