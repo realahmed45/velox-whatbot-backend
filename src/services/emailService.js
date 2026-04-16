@@ -1,50 +1,45 @@
 /**
- * Email Service using Brevo (Sendinblue) SMTP via nodemailer
- * Handles all transactional emails: verification, welcome, alerts, invoices
+ * Email Service using Brevo HTTP API (more reliable than SMTP)
  */
-const nodemailer = require("nodemailer");
+const axios = require("axios");
 const logger = require("../utils/logger");
 
-const FROM =
-  process.env.EMAIL_FROM || "Velox Whatbot <9766fd001@smtp-brevo.com>";
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const FROM_EMAIL = "9766fd001@smtp-brevo.com";
+const FROM_NAME = "Velox Whatbot";
 
-// Log credential status at startup so we can diagnose missing env vars
 logger.info("Email service init", {
-  BREVO_SMTP_USER: process.env.BREVO_SMTP_USER ? "SET" : "MISSING",
-  BREVO_SMTP_KEY: process.env.BREVO_SMTP_KEY ? "SET" : "MISSING",
-  EMAIL_FROM: FROM,
-});
-
-const transporter = nodemailer.createTransport({
-  host: "smtp-relay.brevo.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.BREVO_SMTP_USER,
-    pass: process.env.BREVO_SMTP_KEY,
-  },
+  BREVO_API_KEY: BREVO_API_KEY ? `SET (${BREVO_API_KEY.slice(0, 12)}...)` : "MISSING",
 });
 
 const sendEmail = async ({ to, subject, html, text }) => {
   try {
-    const info = await transporter.sendMail({
-      from: FROM,
-      to: Array.isArray(to) ? to.join(",") : to,
+    const toAddr = Array.isArray(to) ? to : [to];
+    const payload = {
+      sender: { name: FROM_NAME, email: FROM_EMAIL },
+      to: toAddr.map((email) => ({ email })),
       subject,
-      html,
-      text,
-    });
+      htmlContent: html || `<p>${text}</p>`,
+    };
 
-    logger.info(`Email sent to ${to}: ${subject} [${info.messageId}]`);
-    return { success: true, id: info.messageId };
+    const response = await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      payload,
+      {
+        headers: {
+          "api-key": BREVO_API_KEY,
+          "Content-Type": "application/json",
+        },
+        timeout: 10000,
+      }
+    );
+
+    logger.info(`Email sent to ${to}: ${subject} [${response.data.messageId}]`);
+    return { success: true, id: response.data.messageId };
   } catch (err) {
-    logger.error("Email send FAILED", {
-      error: err.message,
-      code: err.code,
-      to,
-      subject,
-    });
-    throw err; // re-throw so callers can handle
+    const detail = err.response?.data || err.message;
+    logger.error("Email send FAILED", { error: detail, to, subject });
+    throw new Error(JSON.stringify(detail));
   }
 };
 
