@@ -6,7 +6,7 @@ const nodemailer = require("nodemailer");
 const logger = require("../utils/logger");
 
 const FROM =
-  process.env.EMAIL_FROM || "Velox Whatbot <noreply@velox-whatbot.com>";
+  process.env.EMAIL_FROM || "Velox Whatbot <9766fd001@smtp-brevo.com>";
 
 // Log credential status at startup so we can diagnose missing env vars
 logger.info("Email service init", {
