@@ -47,16 +47,21 @@ const register = asyncHandler(async (req, res) => {
 
   const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${verificationToken}`;
 
-  // Respond immediately — send email in background so the request doesn't hang
+  // Send email and include result in response for debugging
+  let emailResult = "not_attempted";
+  try {
+    await sendVerificationEmail({ to: email, name, verificationUrl });
+    emailResult = "sent";
+  } catch (err) {
+    logger.error("Verification email failed", { email, err: err.message });
+    emailResult = `failed: ${err.message}`;
+  }
+
   res.status(201).json({
     success: true,
-    message:
-      "Registration successful. Please check your email to verify your account.",
+    message: "Registration successful. Please check your email to verify your account.",
+    _emailStatus: emailResult, // remove after debugging
   });
-
-  sendVerificationEmail({ to: email, name, verificationUrl }).catch((err) =>
-    logger.error("Verification email failed", { email, err: err.message }),
-  );
 });
 
 // @POST /api/auth/verify-email
