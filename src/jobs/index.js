@@ -13,11 +13,11 @@ const initQueues = () => {
       return;
     }
 
-    const connection = {
-      host: process.env.REDIS_HOST || "127.0.0.1",
-      port: parseInt(process.env.REDIS_PORT) || 6379,
-      password: process.env.REDIS_PASSWORD || undefined,
-    };
+    const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
+    const connection = new (require("ioredis"))(redisUrl, {
+      maxRetriesPerRequest: null,
+      tls: redisUrl.startsWith("rediss://") ? {} : undefined,
+    });
 
     broadcastQueue = new Queue("broadcasts", { connection });
     usageResetQueue = new Queue("usage-reset", { connection });
