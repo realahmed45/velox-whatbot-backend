@@ -8,7 +8,15 @@ const { generateToken } = require("../utils/crypto");
 
 // @POST /api/workspaces — Create workspace
 const createWorkspace = asyncHandler(async (req, res) => {
-  const { name, industry, logo, businessHours, timezone } = req.body;
+  const {
+    name,
+    industry: industryField,
+    businessType,
+    logo,
+    businessHours,
+    timezone,
+  } = req.body;
+  const industry = industryField || businessType;
   if (!name || !industry) {
     res.status(400);
     throw new Error("Workspace name and industry are required");
