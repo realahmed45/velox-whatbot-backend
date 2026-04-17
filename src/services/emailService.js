@@ -4,12 +4,14 @@
 const axios = require("axios");
 const logger = require("../utils/logger");
 
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BREVO_API_KEY = process.env.BREVO_API_KEY; // NEVER hardcode — set in .env
 const FROM_EMAIL = "9766fd001@smtp-brevo.com";
 const FROM_NAME = "Velox Whatbot";
 
 logger.info("Email service init", {
-  BREVO_API_KEY: BREVO_API_KEY ? `SET (${BREVO_API_KEY.slice(0, 12)}...)` : "MISSING",
+  BREVO_API_KEY: BREVO_API_KEY
+    ? `SET (${BREVO_API_KEY.slice(0, 12)}...)`
+    : "MISSING",
 });
 
 const sendEmail = async ({ to, subject, html, text }) => {
@@ -31,7 +33,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
           "Content-Type": "application/json",
         },
         timeout: 10000,
-      }
+      },
     );
 
     logger.info(`Email sent to ${to}: ${subject} [${response.data.messageId}]`);
