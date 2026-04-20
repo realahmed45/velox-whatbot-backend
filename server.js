@@ -21,7 +21,7 @@ const inboxRoutes = require("./src/routes/inbox");
 const contactRoutes = require("./src/routes/contacts");
 const analyticsRoutes = require("./src/routes/analytics");
 const billingRoutes = require("./src/routes/billing");
-const whatsappRoutes = require("./src/routes/whatsapp");
+const instagramRoutes = require("./src/routes/instagram");
 const broadcastRoutes = require("./src/routes/broadcasts");
 const uploadRoutes = require("./src/routes/upload");
 
@@ -47,8 +47,8 @@ app.use(
 );
 
 // ─── Body Parsing ──────────────────────────────────────────
-// WhatsApp webhook needs raw body for signature verification
-app.use("/api/whatsapp/webhook", express.raw({ type: "application/json" }));
+// Instagram webhook needs raw body for Meta signature verification
+app.use("/api/instagram/webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -95,7 +95,7 @@ app.use("/api/inbox", inboxRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/billing", billingRoutes);
-app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/instagram", instagramRoutes);
 app.use("/api/broadcasts", broadcastRoutes);
 app.use("/api/upload", uploadRoutes);
 
@@ -116,9 +116,7 @@ initQueues();
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  logger.info(
-    `Velox-Whatbot API running on port ${PORT} [${process.env.NODE_ENV}]`,
-  );
+  logger.info(`Flowgram API running on port ${PORT} [${process.env.NODE_ENV}]`);
 });
 
 // ─── Graceful Shutdown ─────────────────────────────────────

@@ -59,7 +59,8 @@ const register = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     success: true,
-    message: "Registration successful. Please check your email to verify your account.",
+    message:
+      "Registration successful. Please check your email to verify your account.",
     _emailStatus: emailResult, // remove after debugging
   });
 });
@@ -216,7 +217,7 @@ const resetPassword = asyncHandler(async (req, res) => {
 const getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id).populate(
     "activeWorkspace",
-    "name industry subscription usage whatsapp",
+    "name industry subscription usage instagram",
   );
   res.json({ success: true, user });
 });

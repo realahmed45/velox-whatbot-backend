@@ -16,9 +16,15 @@ const contactSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    phone: { type: String, required: true, trim: true },
+    phone: { type: String, trim: true },
     name: { type: String, trim: true },
     email: { type: String, lowercase: true, trim: true },
+
+    // Instagram fields
+    igUserId: { type: String, trim: true, index: true, sparse: true },
+    igUsername: { type: String, trim: true },
+    igProfilePic: { type: String },
+    igFollowsYou: { type: Boolean },
 
     // Captured variables from flows
     variables: { type: Map, of: String, default: {} },

@@ -1,7 +1,7 @@
 {
-  "name": "velox-whatbot-backend",
+  "name": "flowgram-backend",
   "version": "1.0.0",
-  "description": "Velox-Whatbot Backend API - WhatsApp Automation SaaS for Pakistani SMBs",
+  "description": "Flowgram Backend API - Instagram DM Automation SaaS",
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",

@@ -21,24 +21,32 @@ const businessHoursSchema = new mongoose.Schema(
   { _id: false },
 );
 
-const whatsappConnectionSchema = new mongoose.Schema(
+const instagramConnectionSchema = new mongoose.Schema(
   {
-    type: { type: String, enum: ["ultramsg", "meta", "none"], default: "none" },
     status: {
       type: String,
-      enum: ["connected", "disconnected", "scanning", "error"],
+      enum: ["connected", "disconnected", "pending", "error"],
       default: "disconnected",
     },
-    phoneNumber: String,
+    // Meta OAuth fields (encrypted at rest)
+    igUserId: { type: String, select: false },
+    accessToken: { type: String, select: false },
+    pageId: { type: String, select: false },
+    pageAccessToken: { type: String, select: false },
+    // Public display fields
+    username: String,
     displayName: String,
-    // UltraMsg fields (encrypted at rest)
-    ultralmsgInstanceId: { type: String, select: false },
-    ultramsgToken: { type: String, select: false },
-    // Meta Cloud API fields (encrypted at rest)
-    metaPhoneNumberId: { type: String, select: false },
-    metaWabaId: { type: String, select: false },
-    metaAccessToken: { type: String, select: false },
+    profilePicture: String,
+    followersCount: Number,
+    // Session-cookie fallback (encrypted)
+    sessionCookie: { type: String, select: false },
+    connectionType: {
+      type: String,
+      enum: ["meta_oauth", "session_cookie"],
+      default: "meta_oauth",
+    },
     connectedAt: Date,
+    tokenExpiresAt: Date,
     lastMessageAt: Date,
   },
   { _id: false },
@@ -81,8 +89,8 @@ const workspaceSchema = new mongoose.Schema(
       },
     ],
 
-    // WhatsApp connection
-    whatsapp: whatsappConnectionSchema,
+    // Instagram connection
+    instagram: instagramConnectionSchema,
 
     // Subscription
     subscription: {
@@ -111,15 +119,14 @@ const workspaceSchema = new mongoose.Schema(
 
     // Settings
     settings: {
-      botEnabled: { type: Boolean, default: true },
-      outsideHoursMessage: {
-        type: String,
-        default:
-          "We are closed right now. Our business hours are Mon-Fri 9AM-6PM. We will get back to you soon!",
-      },
-      welcomeMessage: String,
-      veloxBrandingEnabled: { type: Boolean, default: true },
-      notifyOnNewLead: { type: Boolean, default: true },
+      automationEnabled: { type: Boolean, default: true },
+      minDelayMinutes: { type: Number, default: 2 },
+      maxDelayMinutes: { type: Number, default: 5 },
+      activeHourStart: { type: Number, default: 0 },
+      activeHourEnd: { type: Number, default: 23 },
+      quietSunday: { type: Boolean, default: false },
+      flowgramBrandingEnabled: { type: Boolean, default: true },
+      notifyOnNewFollower: { type: Boolean, default: true },
       usageAlerts: { type: Boolean, default: true },
     },
 

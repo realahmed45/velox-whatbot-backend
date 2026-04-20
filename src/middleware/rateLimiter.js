@@ -10,8 +10,8 @@ const rateLimiter = rateLimit({
     message: "Too many requests — please try again in a minute",
   },
   skip: (req) => {
-    // Skip rate limiting for WhatsApp webhooks (they have their own verification)
-    return req.path.startsWith("/whatsapp/webhook");
+    // Skip rate limiting for Instagram webhooks (Meta verifies with signature)
+    return req.path.startsWith("/instagram/webhook");
   },
 });
 
