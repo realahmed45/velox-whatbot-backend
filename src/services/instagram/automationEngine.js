@@ -2,13 +2,13 @@
  * Flowgram — Instagram DM Automation Engine
  * Processes automation triggers and executes DM flows
  */
-const Workspace = require("../models/Workspace");
-const Contact = require("../models/Contact");
-const Conversation = require("../models/Conversation");
-const Message = require("../models/Message");
-const Flow = require("../models/Flow");
-const { sendDM } = require("./instagram/metaService");
-const logger = require("../utils/logger");
+const Workspace = require("../../models/Workspace");
+const Contact = require("../../models/Contact");
+const Conversation = require("../../models/Conversation");
+const Message = require("../../models/Message");
+const Flow = require("../../models/Flow");
+const { sendDM } = require("./metaService");
+const logger = require("../../utils/logger");
 
 // ── Trigger types ─────────────────────────────────────────────────────────────
 const TRIGGERS = {
