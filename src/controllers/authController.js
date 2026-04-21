@@ -9,7 +9,6 @@ const {
 } = require("../utils/jwt");
 const { generateToken, hashToken } = require("../utils/crypto");
 const {
-  sendVerificationEmail,
   sendWelcomeEmail,
   sendPasswordResetEmail,
 } = require("../services/emailService");
@@ -49,41 +48,6 @@ const register = asyncHandler(async (req, res) => {
     message: "Account created successfully.",
     token: accessToken,
     refreshToken,
-    user,
-  });
-});
-
-// @POST /api/auth/verify-email
-const verifyEmail = asyncHandler(async (req, res) => {
-  const { token } = req.body;
-  if (!token) {
-    res.status(400);
-    throw new Error("Verification token required");
-  }
-
-  const hashedToken = hashToken(token);
-  const user = await User.findOne({
-    emailVerificationToken: hashedToken,
-    emailVerificationExpires: { $gt: Date.now() },
-  }).select("+emailVerificationToken +emailVerificationExpires");
-
-  if (!user) {
-    res.status(400);
-    throw new Error("Invalid or expired verification token");
-  }
-
-  user.isEmailVerified = true;
-  user.emailVerificationToken = undefined;
-  user.emailVerificationExpires = undefined;
-  await user.save();
-
-  await sendWelcomeEmail({ to: user.email, name: user.name });
-
-  const accessToken = generateAccessToken(user._id);
-  res.json({
-    success: true,
-    message: "Email verified successfully",
-    token: accessToken,
     user,
   });
 });
@@ -240,7 +204,6 @@ const googleAuth = asyncHandler(async (req, res) => {
 
 module.exports = {
   register,
-  verifyEmail,
   login,
   refreshToken,
   forgotPassword,
