@@ -190,6 +190,11 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
   // req.body is a raw Buffer (express.raw middleware is applied on this route in server.js)
   const rawBody = req.body;
 
+  // Always log that Meta hit us — crucial for debugging "nothing fires".
+  logger.info(
+    `[IG webhook] inbound ${Buffer.isBuffer(rawBody) ? rawBody.length : 0}B sig=${req.headers["x-hub-signature-256"] ? "present" : "missing"}`,
+  );
+
   // Verify Meta signature using the raw Buffer
   const sig = req.headers["x-hub-signature-256"];
   if (sig && IG_APP_SECRET) {
@@ -220,6 +225,10 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
 
   for (const entry of body.entry || []) {
     const entryIgUserId = String(entry.id);
+    const entryTypes = [];
+    if (entry.messaging?.length) entryTypes.push("messaging");
+    if (entry.changes?.length)
+      entryTypes.push(...entry.changes.map((c) => c.field).filter(Boolean));
 
     const workspaces = await Workspace.find({
       "instagram.status": "connected",
@@ -233,6 +242,17 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
         continue;
       }
       if (wsIgId !== entryIgUserId) continue;
+
+      // Record that Meta is actually delivering events to us (visible in diagnose)
+      Workspace.updateOne(
+        { _id: ws._id },
+        {
+          $set: {
+            "instagram.lastWebhookAt": new Date(),
+            "instagram.lastWebhookType": entryTypes.join(",") || "unknown",
+          },
+        },
+      ).catch(() => {});
 
       // ── Messaging events (DMs, story replies, shares, postbacks, referrals) ──
       for (const msg of entry.messaging || []) {
@@ -422,10 +442,29 @@ exports.resubscribeWebhook = asyncHandler(async (req, res) => {
 // One-call health check for the "why isn't my automation working?" moment.
 exports.diagnose = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
-  const ws = await Workspace.findById(workspaceId).select(
-    "instagram settings keywordTriggers dmKeywordTriggers conversationStarters fallbackReply dmMessages storyReplyTrigger storyMentionTrigger shareToStoryTrigger refUrlTriggers liveCommentTriggers businessHours",
-  );
+  const ws = await Workspace.findById(workspaceId)
+    .select(
+      "instagram settings keywordTriggers dmKeywordTriggers conversationStarters fallbackReply dmMessages storyReplyTrigger storyMentionTrigger shareToStoryTrigger refUrlTriggers liveCommentTriggers businessHours",
+    )
+    .select("+instagram.accessToken");
   if (!ws) return res.status(404).json({ error: "Workspace not found" });
+
+  // Ask Meta what this account is ACTUALLY subscribed to — this is what
+  // actually determines whether events will be delivered.
+  let metaSubs = null;
+  let metaSubsError = null;
+  if (ws.instagram?.status === "connected" && ws.instagram?.accessToken) {
+    try {
+      const token = decrypt(ws.instagram.accessToken);
+      metaSubs = await ig.getSubscribedApps(token);
+    } catch (e) {
+      metaSubsError = e.response?.data?.error?.message || e.message;
+    }
+  }
+  const subscribedFields =
+    metaSubs && metaSubs.length ? metaSubs[0].subscribed_fields || [] : [];
+  const hasMetaSub =
+    Array.isArray(subscribedFields) && subscribedFields.length > 0;
 
   const checks = [];
   const push = (ok, label, hint) =>
@@ -442,10 +481,15 @@ exports.diagnose = asyncHandler(async (req, res) => {
     "Turn on the 'Automations enabled' master switch.",
   );
   push(
-    ws.instagram?.webhookSubscribed !== false,
-    "Webhook subscribed with Meta",
-    ws.instagram?.webhookError ||
-      "Click 'Re-subscribe webhook' to let Meta send events.",
+    hasMetaSub,
+    "App subscribed to this IG account (verified with Meta)",
+    metaSubsError ||
+      "Meta reports this account is NOT subscribed to any fields. In Meta App Dashboard, add the Webhooks product, set the callback URL to https://velox-whatbot-backend.onrender.com/api/instagram/webhook, then click 'Re-subscribe webhook' here.",
+  );
+  push(
+    !!ws.instagram?.lastWebhookAt,
+    "Meta has delivered at least one event",
+    "No webhook has ever reached this server. Either the app isn't in Live mode (Dev mode only delivers events for app admins/testers), or the callback URL in Meta App Dashboard is wrong. Send a DM or comment from a test account added as an Instagram Tester.",
   );
   push(
     !ws.instagram?.tokenExpiresAt ||
@@ -480,6 +524,10 @@ exports.diagnose = asyncHandler(async (req, res) => {
       webhookSubscribed: ws.instagram?.webhookSubscribed !== false,
       webhookError: ws.instagram?.webhookError || null,
       tokenExpiresAt: ws.instagram?.tokenExpiresAt || null,
+      lastWebhookAt: ws.instagram?.lastWebhookAt || null,
+      lastWebhookType: ws.instagram?.lastWebhookType || null,
+      subscribedFields,
+      metaSubsError,
     },
   });
 });

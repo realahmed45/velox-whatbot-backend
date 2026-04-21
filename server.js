@@ -29,6 +29,10 @@ const planRoutes = require("./src/routes/plans");
 const app = express();
 const server = http.createServer(app);
 
+// Render / Vercel / Heroku put us behind a proxy. Trust one hop so
+// express-rate-limit can read X-Forwarded-For safely.
+app.set("trust proxy", 1);
+
 // ─── Database ──────────────────────────────────────────────
 connectDB();
 

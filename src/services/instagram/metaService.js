@@ -142,6 +142,20 @@ const subscribeWebhook = async (accessToken) => {
   return data;
 };
 
+/**
+ * Read back what this IG account is actually subscribed to on this app.
+ * Returns an array like [{ name, subscribed_fields: [...] }] — empty array
+ * means the app is NOT receiving events for this account, even if the POST
+ * above returned success (common when the app's Webhooks product isn't
+ * configured with a callback URL + fields in Meta App Dashboard).
+ */
+const getSubscribedApps = async (accessToken) => {
+  const { data } = await axios.get(`${IG_GRAPH}/me/subscribed_apps`, {
+    params: { access_token: accessToken },
+  });
+  return data?.data || [];
+};
+
 module.exports = {
   exchangeCodeForToken,
   getLongLivedToken,
@@ -150,4 +164,5 @@ module.exports = {
   getRecentFollowers,
   sendDM,
   subscribeWebhook,
+  getSubscribedApps,
 };

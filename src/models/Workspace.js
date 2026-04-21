@@ -50,6 +50,8 @@ const instagramConnectionSchema = new mongoose.Schema(
     lastMessageAt: Date,
     webhookSubscribed: { type: Boolean, default: false },
     webhookError: { type: String, default: null },
+    lastWebhookAt: { type: Date, default: null },
+    lastWebhookType: { type: String, default: null },
   },
   { _id: false },
 );
