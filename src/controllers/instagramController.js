@@ -281,15 +281,22 @@ exports.testTrigger = asyncHandler(async (req, res) => {
     senderName: username || null,
   };
 
-  logger.info(`[Test] Triggering ${triggerType} for ${igUserId} in workspace ${workspaceId}`);
+  logger.info(
+    `[Test] Triggering ${triggerType} for ${igUserId} in workspace ${workspaceId}`,
+  );
   await handleWebhookEvent(workspaceId, event);
-  res.json({ success: true, message: `Triggered ${triggerType} for ${igUserId}` });
+  res.json({
+    success: true,
+    message: `Triggered ${triggerType} for ${igUserId}`,
+  });
 });
 
 // ── POST /api/instagram/test/poll ─────────────────────────────────────────────
 // Manually runs the follower poller right now
 exports.testPoll = asyncHandler(async (req, res) => {
-  const { pollNewFollowers } = require("../services/instagram/automationEngine");
+  const {
+    pollNewFollowers,
+  } = require("../services/instagram/automationEngine");
   logger.info("[Test] Manual poll triggered");
   await pollNewFollowers();
   res.json({ success: true, message: "Poll completed — check server logs" });
