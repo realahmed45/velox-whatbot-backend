@@ -94,7 +94,7 @@ const sendGreetingDM = async (workspace, contact, triggerType) => {
     "Hey {name}! 👋 Thanks for following!")
     .replace(/\{name\}/gi, firstName);
 
-  const result = await sendDM(igUserId, accessToken, contact.igUserId, greetingText);
+  const result = await sendDM(accessToken, contact.igUserId, greetingText);
 
   const followUpIntervalMs = (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
 
@@ -168,7 +168,7 @@ const processScheduledFollowups = async () => {
       const text = (msgs[step - 1] || "").replace(/\{name\}/gi, firstName);
       if (!text.trim()) continue;
 
-      const result = await sendDM(igUserId, accessToken, contact.igUserId, text);
+      const result = await sendDM(accessToken, contact.igUserId, text);
 
       await Message.create({
         workspaceId: workspace._id,

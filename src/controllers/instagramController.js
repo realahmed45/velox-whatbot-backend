@@ -1,5 +1,6 @@
 /**
- * Flowgram — Instagram Controller
+ * Botlify — Instagram Controller
+ * Uses Instagram API with Instagram Login (not Facebook Login)
  */
 const asyncHandler = require("express-async-handler");
 const crypto = require("crypto");
@@ -11,35 +12,45 @@ const {
 const { encrypt, decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 
-const APP_ID = process.env.META_APP_ID;
-const APP_SECRET = process.env.META_APP_SECRET;
+const IG_APP_ID = process.env.IG_APP_ID;
+const IG_APP_SECRET = process.env.IG_APP_SECRET;
 const REDIRECT_URI = process.env.IG_OAUTH_REDIRECT_URI;
 const WEBHOOK_VERIFY_TOKEN =
-  process.env.IG_WEBHOOK_VERIFY_TOKEN || "flowgram_webhook_2026";
+  process.env.IG_WEBHOOK_VERIFY_TOKEN || "botlify_webhook_2026";
 
 // ── GET /api/instagram/connect/oauth-url ─────────────────────────────────────
+// Instagram Business Login — goes straight to Instagram, no Facebook in the middle
 exports.getOAuthUrl = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
   const state = Buffer.from(
     JSON.stringify({ workspaceId, userId: req.user._id }),
   ).toString("base64");
+
   const scopes = [
-    "instagram_basic",
-    "instagram_manage_messages",
-    "instagram_manage_comments",
-    "pages_show_list",
-    "pages_read_engagement",
+    "instagram_business_basic",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_comments",
+    "instagram_business_content_publish",
   ].join(",");
 
-  const url = `https://www.facebook.com/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${scopes}&state=${state}&response_type=code`;
+  const url =
+    `https://www.instagram.com/oauth/authorize` +
+    `?enable_fb_login=0&force_authentication=1` +
+    `&client_id=${IG_APP_ID}` +
+    `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+    `&response_type=code` +
+    `&scope=${scopes}` +
+    `&state=${state}`;
+
   res.json({ url });
 });
 
 // ── GET /api/instagram/connect/callback ──────────────────────────────────────
 exports.oauthCallback = asyncHandler(async (req, res) => {
-  const { code, state, error } = req.query;
+  const { code, state, error, error_description } = req.query;
 
   if (error) {
+    logger.warn("Instagram OAuth error", { error, error_description });
     return res.redirect(
       `${process.env.CLIENT_URL}/dashboard?error=cancelled`,
     );
@@ -54,58 +65,54 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     );
   }
 
-  // Exchange code → short-lived token
-  const tokenData = await ig.exchangeCodeForToken(code, REDIRECT_URI);
-  const longTokenData = await ig.getLongLivedToken(tokenData.access_token);
-  const userToken = longTokenData.access_token;
-
-  // Get pages the user manages
-  const pages = await ig.getUserPages(userToken);
-  if (!pages.length) {
-    return res.redirect(
-      `${process.env.CLIENT_URL}/dashboard?error=no_pages`,
-    );
-  }
-
-  // Use the first page that has an IG business account
-  const page = pages.find((p) => p.instagram_business_account) || pages[0];
-  const pageToken = page.access_token;
-  const igAcctId =
-    page.instagram_business_account?.id ||
-    (await ig.getIGAccountId(page.id, pageToken));
-
-  if (!igAcctId) {
-    return res.redirect(
-      `${process.env.CLIENT_URL}/dashboard?error=no_ig_account`,
-    );
-  }
-
-  const igInfo = await ig.getIGAccountInfo(igAcctId, pageToken);
-
-  // Subscribe webhook
   try {
-    await ig.subscribeWebhook(page.id, pageToken);
-  } catch (e) {
-    logger.warn("Webhook subscribe failed (will retry)", { err: e.message });
+    // Exchange code → short-lived IG token (1 hour)
+    const shortTokenData = await ig.exchangeCodeForToken(code, REDIRECT_URI);
+    const shortToken = shortTokenData.access_token;
+    const igUserId = String(shortTokenData.user_id);
+
+    // Upgrade to long-lived token (60 days)
+    const longTokenData = await ig.getLongLivedToken(shortToken);
+    const longToken = longTokenData.access_token;
+    const expiresIn = longTokenData.expires_in || 60 * 24 * 3600;
+
+    // Fetch profile info using the long-lived token
+    const igInfo = await ig.getIGAccountInfo(longToken);
+
+    // Subscribe the IG account to webhook events
+    try {
+      await ig.subscribeWebhook(longToken);
+    } catch (e) {
+      logger.warn("Webhook subscribe failed (will retry)", {
+        err: e.response?.data || e.message,
+      });
+    }
+
+    await Workspace.findByIdAndUpdate(workspaceId, {
+      "instagram.status": "connected",
+      "instagram.connectionType": "instagram_login",
+      "instagram.igUserId": encrypt(igUserId),
+      "instagram.accessToken": encrypt(longToken),
+      "instagram.username": igInfo.username,
+      "instagram.displayName": igInfo.name || igInfo.username,
+      "instagram.profilePicture": igInfo.profile_picture_url,
+      "instagram.followersCount": igInfo.followers_count,
+      "instagram.connectedAt": new Date(),
+      "instagram.tokenExpiresAt": new Date(Date.now() + expiresIn * 1000),
+      onboardingCompleted: true,
+    });
+
+    return res.redirect(
+      `${process.env.CLIENT_URL}/dashboard?connected=true`,
+    );
+  } catch (err) {
+    logger.error("Instagram OAuth callback failed", {
+      err: err.response?.data || err.message,
+    });
+    return res.redirect(
+      `${process.env.CLIENT_URL}/dashboard?error=oauth_failed`,
+    );
   }
-
-  // Save to workspace (encrypted)
-  await Workspace.findByIdAndUpdate(workspaceId, {
-    "instagram.status": "connected",
-    "instagram.connectionType": "meta_oauth",
-    "instagram.igUserId": encrypt(igAcctId),
-    "instagram.accessToken": encrypt(pageToken),
-    "instagram.pageId": encrypt(page.id),
-    "instagram.username": igInfo.username,
-    "instagram.displayName": igInfo.name,
-    "instagram.profilePicture": igInfo.profile_picture_url,
-    "instagram.followersCount": igInfo.followers_count,
-    "instagram.connectedAt": new Date(),
-    "instagram.tokenExpiresAt": new Date(Date.now() + 55 * 24 * 3600000),
-    onboardingCompleted: true,
-  });
-
-  res.redirect(`${process.env.CLIENT_URL}/dashboard?connected=true`);
 });
 
 // ── POST /api/instagram/connect/session ──────────────────────────────────────
@@ -177,11 +184,11 @@ exports.verifyWebhook = (req, res) => {
 exports.receiveWebhook = asyncHandler(async (req, res) => {
   // Verify signature
   const sig = req.headers["x-hub-signature-256"];
-  if (sig && APP_SECRET) {
+  if (sig && IG_APP_SECRET) {
     const expected =
       "sha256=" +
       crypto
-        .createHmac("sha256", APP_SECRET)
+        .createHmac("sha256", IG_APP_SECRET)
         .update(req.rawBody || JSON.stringify(req.body))
         .digest("hex");
     if (sig !== expected) {
@@ -196,26 +203,26 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
   if (body.object !== "instagram") return;
 
   for (const entry of body.entry || []) {
-    const pageId = entry.id;
+    // Instagram Login API: entry.id is the IG user (account) id
+    const entryIgUserId = String(entry.id);
 
-    // Find workspace by pageId
     const workspaces = await Workspace.find({
       "instagram.status": "connected",
-    }).select("+instagram.pageId +instagram.igUserId +instagram.accessToken");
+    }).select("+instagram.igUserId +instagram.accessToken");
 
     for (const ws of workspaces) {
-      let wsPageId;
+      let wsIgId;
       try {
-        wsPageId = decrypt(ws.instagram.pageId);
+        wsIgId = decrypt(ws.instagram.igUserId);
       } catch {
         continue;
       }
-      if (wsPageId !== pageId) continue;
+      if (wsIgId !== entryIgUserId) continue;
 
       // Process messaging events
       for (const msg of entry.messaging || []) {
         const senderId = msg.sender?.id;
-        if (!senderId || senderId === decrypt(ws.instagram.igUserId)) continue;
+        if (!senderId || senderId === wsIgId) continue;
 
         const event = {
           type: "direct_message",
