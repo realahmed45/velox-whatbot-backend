@@ -25,11 +25,6 @@ const protect = asyncHandler(async (req, res, next) => {
       throw new Error("Not authorized — user not found");
     }
 
-    if (!req.user.isEmailVerified) {
-      res.status(403);
-      throw new Error("Please verify your email address before proceeding");
-    }
-
     next();
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {

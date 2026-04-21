@@ -17,6 +17,8 @@ const {
   inviteMember,
   completeOnboarding,
   updateOnboardingStep,
+  saveDmMessages,
+  saveAutomationSettings,
 } = require("../controllers/workspaceController");
 
 router.use(protect);
@@ -43,5 +45,7 @@ router.post("/:workspaceId/members/invite", requireOwner, inviteMember);
 router.post("/:workspaceId/invite", requireOwner, inviteMember);
 router.post("/:workspaceId/complete-onboarding", completeOnboarding);
 router.patch("/:workspaceId/onboarding-step", updateOnboardingStep);
+router.put("/:workspaceId/dm-messages", requireOwner, saveDmMessages);
+router.put("/:workspaceId/automation-settings", requireOwner, saveAutomationSettings);
 
 module.exports = router;

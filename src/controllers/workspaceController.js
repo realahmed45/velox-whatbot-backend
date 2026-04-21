@@ -261,6 +261,40 @@ const disconnectWhatsApp = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "WhatsApp disconnected" });
 });
 
+// @PUT /api/workspaces/:workspaceId/dm-messages — Save DM automation messages
+const saveDmMessages = asyncHandler(async (req, res) => {
+  const { greeting, followUp1, followUp2, followUp3, followUpIntervalHours } = req.body;
+  const update = {};
+  if (greeting !== undefined) update["dmMessages.greeting"] = greeting;
+  if (followUp1 !== undefined) update["dmMessages.followUp1"] = followUp1;
+  if (followUp2 !== undefined) update["dmMessages.followUp2"] = followUp2;
+  if (followUp3 !== undefined) update["dmMessages.followUp3"] = followUp3;
+  if (followUpIntervalHours !== undefined) update["dmMessages.followUpIntervalHours"] = followUpIntervalHours;
+
+  const workspace = await Workspace.findByIdAndUpdate(
+    req.workspace._id,
+    { $set: update },
+    { new: true }
+  );
+  res.json({ success: true, dmMessages: workspace.dmMessages });
+});
+
+// @PUT /api/workspaces/:workspaceId/automation-settings — Save timing settings
+const saveAutomationSettings = asyncHandler(async (req, res) => {
+  const { minDelayMinutes, maxDelayMinutes, automationEnabled } = req.body;
+  const update = {};
+  if (minDelayMinutes !== undefined) update["settings.minDelayMinutes"] = minDelayMinutes;
+  if (maxDelayMinutes !== undefined) update["settings.maxDelayMinutes"] = maxDelayMinutes;
+  if (automationEnabled !== undefined) update["settings.automationEnabled"] = automationEnabled;
+
+  const workspace = await Workspace.findByIdAndUpdate(
+    req.workspace._id,
+    { $set: update },
+    { new: true }
+  );
+  res.json({ success: true, settings: workspace.settings });
+});
+
 module.exports = {
   createWorkspace,
   getWorkspaces,
@@ -270,6 +304,8 @@ module.exports = {
   getUltramsgQR,
   connectMeta,
   disconnectWhatsApp,
+  saveDmMessages,
+  saveAutomationSettings,
   inviteMember,
   completeOnboarding,
   updateOnboardingStep,

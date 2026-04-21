@@ -125,14 +125,35 @@ const workspaceSchema = new mongoose.Schema(
     // Settings
     settings: {
       automationEnabled: { type: Boolean, default: true },
-      minDelayMinutes: { type: Number, default: 2 },
-      maxDelayMinutes: { type: Number, default: 5 },
+      minDelayMinutes: { type: Number, default: 3 },
+      maxDelayMinutes: { type: Number, default: 15 },
       activeHourStart: { type: Number, default: 0 },
       activeHourEnd: { type: Number, default: 23 },
       quietSunday: { type: Boolean, default: false },
-      flowgramBrandingEnabled: { type: Boolean, default: true },
+      botlifyBrandingEnabled: { type: Boolean, default: true },
       notifyOnNewFollower: { type: Boolean, default: true },
       usageAlerts: { type: Boolean, default: true },
+    },
+
+    // DM Automation messages
+    dmMessages: {
+      greeting: {
+        type: String,
+        default: "Hey {name}! 👋 Thanks for following — really appreciate the support! Feel free to DM me anytime.",
+      },
+      followUp1: {
+        type: String,
+        default: "Hey {name}, just checking in! 😊 Let me know if you have any questions.",
+      },
+      followUp2: {
+        type: String,
+        default: "Hi {name}! Wanted to make sure you saw my last message. Happy to help with anything!",
+      },
+      followUp3: {
+        type: String,
+        default: "Hey {name}, last message from me — just know I'm here whenever you're ready! 🙌",
+      },
+      followUpIntervalHours: { type: Number, default: 3 },
     },
 
     // Agency

@@ -34,34 +34,22 @@ const register = asyncHandler(async (req, res) => {
     throw new Error("Email already registered");
   }
 
-  const verificationToken = generateToken();
-  const hashedToken = hashToken(verificationToken);
-
   const user = await User.create({
     name,
     email,
     password,
-    emailVerificationToken: hashedToken,
-    emailVerificationExpires: Date.now() + 24 * 60 * 60 * 1000, // 24h
+    isEmailVerified: true, // skip email verification
   });
 
-  const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${verificationToken}`;
-
-  // Send email and include result in response for debugging
-  let emailResult = "not_attempted";
-  try {
-    await sendVerificationEmail({ to: email, name, verificationUrl });
-    emailResult = "sent";
-  } catch (err) {
-    logger.error("Verification email failed", { email, err: err.message });
-    emailResult = `failed: ${err.message}`;
-  }
+  const accessToken = generateAccessToken(user._id);
+  const refreshToken = generateRefreshToken(user._id);
 
   res.status(201).json({
     success: true,
-    message:
-      "Registration successful. Please check your email to verify your account.",
-    _emailStatus: emailResult, // remove after debugging
+    message: "Account created successfully.",
+    token: accessToken,
+    refreshToken,
+    user,
   });
 });
 
@@ -114,10 +102,7 @@ const login = asyncHandler(async (req, res) => {
     throw new Error("Invalid email or password");
   }
 
-  if (!user.isEmailVerified) {
-    res.status(403);
-    throw new Error("Please verify your email address before logging in");
-  }
+  // Ensure legacy unverified users can still log in
 
   user.lastLogin = new Date();
   await user.save();
