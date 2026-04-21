@@ -105,7 +105,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     onboardingCompleted: true,
   });
 
-  res.redirect(`${process.env.CLIENT_URL}/dashboard?connected=1`);
+  res.redirect(`${process.env.CLIENT_URL}/onboarding?oauth=success&ws=${workspaceId}`);
 });
 
 // ── POST /api/instagram/connect/session ──────────────────────────────────────
