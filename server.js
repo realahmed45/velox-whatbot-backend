@@ -113,6 +113,29 @@ initSocket(server);
 // ─── Background Jobs ───────────────────────────────────────
 initQueues();
 
+// ─── Instagram Cron Jobs ───────────────────────────────────
+const cron = require("node-cron");
+const {
+  processScheduledFollowups,
+  pollNewFollowers,
+} = require("./src/services/instagram/automationEngine");
+
+// Every 10 minutes: poll for new followers (fallback if webhook misses follows)
+cron.schedule("*/10 * * * *", () => {
+  pollNewFollowers().catch((e) =>
+    logger.warn("[Cron] pollNewFollowers error: " + e.message),
+  );
+});
+
+// Every 30 minutes: send scheduled follow-up DMs
+cron.schedule("*/30 * * * *", () => {
+  processScheduledFollowups().catch((e) =>
+    logger.warn("[Cron] processScheduledFollowups error: " + e.message),
+  );
+});
+
+logger.info("Cron jobs registered: follower-poll (10min), follow-ups (30min)");
+
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

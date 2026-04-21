@@ -8,7 +8,7 @@ const Workspace = require("../../models/Workspace");
 const Contact = require("../../models/Contact");
 const Conversation = require("../../models/Conversation");
 const Message = require("../../models/Message");
-const { sendDM } = require("./metaService");
+const { sendDM, getRecentFollowers } = require("./metaService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 
@@ -33,7 +33,14 @@ const handleWebhookEvent = async (workspaceId, event) => {
     const { type, senderId, senderUsername, senderName } = event;
 
     // Only handle follower and like triggers for DM automation
-    if (![TRIGGERS.NEW_FOLLOWER, TRIGGERS.POST_LIKE, TRIGGERS.DIRECT_MESSAGE].includes(type)) return;
+    if (
+      ![
+        TRIGGERS.NEW_FOLLOWER,
+        TRIGGERS.POST_LIKE,
+        TRIGGERS.DIRECT_MESSAGE,
+      ].includes(type)
+    )
+      return;
 
     // Don't DM yourself
     const ownIgId = decrypt(workspace.instagram.igUserId);
@@ -60,7 +67,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
       createdAt: { $gte: new Date(Date.now() - 24 * 3600000) },
     });
     if (recent) {
-      logger.debug(`Dedup: @${senderUsername} already triggered ${type} recently`);
+      logger.debug(
+        `Dedup: @${senderUsername} already triggered ${type} recently`,
+      );
       return;
     }
 
@@ -69,7 +78,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
     const maxMs = (workspace.settings?.maxDelayMinutes ?? 15) * 60000;
     const delayMs = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
 
-    logger.info(`Scheduling greeting DM to @${senderUsername} in ${Math.round(delayMs / 60000)}min`);
+    logger.info(
+      `Scheduling greeting DM to @${senderUsername} in ${Math.round(delayMs / 60000)}min`,
+    );
 
     setTimeout(async () => {
       try {
@@ -78,7 +89,6 @@ const handleWebhookEvent = async (workspaceId, event) => {
         logger.error("Greeting DM error", { err: err.message });
       }
     }, delayMs);
-
   } catch (err) {
     logger.error("handleWebhookEvent error", { err: err.message, workspaceId });
   }
@@ -90,13 +100,14 @@ const sendGreetingDM = async (workspace, contact, triggerType) => {
   const igUserId = decrypt(workspace.instagram.igUserId);
   const firstName = (contact.name || contact.username).split(" ")[0];
 
-  const greetingText = (workspace.dmMessages?.greeting ||
-    "Hey {name}! 👋 Thanks for following!")
-    .replace(/\{name\}/gi, firstName);
+  const greetingText = (
+    workspace.dmMessages?.greeting || "Hey {name}! 👋 Thanks for following!"
+  ).replace(/\{name\}/gi, firstName);
 
   const result = await sendDM(accessToken, contact.igUserId, greetingText);
 
-  const followUpIntervalMs = (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
+  const followUpIntervalMs =
+    (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
 
   const conversation = await Conversation.create({
     workspaceId: workspace._id,
@@ -161,8 +172,10 @@ const processScheduledFollowups = async () => {
 
       const msgs = [
         workspace.dmMessages?.followUp1 || "Hey {name}, just checking in! 😊",
-        workspace.dmMessages?.followUp2 || "Hi {name}! Happy to help with anything!",
-        workspace.dmMessages?.followUp3 || "Hey {name}, last message from me — I'm here whenever you're ready! 🙌",
+        workspace.dmMessages?.followUp2 ||
+          "Hi {name}! Happy to help with anything!",
+        workspace.dmMessages?.followUp3 ||
+          "Hey {name}, last message from me — I'm here whenever you're ready! 🙌",
       ];
 
       const text = (msgs[step - 1] || "").replace(/\{name\}/gi, firstName);
@@ -181,7 +194,8 @@ const processScheduledFollowups = async () => {
         metadata: { igMessageId: result.messageId, followUpStep: step },
       });
 
-      const intervalMs = (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
+      const intervalMs =
+        (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
       const nextStep = step + 1;
 
       if (nextStep > 3) {
@@ -201,4 +215,57 @@ const processScheduledFollowups = async () => {
   }
 };
 
-module.exports = { handleWebhookEvent, TRIGGERS, processScheduledFollowups };
+// ── Follower polling (fallback when webhook doesn't deliver follow events) ────
+// Called every 10 minutes by node-cron in server.js
+// Fetches the most recent followers via API and triggers automation for new ones
+const pollNewFollowers = async () => {
+  try {
+    const workspaces = await Workspace.find({
+      "instagram.status": "connected",
+      "settings.automationEnabled": true,
+    }).select("+instagram.accessToken +instagram.igUserId");
+
+    for (const ws of workspaces) {
+      try {
+        const accessToken = decrypt(ws.instagram.accessToken);
+        const followers = await getRecentFollowers(accessToken, 50);
+
+        for (const follower of followers) {
+          const followerId = String(follower.id);
+          // Skip if we already know this contact
+          const existing = await Contact.exists({
+            workspaceId: ws._id,
+            igUserId: followerId,
+          });
+          if (existing) continue;
+
+          logger.info(
+            `[Poller] New follower detected: ${follower.username || followerId} → workspace ${ws._id}`,
+          );
+
+          const event = {
+            type: TRIGGERS.NEW_FOLLOWER,
+            senderId: followerId,
+            senderUsername: follower.username || null,
+            senderName: null,
+          };
+          await handleWebhookEvent(ws._id, event);
+        }
+      } catch (err) {
+        logger.error("[Poller] Error polling workspace", {
+          workspaceId: ws._id,
+          err: err.message,
+        });
+      }
+    }
+  } catch (err) {
+    logger.error("[Poller] pollNewFollowers error", { err: err.message });
+  }
+};
+
+module.exports = {
+  handleWebhookEvent,
+  TRIGGERS,
+  processScheduledFollowups,
+  pollNewFollowers,
+};

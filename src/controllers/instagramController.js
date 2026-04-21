@@ -51,9 +51,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
 
   if (error) {
     logger.warn("Instagram OAuth error", { error, error_description });
-    return res.redirect(
-      `${process.env.CLIENT_URL}/dashboard?error=cancelled`,
-    );
+    return res.redirect(`${process.env.CLIENT_URL}/dashboard?error=cancelled`);
   }
 
   let workspaceId;
@@ -90,7 +88,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
 
     await Workspace.findByIdAndUpdate(workspaceId, {
       "instagram.status": "connected",
-      "instagram.connectionType": "instagram_login",
+      "instagram.connectionType": "meta_oauth",
       "instagram.igUserId": encrypt(igUserId),
       "instagram.accessToken": encrypt(longToken),
       "instagram.username": igInfo.username,
@@ -102,9 +100,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
       onboardingCompleted: true,
     });
 
-    return res.redirect(
-      `${process.env.CLIENT_URL}/dashboard?connected=true`,
-    );
+    return res.redirect(`${process.env.CLIENT_URL}/dashboard?connected=true`);
   } catch (err) {
     logger.error("Instagram OAuth callback failed", {
       err: err.response?.data || err.message,
@@ -182,14 +178,17 @@ exports.verifyWebhook = (req, res) => {
 
 // ── POST /api/instagram/webhook (events) ─────────────────────────────────────
 exports.receiveWebhook = asyncHandler(async (req, res) => {
-  // Verify signature
+  // req.body is a raw Buffer (express.raw middleware is applied on this route in server.js)
+  const rawBody = req.body;
+
+  // Verify Meta signature using the raw Buffer
   const sig = req.headers["x-hub-signature-256"];
   if (sig && IG_APP_SECRET) {
     const expected =
       "sha256=" +
       crypto
         .createHmac("sha256", IG_APP_SECRET)
-        .update(req.rawBody || JSON.stringify(req.body))
+        .update(rawBody) // ← must use raw Buffer, not stringified JSON
         .digest("hex");
     if (sig !== expected) {
       logger.warn("Instagram webhook signature mismatch");
@@ -197,9 +196,17 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
     }
   }
 
-  res.sendStatus(200); // respond fast
+  res.sendStatus(200); // respond fast to Meta
 
-  const body = req.body;
+  // Parse the raw Buffer into a JS object
+  let body;
+  try {
+    body = JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    logger.warn("Instagram webhook: malformed JSON body");
+    return;
+  }
+
   if (body.object !== "instagram") return;
 
   for (const entry of body.entry || []) {
@@ -219,7 +226,7 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
       }
       if (wsIgId !== entryIgUserId) continue;
 
-      // Process messaging events
+      // Process messaging events (incoming DMs)
       for (const msg of entry.messaging || []) {
         const senderId = msg.sender?.id;
         if (!senderId || senderId === wsIgId) continue;
@@ -235,8 +242,9 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(ws._id, event);
       }
 
-      // Process feed events (comments)
+      // Process change events (comments, follows, likes, etc.)
       for (const change of entry.changes || []) {
+        // New comment on a post
         if (change.field === "comments" && change.value) {
           const event = {
             type: "post_comment",
@@ -245,6 +253,23 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
             postId: change.value.media?.id,
           };
           await handleWebhookEvent(ws._id, event);
+        }
+
+        // New follower — Meta sends this when 'follows' field is subscribed
+        if (change.field === "follows" && change.value) {
+          const followerId = String(change.value.id || "");
+          if (followerId && followerId !== wsIgId) {
+            const event = {
+              type: "new_follower",
+              senderId: followerId,
+              senderUsername: change.value.username || null,
+              senderName: change.value.name || null,
+            };
+            logger.info(
+              `New follower webhook: ${followerId} → workspace ${ws._id}`,
+            );
+            await handleWebhookEvent(ws._id, event);
+          }
         }
       }
     }

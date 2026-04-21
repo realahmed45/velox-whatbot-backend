@@ -106,20 +106,40 @@ const sendDM = async (accessToken, recipientIgId, text) => {
 };
 
 /**
+ * Get recent followers for the authenticated IG Business/Creator account.
+ * Returns an array of { id, username } objects (first page, up to 50).
+ * Requires instagram_business_basic permission.
+ */
+const getRecentFollowers = async (accessToken, limit = 50) => {
+  try {
+    const { data } = await axios.get(`${IG_GRAPH}/me/followers`, {
+      params: {
+        fields: "id,username",
+        limit,
+        access_token: accessToken,
+      },
+      timeout: 10000,
+    });
+    return data.data || [];
+  } catch (err) {
+    logger.error("Instagram getRecentFollowers error", {
+      error: err.response?.data || err.message,
+    });
+    return [];
+  }
+};
+
+/**
  * Subscribe the IG account to webhook events
  */
 const subscribeWebhook = async (accessToken) => {
-  const { data } = await axios.post(
-    `${IG_GRAPH}/me/subscribed_apps`,
-    null,
-    {
-      params: {
-        subscribed_fields:
-          "messages,messaging_postbacks,messaging_seen,comments",
-        access_token: accessToken,
-      },
+  const { data } = await axios.post(`${IG_GRAPH}/me/subscribed_apps`, null, {
+    params: {
+      subscribed_fields:
+        "messages,messaging_postbacks,messaging_seen,comments,follows",
+      access_token: accessToken,
     },
-  );
+  });
   return data;
 };
 
@@ -128,6 +148,7 @@ module.exports = {
   getLongLivedToken,
   refreshLongLivedToken,
   getIGAccountInfo,
+  getRecentFollowers,
   sendDM,
   subscribeWebhook,
 };
