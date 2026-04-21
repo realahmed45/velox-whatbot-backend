@@ -110,23 +110,12 @@ const sendDM = async (accessToken, recipientIgId, text) => {
  * Returns an array of { id, username } objects (first page, up to 50).
  * Requires instagram_business_basic permission.
  */
-const getRecentFollowers = async (accessToken, limit = 50) => {
-  try {
-    const { data } = await axios.get(`${IG_GRAPH}/me/followers`, {
-      params: {
-        fields: "id,username",
-        limit,
-        access_token: accessToken,
-      },
-      timeout: 10000,
-    });
-    return data.data || [];
-  } catch (err) {
-    logger.error("Instagram getRecentFollowers error", {
-      error: err.response?.data || err.message,
-    });
-    return [];
-  }
+// NOTE: Instagram Graph API does NOT expose a /me/followers endpoint.
+// Follower-based DM automation is not supported by the API.
+// This function is kept as a stub so existing code doesn't break.
+const getRecentFollowers = async (_accessToken, _limit = 50) => {
+  logger.warn("getRecentFollowers: Instagram API does not support fetching followers list — returning empty");
+  return [];
 };
 
 /**

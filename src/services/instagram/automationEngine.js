@@ -202,52 +202,13 @@ const processScheduledFollowups = async () => {
   }
 };
 
-// ── Follower polling (fallback when webhook doesn't deliver follow events) ────
-// Called every 10 minutes by node-cron in server.js
-// Fetches the most recent followers via API and triggers automation for new ones
+// ── Follower polling ──────────────────────────────────────────────────────────
+// Instagram Graph API does NOT provide a /me/followers endpoint.
+// New-follower DM automation via polling is not possible with the Instagram API.
+// Automation is triggered by: incoming DMs and post comments (via webhooks).
 const pollNewFollowers = async () => {
-  try {
-    const workspaces = await Workspace.find({
-      "instagram.status": "connected",
-      "settings.automationEnabled": true,
-    }).select("+instagram.accessToken +instagram.igUserId");
-
-    for (const ws of workspaces) {
-      try {
-        const accessToken = decrypt(ws.instagram.accessToken);
-        const followers = await getRecentFollowers(accessToken, 50);
-
-        for (const follower of followers) {
-          const followerId = String(follower.id);
-          // Skip if we already know this contact
-          const existing = await Contact.exists({
-            workspaceId: ws._id,
-            igUserId: followerId,
-          });
-          if (existing) continue;
-
-          logger.info(
-            `[Poller] New follower detected: ${follower.username || followerId} → workspace ${ws._id}`,
-          );
-
-          const event = {
-            type: TRIGGERS.NEW_FOLLOWER,
-            senderId: followerId,
-            senderUsername: follower.username || null,
-            senderName: null,
-          };
-          await handleWebhookEvent(ws._id, event);
-        }
-      } catch (err) {
-        logger.error("[Poller] Error polling workspace", {
-          workspaceId: ws._id,
-          err: err.message,
-        });
-      }
-    }
-  } catch (err) {
-    logger.error("[Poller] pollNewFollowers error", { err: err.message });
-  }
+  // No-op: Instagram API doesn't support fetching follower lists
+  logger.debug("[Poller] pollNewFollowers: skipped — Instagram API does not expose followers list");
 };
 
 module.exports = {
