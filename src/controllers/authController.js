@@ -43,8 +43,8 @@ const register = asyncHandler(async (req, res) => {
   // Auto-create workspace so user lands directly on dashboard
   const workspace = await Workspace.create({
     name: businessName || `${name}'s Workspace`,
-    ownerId: user._id,
-    members: [{ userId: user._id, role: "owner" }],
+    owner: user._id,
+    members: [{ user: user._id, role: "owner" }],
     industry: "other",
   });
 
