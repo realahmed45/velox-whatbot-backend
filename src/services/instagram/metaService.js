@@ -131,12 +131,12 @@ const getRecentFollowers = async (accessToken, limit = 50) => {
 
 /**
  * Subscribe the IG account to webhook events
+ * NOTE: Instagram API does NOT provide a 'follows' webhook - use polling instead
  */
 const subscribeWebhook = async (accessToken) => {
   const { data } = await axios.post(`${IG_GRAPH}/me/subscribed_apps`, null, {
     params: {
-      subscribed_fields:
-        "messages,messaging_postbacks,messaging_seen,comments,follows",
+      subscribed_fields: "messages,messaging_postbacks,messaging_seen,comments",
       access_token: accessToken,
     },
   });

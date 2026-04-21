@@ -120,8 +120,8 @@ const {
   pollNewFollowers,
 } = require("./src/services/instagram/automationEngine");
 
-// Every 10 minutes: poll for new followers (fallback if webhook misses follows)
-cron.schedule("*/10 * * * *", () => {
+// Every 5 minutes: poll for new followers (Instagram API doesn't provide real-time follow webhooks)
+cron.schedule("*/5 * * * *", () => {
   pollNewFollowers().catch((e) =>
     logger.warn("[Cron] pollNewFollowers error: " + e.message),
   );
@@ -134,7 +134,7 @@ cron.schedule("*/30 * * * *", () => {
   );
 });
 
-logger.info("Cron jobs registered: follower-poll (10min), follow-ups (30min)");
+logger.info("Cron jobs registered: follower-poll (5min), follow-ups (30min)");
 
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;

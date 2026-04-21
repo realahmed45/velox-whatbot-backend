@@ -242,7 +242,8 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(ws._id, event);
       }
 
-      // Process change events (comments, follows, likes, etc.)
+      // Process change events (comments, etc.)
+      // NOTE: Instagram API does NOT provide 'follows' webhook - followers are detected via polling
       for (const change of entry.changes || []) {
         // New comment on a post
         if (change.field === "comments" && change.value) {
@@ -253,23 +254,6 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
             postId: change.value.media?.id,
           };
           await handleWebhookEvent(ws._id, event);
-        }
-
-        // New follower — Meta sends this when 'follows' field is subscribed
-        if (change.field === "follows" && change.value) {
-          const followerId = String(change.value.id || "");
-          if (followerId && followerId !== wsIgId) {
-            const event = {
-              type: "new_follower",
-              senderId: followerId,
-              senderUsername: change.value.username || null,
-              senderName: change.value.name || null,
-            };
-            logger.info(
-              `New follower webhook: ${followerId} → workspace ${ws._id}`,
-            );
-            await handleWebhookEvent(ws._id, event);
-          }
         }
       }
     }

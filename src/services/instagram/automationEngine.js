@@ -73,22 +73,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
       return;
     }
 
-    // Schedule greeting DM after random delay (min–max minutes)
-    const minMs = (workspace.settings?.minDelayMinutes ?? 3) * 60000;
-    const maxMs = (workspace.settings?.maxDelayMinutes ?? 15) * 60000;
-    const delayMs = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-
-    logger.info(
-      `Scheduling greeting DM to @${senderUsername} in ${Math.round(delayMs / 60000)}min`,
-    );
-
-    setTimeout(async () => {
-      try {
-        await sendGreetingDM(workspace, contact, type);
-      } catch (err) {
-        logger.error("Greeting DM error", { err: err.message });
-      }
-    }, delayMs);
+    // Send greeting DM immediately (no delay)
+    logger.info(`Sending greeting DM to @${senderUsername || senderId}`);
+    await sendGreetingDM(workspace, contact, type);
   } catch (err) {
     logger.error("handleWebhookEvent error", { err: err.message, workspaceId });
   }
