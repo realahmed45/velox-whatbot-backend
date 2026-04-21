@@ -41,7 +41,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
 
   if (error) {
     return res.redirect(
-      `${process.env.CLIENT_URL}/onboarding/connect?error=cancelled`,
+      `${process.env.CLIENT_URL}/dashboard?error=cancelled`,
     );
   }
 
@@ -50,7 +50,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     ({ workspaceId } = JSON.parse(Buffer.from(state, "base64").toString()));
   } catch {
     return res.redirect(
-      `${process.env.CLIENT_URL}/onboarding/connect?error=invalid_state`,
+      `${process.env.CLIENT_URL}/dashboard?error=invalid_state`,
     );
   }
 
@@ -63,7 +63,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
   const pages = await ig.getUserPages(userToken);
   if (!pages.length) {
     return res.redirect(
-      `${process.env.CLIENT_URL}/onboarding/connect?error=no_pages`,
+      `${process.env.CLIENT_URL}/dashboard?error=no_pages`,
     );
   }
 
@@ -76,7 +76,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
 
   if (!igAcctId) {
     return res.redirect(
-      `${process.env.CLIENT_URL}/onboarding/connect?error=no_ig_account`,
+      `${process.env.CLIENT_URL}/dashboard?error=no_ig_account`,
     );
   }
 
@@ -105,7 +105,7 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     onboardingCompleted: true,
   });
 
-  res.redirect(`${process.env.CLIENT_URL}/onboarding?oauth=success&ws=${workspaceId}`);
+  res.redirect(`${process.env.CLIENT_URL}/dashboard?connected=true`);
 });
 
 // ── POST /api/instagram/connect/session ──────────────────────────────────────
