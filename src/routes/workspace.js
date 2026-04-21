@@ -121,6 +121,15 @@ router.put(
   c.setAwayReply,
 );
 
+// Business hours (schedule + timezone + enable flag)
+router.get("/:workspaceId/business-hours", c.getBusinessHours);
+router.put(
+  "/:workspaceId/business-hours",
+  requireOwner,
+  requireFeature(FEATURES.BUSINESS_HOURS),
+  c.setBusinessHours,
+);
+
 // AI Bot (Scale plan only)
 router.get("/:workspaceId/ai-bot", c.getAiBotConfig);
 router.put(

@@ -346,8 +346,12 @@ const getTriggerField = (fieldName) =>
 
 const setTriggerField = (fieldName) =>
   asyncHandler(async (req, res) => {
-    const value = req.body[fieldName];
-    if (value === undefined) {
+    // Accept either {fieldName: value} or raw value as the whole body
+    const value =
+      req.body && req.body[fieldName] !== undefined
+        ? req.body[fieldName]
+        : req.body;
+    if (value === undefined || value === null) {
       return res.status(400).json({ error: `${fieldName} is required` });
     }
     const ws = await Workspace.findByIdAndUpdate(
@@ -392,6 +396,37 @@ const setFallbackReply = setTriggerField("fallbackReply");
 const getAwayReply = getTriggerField("awayReply");
 const setAwayReply = setTriggerField("awayReply");
 
+// Business hours (per-day schedule + timezone)
+const getBusinessHours = asyncHandler(async (req, res) => {
+  const ws = await Workspace.findById(req.workspace._id).select(
+    "businessHours timezone settings.businessHoursEnabled",
+  );
+  res.json({
+    enabled: ws?.settings?.businessHoursEnabled ?? false,
+    timezone: ws?.timezone || "Asia/Karachi",
+    schedule: ws?.businessHours || [],
+  });
+});
+const setBusinessHours = asyncHandler(async (req, res) => {
+  const { enabled, timezone, schedule } = req.body || {};
+  const update = {};
+  if (enabled !== undefined)
+    update["settings.businessHoursEnabled"] = !!enabled;
+  if (timezone !== undefined) update.timezone = String(timezone);
+  if (Array.isArray(schedule)) update.businessHours = schedule;
+  const ws = await Workspace.findByIdAndUpdate(
+    req.workspace._id,
+    { $set: update },
+    { new: true },
+  );
+  res.json({
+    success: true,
+    enabled: ws?.settings?.businessHoursEnabled ?? false,
+    timezone: ws.timezone,
+    schedule: ws.businessHours,
+  });
+});
+
 // AI Bot config (Scale plan only — gated at route level)
 const getAiBotConfig = asyncHandler(async (req, res) => {
   const ws = await Workspace.findById(req.workspace._id).select("aiBot");
@@ -411,7 +446,7 @@ const saveAiBotConfig = asyncHandler(async (req, res) => {
 // All trigger/bot config in one shot (used by Automation page)
 const getAutomationConfig = asyncHandler(async (req, res) => {
   const ws = await Workspace.findById(req.workspace._id).select(
-    "keywordTriggers dmKeywordTriggers storyReplyTrigger storyMentionTrigger shareToStoryTrigger liveCommentTriggers refUrlTriggers conversationStarters fallbackReply awayReply aiBot dmMessages settings subscription businessHours",
+    "keywordTriggers dmKeywordTriggers storyReplyTrigger storyMentionTrigger shareToStoryTrigger liveCommentTriggers refUrlTriggers conversationStarters fallbackReply awayReply aiBot dmMessages settings subscription businessHours timezone",
   );
   res.json({
     keywordTriggers: ws.keywordTriggers || [],
@@ -431,7 +466,12 @@ const getAutomationConfig = asyncHandler(async (req, res) => {
     dmMessages: ws.dmMessages || {},
     settings: ws.settings || {},
     subscription: ws.subscription || {},
-    businessHours: ws.businessHours || [],
+    // businessHours as composite object so frontend can read .enabled, .timezone, .schedule
+    businessHours: {
+      enabled: ws?.settings?.businessHoursEnabled ?? false,
+      timezone: ws?.timezone || "Asia/Karachi",
+      schedule: Array.isArray(ws?.businessHours) ? ws.businessHours : [],
+    },
   });
 });
 
@@ -466,6 +506,8 @@ module.exports = {
   setFallbackReply,
   getAwayReply,
   setAwayReply,
+  getBusinessHours,
+  setBusinessHours,
   getAiBotConfig,
   saveAiBotConfig,
   getAutomationConfig,

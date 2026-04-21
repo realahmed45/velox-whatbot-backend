@@ -32,5 +32,9 @@ router.put("/settings", protect, igCtrl.updateSettings);
 // ── Debug / Test (protected) ──────────────────────────────────────────────────
 // Manually fire a trigger for testing
 router.post("/test/trigger", protect, igCtrl.testTrigger);
+// Health check — "why isn't my automation working?"
+router.get("/diagnose", protect, igCtrl.diagnose);
+// Force re-subscribe to Meta webhook fields
+router.post("/webhook/resubscribe", protect, igCtrl.resubscribeWebhook);
 
 module.exports = router;

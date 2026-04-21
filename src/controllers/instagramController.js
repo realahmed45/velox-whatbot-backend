@@ -78,10 +78,14 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     const igInfo = await ig.getIGAccountInfo(longToken);
 
     // Subscribe the IG account to webhook events
+    let webhookSubscribed = false;
+    let webhookError = null;
     try {
       await ig.subscribeWebhook(longToken);
+      webhookSubscribed = true;
     } catch (e) {
-      logger.warn("Webhook subscribe failed (will retry)", {
+      webhookError = e.response?.data?.error?.message || e.message;
+      logger.warn("Webhook subscribe failed at connect", {
         err: e.response?.data || e.message,
       });
     }
@@ -97,10 +101,15 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
       "instagram.followersCount": igInfo.followers_count,
       "instagram.connectedAt": new Date(),
       "instagram.tokenExpiresAt": new Date(Date.now() + expiresIn * 1000),
+      "instagram.webhookSubscribed": webhookSubscribed,
+      "instagram.webhookError": webhookError,
+      "settings.automationEnabled": true,
       onboardingCompleted: true,
     });
 
-    return res.redirect(`${process.env.CLIENT_URL}/dashboard?connected=true`);
+    return res.redirect(
+      `${process.env.CLIENT_URL}/dashboard?connected=true${webhookSubscribed ? "" : "&webhook=failed"}`,
+    );
   } catch (err) {
     logger.error("Instagram OAuth callback failed", {
       err: err.response?.data || err.message,
@@ -362,6 +371,116 @@ exports.testTrigger = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: `Triggered ${triggerType} for ${igUserId}`,
+  });
+});
+
+// ── POST /api/instagram/webhook/resubscribe ──────────────────────────────────
+// Re-subscribes the IG account to all webhook fields we handle. Call from UI
+// if automations aren't firing.
+exports.resubscribeWebhook = asyncHandler(async (req, res) => {
+  const workspaceId = req.headers["x-workspace-id"];
+  const ws = await Workspace.findById(workspaceId).select(
+    "+instagram.accessToken",
+  );
+  if (!ws || ws.instagram?.status !== "connected") {
+    return res.status(400).json({
+      success: false,
+      message: "Connect your Instagram account first.",
+    });
+  }
+  let token;
+  try {
+    token = decrypt(ws.instagram.accessToken);
+  } catch {
+    return res.status(400).json({
+      success: false,
+      message: "Stored token unreadable. Please reconnect Instagram.",
+    });
+  }
+  try {
+    await ig.subscribeWebhook(token);
+    await Workspace.findByIdAndUpdate(workspaceId, {
+      "instagram.webhookSubscribed": true,
+      "instagram.webhookError": null,
+      "settings.automationEnabled": true,
+    });
+    return res.json({
+      success: true,
+      message: "Webhook re-subscribed. Automations should fire now.",
+    });
+  } catch (e) {
+    const msg = e.response?.data?.error?.message || e.message;
+    await Workspace.findByIdAndUpdate(workspaceId, {
+      "instagram.webhookSubscribed": false,
+      "instagram.webhookError": msg,
+    });
+    return res.status(502).json({ success: false, message: msg });
+  }
+});
+
+// ── GET /api/instagram/diagnose ──────────────────────────────────────────────
+// One-call health check for the "why isn't my automation working?" moment.
+exports.diagnose = asyncHandler(async (req, res) => {
+  const workspaceId = req.headers["x-workspace-id"];
+  const ws = await Workspace.findById(workspaceId).select(
+    "instagram settings keywordTriggers dmKeywordTriggers conversationStarters fallbackReply dmMessages storyReplyTrigger storyMentionTrigger shareToStoryTrigger refUrlTriggers liveCommentTriggers businessHours",
+  );
+  if (!ws) return res.status(404).json({ error: "Workspace not found" });
+
+  const checks = [];
+  const push = (ok, label, hint) =>
+    checks.push({ ok: !!ok, label, hint: ok ? null : hint });
+
+  push(
+    ws.instagram?.status === "connected",
+    "Instagram connected",
+    "Connect your Instagram Business account from the dashboard.",
+  );
+  push(
+    !!ws.settings?.automationEnabled,
+    "Automations enabled",
+    "Turn on the 'Automations enabled' master switch.",
+  );
+  push(
+    ws.instagram?.webhookSubscribed !== false,
+    "Webhook subscribed with Meta",
+    ws.instagram?.webhookError ||
+      "Click 'Re-subscribe webhook' to let Meta send events.",
+  );
+  push(
+    !ws.instagram?.tokenExpiresAt ||
+      new Date(ws.instagram.tokenExpiresAt) > new Date(),
+    "Access token valid",
+    "Token expired. Reconnect Instagram.",
+  );
+
+  const anyTrigger =
+    (ws.keywordTriggers || []).some((t) => t.enabled) ||
+    (ws.dmKeywordTriggers || []).some((t) => t.enabled) ||
+    ws.dmMessages?.enabled ||
+    ws.storyReplyTrigger?.enabled ||
+    ws.storyMentionTrigger?.enabled ||
+    ws.shareToStoryTrigger?.enabled ||
+    (ws.refUrlTriggers || []).some((t) => t.enabled) ||
+    (ws.liveCommentTriggers || []).some((t) => t.enabled) ||
+    ws.conversationStarters?.enabled ||
+    ws.fallbackReply?.enabled;
+  push(
+    anyTrigger,
+    "At least one trigger enabled",
+    "Enable a trigger on the Automation page (e.g. a keyword or welcome DM).",
+  );
+
+  const allOk = checks.every((c) => c.ok);
+  res.json({
+    ok: allOk,
+    checks,
+    instagram: {
+      username: ws.instagram?.username || null,
+      webhookSubscribed: ws.instagram?.webhookSubscribed !== false,
+      webhookError: ws.instagram?.webhookError || null,
+      tokenExpiresAt: ws.instagram?.tokenExpiresAt || null,
+    },
   });
 });
 

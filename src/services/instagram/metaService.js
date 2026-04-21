@@ -127,7 +127,15 @@ const getRecentFollowers = async (_accessToken, _limit = 50) => {
 const subscribeWebhook = async (accessToken) => {
   const { data } = await axios.post(`${IG_GRAPH}/me/subscribed_apps`, null, {
     params: {
-      subscribed_fields: "messages,messaging_postbacks,messaging_seen,comments",
+      subscribed_fields: [
+        "messages",
+        "messaging_postbacks",
+        "messaging_seen",
+        "messaging_referral",
+        "message_reactions",
+        "comments",
+        "live_comments",
+      ].join(","),
       access_token: accessToken,
     },
   });

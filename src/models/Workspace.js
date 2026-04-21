@@ -48,6 +48,8 @@ const instagramConnectionSchema = new mongoose.Schema(
     connectedAt: Date,
     tokenExpiresAt: Date,
     lastMessageAt: Date,
+    webhookSubscribed: { type: Boolean, default: false },
+    webhookError: { type: String, default: null },
   },
   { _id: false },
 );
@@ -134,6 +136,7 @@ const workspaceSchema = new mongoose.Schema(
       botlifyBrandingEnabled: { type: Boolean, default: true },
       notifyOnNewFollower: { type: Boolean, default: true },
       usageAlerts: { type: Boolean, default: true },
+      businessHoursEnabled: { type: Boolean, default: false },
     },
 
     // DM Automation messages
