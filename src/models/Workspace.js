@@ -156,6 +156,21 @@ const workspaceSchema = new mongoose.Schema(
       followUpIntervalHours: { type: Number, default: 3 },
     },
 
+    // Keyword triggers — when someone comments a keyword, auto-DM them
+    // Each entry: { keyword: "DM", replyMessage: "Hey! Here's the info...", enabled: true }
+    keywordTriggers: [
+      {
+        keyword: { type: String, required: true, trim: true },
+        replyMessage: { type: String, required: true },
+        enabled: { type: Boolean, default: true },
+        matchType: {
+          type: String,
+          enum: ["contains", "exact"],
+          default: "contains",
+        },
+      },
+    ],
+
     // Agency
     isAgencyManaged: { type: Boolean, default: false },
     agencyWorkspace: { type: mongoose.Schema.Types.ObjectId, ref: "Workspace" },

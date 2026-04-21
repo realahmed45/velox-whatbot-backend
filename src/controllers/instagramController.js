@@ -268,10 +268,10 @@ exports.getSettings = asyncHandler(async (req, res) => {
 });
 
 // ── POST /api/instagram/test/trigger ────────────────────────────────────────
-// Body: { igUserId: "123", username: "testuser", triggerType: "new_follower" }
+// Body: { igUserId: "123", username: "testuser", triggerType: "post_comment", text: "DM me" }
 exports.testTrigger = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
-  const { igUserId, username, triggerType = "new_follower" } = req.body;
+  const { igUserId, username, triggerType = "post_comment", text } = req.body;
   if (!igUserId) return res.status(400).json({ error: "igUserId is required" });
 
   const event = {
@@ -279,6 +279,7 @@ exports.testTrigger = asyncHandler(async (req, res) => {
     senderId: String(igUserId),
     senderUsername: username || null,
     senderName: username || null,
+    text: text || null,
   };
 
   logger.info(

@@ -295,6 +295,31 @@ const saveAutomationSettings = asyncHandler(async (req, res) => {
   res.json({ success: true, settings: workspace.settings });
 });
 
+// ── GET keyword triggers ──────────────────────────────────────────────────────
+const getKeywordTriggers = asyncHandler(async (req, res) => {
+  const workspace = await Workspace.findById(req.workspace._id).select("keywordTriggers");
+  res.json({ keywordTriggers: workspace.keywordTriggers || [] });
+});
+
+// ── PUT keyword triggers (replace all) ───────────────────────────────────────
+const saveKeywordTriggers = asyncHandler(async (req, res) => {
+  const { keywordTriggers } = req.body;
+  if (!Array.isArray(keywordTriggers)) {
+    return res.status(400).json({ error: "keywordTriggers must be an array" });
+  }
+  // Validate each trigger
+  for (const t of keywordTriggers) {
+    if (!t.keyword?.trim()) return res.status(400).json({ error: "Each trigger needs a keyword" });
+    if (!t.replyMessage?.trim()) return res.status(400).json({ error: "Each trigger needs a replyMessage" });
+  }
+  const workspace = await Workspace.findByIdAndUpdate(
+    req.workspace._id,
+    { $set: { keywordTriggers } },
+    { new: true }
+  );
+  res.json({ success: true, keywordTriggers: workspace.keywordTriggers });
+});
+
 module.exports = {
   createWorkspace,
   getWorkspaces,
@@ -306,6 +331,8 @@ module.exports = {
   disconnectWhatsApp,
   saveDmMessages,
   saveAutomationSettings,
+  getKeywordTriggers,
+  saveKeywordTriggers,
   inviteMember,
   completeOnboarding,
   updateOnboardingStep,

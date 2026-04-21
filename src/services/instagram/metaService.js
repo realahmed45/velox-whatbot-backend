@@ -114,7 +114,9 @@ const sendDM = async (accessToken, recipientIgId, text) => {
 // Follower-based DM automation is not supported by the API.
 // This function is kept as a stub so existing code doesn't break.
 const getRecentFollowers = async (_accessToken, _limit = 50) => {
-  logger.warn("getRecentFollowers: Instagram API does not support fetching followers list — returning empty");
+  logger.warn(
+    "getRecentFollowers: Instagram API does not support fetching followers list — returning empty",
+  );
   return [];
 };
 

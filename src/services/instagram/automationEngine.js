@@ -1,7 +1,7 @@
 /**
  * Botlify — Instagram DM Automation Engine
- * Triggers: new_follower, post_like
- * Sends greeting DM after random delay (min–max minutes)
+ * Triggers: post_comment (keyword match), direct_message
+ * Sends greeting DM immediately on trigger
  * Sends 3 follow-ups at N-hour intervals if no reply
  */
 const Workspace = require("../../models/Workspace");
@@ -21,6 +21,14 @@ const TRIGGERS = {
   DIRECT_MESSAGE: "direct_message",
 };
 
+// ── Keyword match helper ──────────────────────────────────────────────────────
+const matchesKeyword = (commentText, trigger) => {
+  if (!commentText || !trigger.enabled) return false;
+  const text = commentText.toLowerCase().trim();
+  const kw = trigger.keyword.toLowerCase().trim();
+  return trigger.matchType === "exact" ? text === kw : text.includes(kw);
+};
+
 // ── Main entry: handle incoming Instagram webhook event ───────────────────────
 const handleWebhookEvent = async (workspaceId, event) => {
   try {
@@ -30,21 +38,56 @@ const handleWebhookEvent = async (workspaceId, event) => {
     if (!workspace || workspace.instagram?.status !== "connected") return;
     if (!workspace.settings?.automationEnabled) return;
 
-    const { type, senderId, senderUsername, senderName } = event;
-
-    // Only handle follower and like triggers for DM automation
-    if (
-      ![
-        TRIGGERS.NEW_FOLLOWER,
-        TRIGGERS.POST_LIKE,
-        TRIGGERS.DIRECT_MESSAGE,
-      ].includes(type)
-    )
-      return;
+    const { type, senderId, senderUsername, senderName, text } = event;
 
     // Don't DM yourself
     const ownIgId = decrypt(workspace.instagram.igUserId);
     if (senderId === ownIgId) return;
+
+    // ── Comment trigger: check against keyword triggers ───────────────────────
+    if (type === TRIGGERS.POST_COMMENT) {
+      const matched = (workspace.keywordTriggers || []).find((t) =>
+        matchesKeyword(text, t),
+      );
+      if (!matched) return; // comment doesn't match any keyword — ignore
+
+      logger.info(
+        `[Keyword] Comment "${text}" matched keyword "${matched.keyword}" for workspace ${workspaceId}`,
+      );
+
+      // Find or create contact
+      let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
+      if (!contact) {
+        contact = await Contact.create({
+          workspaceId,
+          igUserId: senderId,
+          username: senderUsername || senderId,
+          name: senderName || senderUsername || "Instagram User",
+          source: "keyword_comment",
+          tags: [],
+        });
+      }
+
+      // Dedup: don't re-trigger same keyword within 24h
+      const recentKeyword = await Conversation.findOne({
+        workspaceId,
+        contactId: contact._id,
+        "metadata.triggerType": TRIGGERS.KEYWORD_DM,
+        "metadata.keyword": matched.keyword,
+        createdAt: { $gte: new Date(Date.now() - 24 * 3600000) },
+      });
+      if (recentKeyword) {
+        logger.debug(`Dedup: @${senderUsername} already triggered keyword "${matched.keyword}" recently`);
+        return;
+      }
+
+      logger.info(`Sending keyword DM to @${senderUsername || senderId} for keyword "${matched.keyword}"`);
+      await sendKeywordDM(workspace, contact, matched);
+      return;
+    }
+
+    // ── Direct message trigger: auto-reply ────────────────────────────────────
+    if (type !== TRIGGERS.DIRECT_MESSAGE) return;
 
     // Find or create contact
     let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
@@ -120,6 +163,40 @@ const sendGreetingDM = async (workspace, contact, triggerType) => {
   });
 
   logger.info(`Greeting DM sent to @${contact.username}`);
+};
+
+// ── Send keyword-triggered DM ─────────────────────────────────────────────────
+const sendKeywordDM = async (workspace, contact, trigger) => {
+  const accessToken = decrypt(workspace.instagram.accessToken);
+  const firstName = (contact.name || contact.username).split(" ")[0];
+  const text = trigger.replyMessage.replace(/\{name\}/gi, firstName);
+
+  const result = await sendDM(accessToken, contact.igUserId, text);
+
+  const conversation = await Conversation.create({
+    workspaceId: workspace._id,
+    contactId: contact._id,
+    channelType: "instagram",
+    status: "open",
+    metadata: {
+      triggerType: TRIGGERS.KEYWORD_DM,
+      keyword: trigger.keyword,
+      followUpStep: 0, // no follow-ups for keyword DMs (one-shot reply)
+    },
+  });
+
+  await Message.create({
+    workspaceId: workspace._id,
+    conversationId: conversation._id,
+    contactId: contact._id,
+    direction: "outbound",
+    channelType: "instagram",
+    content: { type: "text", text },
+    status: result.success ? "sent" : "failed",
+    metadata: { igMessageId: result.messageId },
+  });
+
+  logger.info(`Keyword DM sent to @${contact.username} (keyword: "${trigger.keyword}")`);
 };
 
 // ── Follow-up scheduler (called by cron job every 30 mins) ───────────────────
@@ -208,7 +285,9 @@ const processScheduledFollowups = async () => {
 // Automation is triggered by: incoming DMs and post comments (via webhooks).
 const pollNewFollowers = async () => {
   // No-op: Instagram API doesn't support fetching follower lists
-  logger.debug("[Poller] pollNewFollowers: skipped — Instagram API does not expose followers list");
+  logger.debug(
+    "[Poller] pollNewFollowers: skipped — Instagram API does not expose followers list",
+  );
 };
 
 module.exports = {

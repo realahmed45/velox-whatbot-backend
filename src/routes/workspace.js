@@ -19,6 +19,8 @@ const {
   updateOnboardingStep,
   saveDmMessages,
   saveAutomationSettings,
+  getKeywordTriggers,
+  saveKeywordTriggers,
 } = require("../controllers/workspaceController");
 
 router.use(protect);
@@ -47,5 +49,7 @@ router.post("/:workspaceId/complete-onboarding", completeOnboarding);
 router.patch("/:workspaceId/onboarding-step", updateOnboardingStep);
 router.put("/:workspaceId/dm-messages", requireOwner, saveDmMessages);
 router.put("/:workspaceId/automation-settings", requireOwner, saveAutomationSettings);
+router.get("/:workspaceId/keyword-triggers", getKeywordTriggers);
+router.put("/:workspaceId/keyword-triggers", requireOwner, saveKeywordTriggers);
 
 module.exports = router;
