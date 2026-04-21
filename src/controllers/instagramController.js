@@ -442,20 +442,28 @@ exports.resubscribeWebhook = asyncHandler(async (req, res) => {
 // One-call health check for the "why isn't my automation working?" moment.
 exports.diagnose = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
-  const ws = await Workspace.findById(workspaceId)
-    .select(
-      "instagram settings keywordTriggers dmKeywordTriggers conversationStarters fallbackReply dmMessages storyReplyTrigger storyMentionTrigger shareToStoryTrigger refUrlTriggers liveCommentTriggers businessHours",
-    )
-    .select("+instagram.accessToken");
+  const ws = await Workspace.findById(workspaceId).select(
+    "instagram settings keywordTriggers dmKeywordTriggers conversationStarters fallbackReply dmMessages storyReplyTrigger storyMentionTrigger shareToStoryTrigger refUrlTriggers liveCommentTriggers businessHours",
+  );
   if (!ws) return res.status(404).json({ error: "Workspace not found" });
+
+  // accessToken has { select: false } on the schema; fetch it separately to
+  // avoid Mongoose "path collision" when combining whole-subdoc + subpath selects.
+  let tokenDoc = null;
+  if (ws.instagram?.status === "connected") {
+    tokenDoc = await Workspace.findById(workspaceId).select(
+      "+instagram.accessToken",
+    );
+  }
+  const encryptedToken = tokenDoc?.instagram?.accessToken || null;
 
   // Ask Meta what this account is ACTUALLY subscribed to — this is what
   // actually determines whether events will be delivered.
   let metaSubs = null;
   let metaSubsError = null;
-  if (ws.instagram?.status === "connected" && ws.instagram?.accessToken) {
+  if (ws.instagram?.status === "connected" && encryptedToken) {
     try {
-      const token = decrypt(ws.instagram.accessToken);
+      const token = decrypt(encryptedToken);
       metaSubs = await ig.getSubscribedApps(token);
     } catch (e) {
       metaSubsError = e.response?.data?.error?.message || e.message;
