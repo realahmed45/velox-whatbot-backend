@@ -16,7 +16,7 @@ const logger = require("../utils/logger");
 
 // @POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, businessName } = req.body;
 
   if (!name || !email || !password) {
     res.status(400);
@@ -37,8 +37,20 @@ const register = asyncHandler(async (req, res) => {
     name,
     email,
     password,
-    isEmailVerified: true, // skip email verification
+    isEmailVerified: true,
   });
+
+  // Auto-create workspace so user lands directly on dashboard
+  const workspace = await Workspace.create({
+    name: businessName || `${name}'s Workspace`,
+    ownerId: user._id,
+    members: [{ userId: user._id, role: "owner" }],
+    industry: "other",
+  });
+
+  user.workspaces = [workspace._id];
+  user.activeWorkspace = workspace._id;
+  await user.save();
 
   const accessToken = generateAccessToken(user._id);
   const refreshToken = generateRefreshToken(user._id);
