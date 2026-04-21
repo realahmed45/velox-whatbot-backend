@@ -1,0 +1,127 @@
+From 29f4858bf802ad07d37488219da1200d587e171f Mon Sep 17 00:00:00 2001
+From: "realahmedali4@gmail.com" <realahmedali4@gmail.com>
+Date: Tue, 21 Apr 2026 15:31:41 +0500
+Subject: [PATCH] feat: instant DM with 5min polling - remove delay, faster
+ follower detection
+
+---
+ server.js                                  |  6 +++---
+ src/controllers/instagramController.js     | 20 ++------------------
+ src/services/instagram/automationEngine.js | 19 +++----------------
+ src/services/instagram/metaService.js      |  4 ++--
+ 4 files changed, 10 insertions(+), 39 deletions(-)
+
+diff --git a/server.js b/server.js
+index aeac889..4640fda 100644
+--- a/server.js
++++ b/server.js
+@@ -120,8 +120,8 @@ const {
+   pollNewFollowers,
+ } = require("./src/services/instagram/automationEngine");
+ 
+-// Every 10 minutes: poll for new followers (fallback if webhook misses follows)
+-cron.schedule("*/10 * * * *", () => {
++// Every 5 minutes: poll for new followers (Instagram API doesn't provide real-time follow webhooks)
++cron.schedule("*/5 * * * *", () => {
+   pollNewFollowers().catch((e) =>
+     logger.warn("[Cron] pollNewFollowers error: " + e.message),
+   );
+@@ -134,7 +134,7 @@ cron.schedule("*/30 * * * *", () => {
+   );
+ });
+ 
+-logger.info("Cron jobs registered: follower-poll (10min), follow-ups (30min)");
++logger.info("Cron jobs registered: follower-poll (5min), follow-ups (30min)");
+ 
+ // ─── Start Server ──────────────────────────────────────────
+ const PORT = process.env.PORT || 5000;
+diff --git a/src/controllers/instagramController.js b/src/controllers/instagramController.js
+index 6bc18fd..f17461f 100644
+--- a/src/controllers/instagramController.js
++++ b/src/controllers/instagramController.js
+@@ -242,7 +242,8 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
+         await handleWebhookEvent(ws._id, event);
+       }
+ 
+-      // Process change events (comments, follows, likes, etc.)
++      // Process change events (comments, etc.)
++      // NOTE: Instagram API does NOT provide 'follows' webhook - followers are detected via polling
+       for (const change of entry.changes || []) {
+         // New comment on a post
+         if (change.field === "comments" && change.value) {
+@@ -254,23 +255,6 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
+           };
+           await handleWebhookEvent(ws._id, event);
+         }
+-
+-        // New follower — Meta sends this when 'follows' field is subscribed
+-        if (change.field === "follows" && change.value) {
+-          const followerId = String(change.value.id || "");
+-          if (followerId && followerId !== wsIgId) {
+-            const event = {
+-              type: "new_follower",
+-              senderId: followerId,
+-              senderUsername: change.value.username || null,
+-              senderName: change.value.name || null,
+-            };
+-            logger.info(
+-              `New follower webhook: ${followerId} → workspace ${ws._id}`,
+-            );
+-            await handleWebhookEvent(ws._id, event);
+-          }
+-        }
+       }
+     }
+   }
+diff --git a/src/services/instagram/automationEngine.js b/src/services/instagram/automationEngine.js
+index 1df75da..f743466 100644
+--- a/src/services/instagram/automationEngine.js
++++ b/src/services/instagram/automationEngine.js
+@@ -73,22 +73,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
+       return;
+     }
+ 
+-    // Schedule greeting DM after random delay (min–max minutes)
+-    const minMs = (workspace.settings?.minDelayMinutes ?? 3) * 60000;
+-    const maxMs = (workspace.settings?.maxDelayMinutes ?? 15) * 60000;
+-    const delayMs = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+-
+-    logger.info(
+-      `Scheduling greeting DM to @${senderUsername} in ${Math.round(delayMs / 60000)}min`,
+-    );
+-
+-    setTimeout(async () => {
+-      try {
+-        await sendGreetingDM(workspace, contact, type);
+-      } catch (err) {
+-        logger.error("Greeting DM error", { err: err.message });
+-      }
+-    }, delayMs);
++    // Send greeting DM immediately (no delay)
++    logger.info(`Sending greeting DM to @${senderUsername || senderId}`);
++    await sendGreetingDM(workspace, contact, type);
+   } catch (err) {
+     logger.error("handleWebhookEvent error", { err: err.message, workspaceId });
+   }
+diff --git a/src/services/instagram/metaService.js b/src/services/instagram/metaService.js
+index 9daae24..4f15e45 100644
+--- a/src/services/instagram/metaService.js
++++ b/src/services/instagram/metaService.js
+@@ -131,12 +131,12 @@ const getRecentFollowers = async (accessToken, limit = 50) => {
+ 
+ /**
+  * Subscribe the IG account to webhook events
++ * NOTE: Instagram API does NOT provide a 'follows' webhook - use polling instead
+  */
+ const subscribeWebhook = async (accessToken) => {
+   const { data } = await axios.post(`${IG_GRAPH}/me/subscribed_apps`, null, {
+     params: {
+-      subscribed_fields:
+-        "messages,messaging_postbacks,messaging_seen,comments,follows",
++      subscribed_fields: "messages,messaging_postbacks,messaging_seen,comments",
+       access_token: accessToken,
+     },
+   });
+-- 
+2.45.1.windows.1
+

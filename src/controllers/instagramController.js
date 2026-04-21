@@ -267,6 +267,34 @@ exports.getSettings = asyncHandler(async (req, res) => {
   res.json(workspace?.settings || {});
 });
 
+// ── POST /api/instagram/test/trigger ────────────────────────────────────────
+// Body: { igUserId: "123", username: "testuser", triggerType: "new_follower" }
+exports.testTrigger = asyncHandler(async (req, res) => {
+  const workspaceId = req.headers["x-workspace-id"];
+  const { igUserId, username, triggerType = "new_follower" } = req.body;
+  if (!igUserId) return res.status(400).json({ error: "igUserId is required" });
+
+  const event = {
+    type: triggerType,
+    senderId: String(igUserId),
+    senderUsername: username || null,
+    senderName: username || null,
+  };
+
+  logger.info(`[Test] Triggering ${triggerType} for ${igUserId} in workspace ${workspaceId}`);
+  await handleWebhookEvent(workspaceId, event);
+  res.json({ success: true, message: `Triggered ${triggerType} for ${igUserId}` });
+});
+
+// ── POST /api/instagram/test/poll ─────────────────────────────────────────────
+// Manually runs the follower poller right now
+exports.testPoll = asyncHandler(async (req, res) => {
+  const { pollNewFollowers } = require("../services/instagram/automationEngine");
+  logger.info("[Test] Manual poll triggered");
+  await pollNewFollowers();
+  res.json({ success: true, message: "Poll completed — check server logs" });
+});
+
 // ── PUT /api/instagram/settings ──────────────────────────────────────────────
 exports.updateSettings = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
