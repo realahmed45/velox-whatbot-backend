@@ -271,6 +271,48 @@ const deleteQuickReply = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Quick reply deleted" });
 });
 
+// @PATCH /api/inbox/:conversationId/bot — Toggle bot for a single conversation
+const toggleBot = asyncHandler(async (req, res) => {
+  const { enabled } = req.body;
+  const conv = await Conversation.findOne({
+    _id: req.params.conversationId,
+    workspaceId: req.workspace._id,
+  });
+  if (!conv) {
+    res.status(404);
+    throw new Error("Conversation not found");
+  }
+  conv.botEnabled = !!enabled;
+  if (!enabled) {
+    conv.botPausedAt = new Date();
+    conv.botPausedBy = req.user._id;
+    conv.status = "human_active";
+  } else {
+    conv.botPausedAt = null;
+    conv.status = "bot_active";
+  }
+  await conv.save();
+  res.json({ success: true, conversation: conv });
+});
+
+// @PATCH /api/inbox/:conversationId/tags — Update tags
+const updateConversationTags = asyncHandler(async (req, res) => {
+  const { tags } = req.body;
+  if (!Array.isArray(tags))
+    return res.status(400).json({ error: "tags must be an array" });
+  const conv = await Conversation.findOneAndUpdate(
+    { _id: req.params.conversationId, workspaceId: req.workspace._id },
+    {
+      $set: {
+        tags: tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean),
+      },
+    },
+    { new: true },
+  );
+  if (!conv) return res.status(404).json({ error: "Not found" });
+  res.json({ success: true, conversation: conv });
+});
+
 module.exports = {
   getConversations,
   getMessages,
@@ -282,4 +324,6 @@ module.exports = {
   getQuickReplies,
   createQuickReply,
   deleteQuickReply,
+  toggleBot,
+  updateConversationTags,
 };

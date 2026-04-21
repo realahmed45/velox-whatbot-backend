@@ -101,7 +101,7 @@ const workspaceSchema = new mongoose.Schema(
     subscription: {
       plan: {
         type: String,
-        enum: ["starter", "growth", "business", "agency"],
+        enum: ["starter", "growth", "scale", "business", "agency"],
         default: "starter",
       },
       status: {
@@ -111,6 +111,7 @@ const workspaceSchema = new mongoose.Schema(
       },
       currentPeriodStart: Date,
       currentPeriodEnd: Date,
+      activatedAt: Date,
       cancelAtPeriodEnd: { type: Boolean, default: false },
       billingCycleAnchor: Date,
     },
@@ -137,21 +138,26 @@ const workspaceSchema = new mongoose.Schema(
 
     // DM Automation messages
     dmMessages: {
+      enabled: { type: Boolean, default: true },
       greeting: {
         type: String,
-        default: "Hey {name}! 👋 Thanks for following — really appreciate the support! Feel free to DM me anytime.",
+        default:
+          "Hey {name}! 👋 Thanks for following — really appreciate the support! Feel free to DM me anytime.",
       },
       followUp1: {
         type: String,
-        default: "Hey {name}, just checking in! 😊 Let me know if you have any questions.",
+        default:
+          "Hey {name}, just checking in! 😊 Let me know if you have any questions.",
       },
       followUp2: {
         type: String,
-        default: "Hi {name}! Wanted to make sure you saw my last message. Happy to help with anything!",
+        default:
+          "Hi {name}! Wanted to make sure you saw my last message. Happy to help with anything!",
       },
       followUp3: {
         type: String,
-        default: "Hey {name}, last message from me — just know I'm here whenever you're ready! 🙌",
+        default:
+          "Hey {name}, last message from me — just know I'm here whenever you're ready! 🙌",
       },
       followUpIntervalHours: { type: Number, default: 3 },
     },
@@ -168,8 +174,145 @@ const workspaceSchema = new mongoose.Schema(
           enum: ["contains", "exact"],
           default: "contains",
         },
+        // Optional: attach Call-to-Action button to the DM
+        ctaLabel: String,
+        ctaUrl: String,
       },
     ],
+
+    // DM keyword triggers — when user DMs a keyword, auto-reply
+    dmKeywordTriggers: [
+      {
+        keyword: { type: String, required: true, trim: true },
+        replyMessage: { type: String, required: true },
+        enabled: { type: Boolean, default: true },
+        matchType: {
+          type: String,
+          enum: ["contains", "exact"],
+          default: "contains",
+        },
+        ctaLabel: String,
+        ctaUrl: String,
+      },
+    ],
+
+    // Story-reply trigger — when someone replies to your story
+    storyReplyTrigger: {
+      enabled: { type: Boolean, default: false },
+      replyMessage: {
+        type: String,
+        default:
+          "Thanks for replying to my story {name}! 💙 Got something cool for you — just DM 'INFO' to get details.",
+      },
+      // Optional per-keyword routing
+      keywords: [
+        {
+          keyword: String,
+          replyMessage: String,
+          matchType: {
+            type: String,
+            enum: ["contains", "exact"],
+            default: "contains",
+          },
+        },
+      ],
+    },
+
+    // Story-mention trigger — when someone @mentions you in their story
+    storyMentionTrigger: {
+      enabled: { type: Boolean, default: false },
+      replyMessage: {
+        type: String,
+        default:
+          "Omg {name}, thanks so much for the mention! 🥹 Love it. DM me anytime!",
+      },
+    },
+
+    // Share-to-story / share-to-DM — when someone shares your post or DMs you a share
+    shareToStoryTrigger: {
+      enabled: { type: Boolean, default: false },
+      replyMessage: {
+        type: String,
+        default:
+          "Thanks for sharing {name}! 💙 That means a lot. Here's something for you — DM 'MORE' to unlock.",
+      },
+    },
+
+    // Live-comment trigger — keyword auto-reply on live-stream comments
+    liveCommentTriggers: [
+      {
+        keyword: String,
+        replyMessage: String,
+        enabled: { type: Boolean, default: true },
+      },
+    ],
+
+    // Ref-URL triggers — deep links (ig.me/m/username?ref=CODE) → custom welcome
+    refUrlTriggers: [
+      {
+        code: { type: String, required: true, trim: true },
+        label: String,
+        replyMessage: { type: String, required: true },
+        enabled: { type: Boolean, default: true },
+      },
+    ],
+
+    // Ice-breakers / conversation starters
+    conversationStarters: {
+      enabled: { type: Boolean, default: false },
+      greeting: {
+        type: String,
+        default: "👋 Hi! How can I help you today?",
+      },
+      options: [
+        {
+          label: String, // shown as quick-reply button
+          payload: String, // internal id
+          replyMessage: String,
+        },
+      ],
+    },
+
+    // Global fallback auto-reply — matches nothing else
+    fallbackReply: {
+      enabled: { type: Boolean, default: true },
+      message: {
+        type: String,
+        default:
+          "Hey {name}! 👋 Thanks for the message. A human will get back to you shortly.",
+      },
+      cooldownHours: { type: Number, default: 24 },
+    },
+
+    // Business-hours auto-reply (sent when outside hours)
+    awayReply: {
+      enabled: { type: Boolean, default: false },
+      message: {
+        type: String,
+        default:
+          "Thanks for reaching out {name}! 🌙 We're away right now but will get back to you within business hours.",
+      },
+    },
+
+    // AI Conversational Bot (Scale/Premium plan only)
+    aiBot: {
+      enabled: { type: Boolean, default: false },
+      personality: {
+        type: String,
+        default:
+          "You are a friendly, professional assistant for our Instagram business. Be concise, warm, and helpful. Keep replies under 2 sentences when possible. Use emojis sparingly.",
+      },
+      businessInfo: {
+        type: String,
+        default: "",
+      },
+      model: { type: String, default: "gpt-4o-mini" },
+      maxTurnsPerConversation: { type: Number, default: 20 },
+      escalateOnKeywords: {
+        type: [String],
+        default: ["human", "agent", "support", "help"],
+      },
+    },
 
     // Agency
     isAgencyManaged: { type: Boolean, default: false },
@@ -202,6 +345,12 @@ workspaceSchema.methods.getPlanLimits = function () {
   const limits = {
     starter: { messages: 500, contacts: 50, flows: 3, numbers: 1 },
     growth: { messages: 5000, contacts: 500, flows: Infinity, numbers: 1 },
+    scale: {
+      messages: Infinity,
+      contacts: Infinity,
+      flows: Infinity,
+      numbers: 3,
+    },
     business: {
       messages: 20000,
       contacts: Infinity,

@@ -1,298 +1,626 @@
 /**
  * Botlify — Instagram DM Automation Engine
- * Triggers: post_comment (keyword match), direct_message
- * Sends greeting DM immediately on trigger
- * Sends 3 follow-ups at N-hour intervals if no reply
+ *
+ * Handles every trigger we support:
+ *   - POST_COMMENT          (webhook: comments)       → keywordTriggers
+ *   - DIRECT_MESSAGE        (webhook: messages)       → welcome DM or dmKeywordTriggers or AI bot or fallback
+ *   - DM_KEYWORD            (subset of DIRECT_MESSAGE) — keyword match on inbound DM
+ *   - STORY_REPLY           (messages with reply-to story)
+ *   - STORY_MENTION         (webhook: mentions)
+ *   - SHARE_TO_STORY        (messages with attachment=share)
+ *   - REF_URL               (messaging_referral)
+ *   - POSTBACK              (messaging_postbacks)     → conversation starters
+ *   - LIVE_COMMENT          (webhook: live_comments)
+ *   - AI_REPLY              (fallback when Scale plan + ai_bot enabled)
  */
+
 const Workspace = require("../../models/Workspace");
 const Contact = require("../../models/Contact");
 const Conversation = require("../../models/Conversation");
 const Message = require("../../models/Message");
-const { sendDM, getRecentFollowers } = require("./metaService");
+const { sendDM } = require("./metaService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
+const { planHasFeature, FEATURES } = require("../../config/plans");
+const ai = require("../ai/openaiService");
 
 const TRIGGERS = {
-  NEW_FOLLOWER: "new_follower",
-  POST_LIKE: "post_like",
-  STORY_MENTION: "story_mention",
   POST_COMMENT: "post_comment",
-  KEYWORD_DM: "keyword_dm",
   DIRECT_MESSAGE: "direct_message",
+  DM_KEYWORD: "dm_keyword",
+  STORY_REPLY: "story_reply",
+  STORY_MENTION: "story_mention",
+  SHARE_TO_STORY: "share_to_story",
+  REF_URL: "ref_url",
+  POSTBACK: "postback",
+  LIVE_COMMENT: "live_comment",
+  WELCOME: "welcome",
+  FALLBACK: "fallback",
+  AI_REPLY: "ai_reply",
 };
 
-// ── Keyword match helper ──────────────────────────────────────────────────────
-const matchesKeyword = (commentText, trigger) => {
-  if (!commentText || !trigger.enabled) return false;
-  const text = commentText.toLowerCase().trim();
-  const kw = trigger.keyword.toLowerCase().trim();
-  return trigger.matchType === "exact" ? text === kw : text.includes(kw);
+// ── Utilities ────────────────────────────────────────────────────────────────
+const personalize = (tpl, contact) => {
+  const firstName = (
+    contact?.name ||
+    contact?.igUsername ||
+    contact?.username ||
+    "there"
+  )
+    .toString()
+    .split(" ")[0];
+  return (tpl || "")
+    .replace(/\{name\}/gi, firstName)
+    .replace(/\{first_name\}/gi, firstName)
+    .replace(/\{username\}/gi, contact?.igUsername || contact?.username || "");
 };
 
-// ── Main entry: handle incoming Instagram webhook event ───────────────────────
+const matchKeyword = (text, kw, matchType = "contains") => {
+  if (!text || !kw) return false;
+  const a = text.toLowerCase().trim();
+  const b = kw.toLowerCase().trim();
+  return matchType === "exact" ? a === b : a.includes(b);
+};
+
+const isWithinBusinessHours = (workspace) => {
+  const hours = workspace.businessHours || [];
+  if (!hours.length) return true;
+  const now = new Date();
+  const days = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
+  const today = hours.find((h) => h.day === days[now.getDay()]);
+  if (!today || !today.isOpen) return false;
+  const current = now.getHours() * 60 + now.getMinutes();
+  const toMin = (s) => {
+    const [h, m] = (s || "00:00").split(":").map(Number);
+    return h * 60 + m;
+  };
+  return current >= toMin(today.openTime) && current <= toMin(today.closeTime);
+};
+
+const upsertContact = async (
+  workspaceId,
+  senderId,
+  { username, name, source } = {},
+) => {
+  let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
+  if (!contact) {
+    contact = await Contact.create({
+      workspaceId,
+      igUserId: senderId,
+      igUsername: username || senderId,
+      username: username || senderId,
+      name: name || username || "Instagram User",
+      source: source || "instagram",
+      tags: [],
+    });
+  }
+  return contact;
+};
+
+const getOrCreateConversation = async (
+  workspace,
+  contact,
+  channel = "instagram",
+) => {
+  let conv = await Conversation.findOne({
+    workspaceId: workspace._id,
+    contactId: contact._id,
+    channelType: channel,
+  }).sort({ lastMessageAt: -1 });
+  if (!conv) {
+    conv = await Conversation.create({
+      workspaceId: workspace._id,
+      contactId: contact._id,
+      channelType: channel,
+      status: "bot_active",
+      botEnabled: true,
+      metadata: {},
+    });
+  }
+  return conv;
+};
+
+const recentlyTriggered = async (
+  conv,
+  triggerType,
+  keyword = null,
+  hours = 24,
+) => {
+  const since = new Date(Date.now() - hours * 3600000);
+  const filter = {
+    conversationId: conv._id,
+    direction: "outbound",
+    createdAt: { $gte: since },
+    "metadata.triggerType": triggerType,
+  };
+  if (keyword) filter["metadata.keyword"] = keyword;
+  return await Message.exists(filter);
+};
+
+const sendAndLog = async ({
+  workspace,
+  contact,
+  conversation,
+  text,
+  triggerType,
+  keyword = null,
+}) => {
+  const limit = workspace.usage?.messagesLimit ?? 500;
+  const used = workspace.usage?.messagesThisMonth ?? 0;
+  if (limit > 0 && used >= limit && limit < 999999999) {
+    logger.warn(`[Plan] ${workspace._id} hit DM limit ${used}/${limit}`);
+    return { success: false, reason: "plan_limit" };
+  }
+
+  const accessToken = decrypt(workspace.instagram.accessToken);
+  const finalText = personalize(text, contact);
+
+  const brand =
+    workspace.settings?.botlifyBrandingEnabled &&
+    !planHasFeature(
+      workspace.subscription?.plan || "starter",
+      FEATURES.REMOVE_BRANDING,
+    )
+      ? "\n\n—\nSent via Botlify.app"
+      : "";
+
+  const result = await sendDM(accessToken, contact.igUserId, finalText + brand);
+
+  await Message.create({
+    workspaceId: workspace._id,
+    conversationId: conversation._id,
+    contactId: contact._id,
+    direction: "outbound",
+    channelType: "instagram",
+    content: { type: "text", text: finalText },
+    status: result.success ? "sent" : "failed",
+    metadata: { triggerType, keyword, igMessageId: result.messageId },
+  });
+
+  conversation.lastMessageAt = new Date();
+  conversation.lastMessagePreview = finalText.slice(0, 120);
+  conversation.lastBotMessageAt = new Date();
+  conversation.botReplyCount = (conversation.botReplyCount || 0) + 1;
+  conversation.metadata = {
+    ...(conversation.metadata || {}),
+    lastTriggerType: triggerType,
+  };
+  conversation.markModified("metadata");
+  await conversation.save();
+
+  await Workspace.updateOne(
+    { _id: workspace._id },
+    { $inc: { "usage.messagesThisMonth": 1 } },
+  );
+
+  contact.messageCount = (contact.messageCount || 0) + 1;
+  contact.lastSeenAt = new Date();
+  contact.lastTriggerType = triggerType;
+  await contact.save();
+
+  logger.info(
+    `[Bot] ${triggerType} → @${contact.igUsername || contact.username} (ws=${workspace._id})`,
+  );
+  return { success: result.success };
+};
+
+const guardSend = (workspace, contact, conversation) => {
+  if (!workspace.settings?.automationEnabled) return "automation_disabled";
+  if (workspace.instagram?.status !== "connected") return "ig_disconnected";
+  if (contact?.optedOut) return "contact_opted_out";
+  if (conversation && conversation.botEnabled === false) return "bot_paused";
+  return null;
+};
+
+// ── Individual trigger handlers ──────────────────────────────────────────────
+const handlePostComment = async (
+  workspace,
+  senderId,
+  commentText,
+  commentMeta = {},
+) => {
+  const triggers = (workspace.keywordTriggers || []).filter((t) => t.enabled);
+  const matched = triggers.find((t) =>
+    matchKeyword(commentText, t.keyword, t.matchType),
+  );
+  if (!matched) return;
+
+  const contact = await upsertContact(workspace._id, senderId, {
+    username: commentMeta.username,
+    name: commentMeta.username,
+    source: "post_comment",
+  });
+  const conv = await getOrCreateConversation(workspace, contact);
+  const blocked = guardSend(workspace, contact, conv);
+  if (blocked) return logger.debug(`[handlePostComment] blocked: ${blocked}`);
+
+  if (await recentlyTriggered(conv, TRIGGERS.POST_COMMENT, matched.keyword, 24))
+    return;
+
+  let body = matched.replyMessage;
+  if (matched.ctaLabel && matched.ctaUrl)
+    body += `\n\n👉 ${matched.ctaLabel}: ${matched.ctaUrl}`;
+
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: body,
+    triggerType: TRIGGERS.POST_COMMENT,
+    keyword: matched.keyword,
+  });
+};
+
+const handleDMKeyword = async (workspace, contact, conv, text) => {
+  const triggers = (workspace.dmKeywordTriggers || []).filter((t) => t.enabled);
+  const matched = triggers.find((t) =>
+    matchKeyword(text, t.keyword, t.matchType),
+  );
+  if (!matched) return false;
+  if (await recentlyTriggered(conv, TRIGGERS.DM_KEYWORD, matched.keyword, 1))
+    return true;
+
+  let body = matched.replyMessage;
+  if (matched.ctaLabel && matched.ctaUrl)
+    body += `\n\n👉 ${matched.ctaLabel}: ${matched.ctaUrl}`;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: body,
+    triggerType: TRIGGERS.DM_KEYWORD,
+    keyword: matched.keyword,
+  });
+  return true;
+};
+
+const handleWelcome = async (workspace, contact, conv) => {
+  if (conv.botReplyCount > 0) return false;
+  if (workspace.dmMessages?.enabled === false) return false;
+  const greeting = workspace.dmMessages?.greeting;
+  if (!greeting) return false;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: greeting,
+    triggerType: TRIGGERS.WELCOME,
+  });
+  return true;
+};
+
+const handleStoryReply = async (workspace, contact, conv, text) => {
+  const cfg = workspace.storyReplyTrigger;
+  if (!cfg?.enabled) return false;
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_REPLY))
+    return false;
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 6)) return true;
+
+  let message = cfg.replyMessage;
+  const routed = (cfg.keywords || []).find((k) =>
+    matchKeyword(text, k.keyword, k.matchType),
+  );
+  if (routed?.replyMessage) message = routed.replyMessage;
+
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: message,
+    triggerType: TRIGGERS.STORY_REPLY,
+  });
+  return true;
+};
+
+const handleStoryMention = async (workspace, senderId, meta = {}) => {
+  const cfg = workspace.storyMentionTrigger;
+  if (!cfg?.enabled) return;
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_MENTION))
+    return;
+
+  const contact = await upsertContact(workspace._id, senderId, {
+    username: meta.username,
+    source: "story_mention",
+  });
+  const conv = await getOrCreateConversation(workspace, contact);
+  const blocked = guardSend(workspace, contact, conv);
+  if (blocked) return;
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 12)) return;
+
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: cfg.replyMessage,
+    triggerType: TRIGGERS.STORY_MENTION,
+  });
+};
+
+const handleShare = async (workspace, contact, conv) => {
+  const cfg = workspace.shareToStoryTrigger;
+  if (!cfg?.enabled) return false;
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.SHARE_TO_STORY))
+    return false;
+  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 6))
+    return true;
+
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: cfg.replyMessage,
+    triggerType: TRIGGERS.SHARE_TO_STORY,
+  });
+  return true;
+};
+
+const handleRefUrl = async (workspace, senderId, refCode, meta = {}) => {
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.REF_URL)) return;
+  const trig = (workspace.refUrlTriggers || []).find(
+    (t) => t.enabled && t.code === refCode,
+  );
+  if (!trig) return;
+
+  const contact = await upsertContact(workspace._id, senderId, {
+    username: meta.username,
+    source: `ref_${refCode}`,
+  });
+  const conv = await getOrCreateConversation(workspace, contact);
+  const blocked = guardSend(workspace, contact, conv);
+  if (blocked) return;
+
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: trig.replyMessage,
+    triggerType: TRIGGERS.REF_URL,
+    keyword: refCode,
+  });
+};
+
+const handlePostback = async (workspace, contact, conv, payload) => {
+  if (
+    !planHasFeature(
+      workspace.subscription?.plan,
+      FEATURES.CONVERSATION_STARTERS,
+    )
+  )
+    return false;
+  const cfg = workspace.conversationStarters;
+  if (!cfg?.enabled) return false;
+  const opt = (cfg.options || []).find((o) => o.payload === payload);
+  if (!opt) return false;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: opt.replyMessage,
+    triggerType: TRIGGERS.POSTBACK,
+    keyword: payload,
+  });
+  return true;
+};
+
+const handleLiveComment = async (workspace, senderId, text, meta = {}) => {
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.LIVE_COMMENT))
+    return;
+  const matched = (workspace.liveCommentTriggers || []).find(
+    (t) => t.enabled && matchKeyword(text, t.keyword, "contains"),
+  );
+  if (!matched) return;
+  const contact = await upsertContact(workspace._id, senderId, {
+    username: meta.username,
+    source: "live_comment",
+  });
+  const conv = await getOrCreateConversation(workspace, contact);
+  const blocked = guardSend(workspace, contact, conv);
+  if (blocked) return;
+  if (await recentlyTriggered(conv, TRIGGERS.LIVE_COMMENT, matched.keyword, 6))
+    return;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: matched.replyMessage,
+    triggerType: TRIGGERS.LIVE_COMMENT,
+    keyword: matched.keyword,
+  });
+};
+
+const handleAwayReply = async (workspace, contact, conv) => {
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.BUSINESS_HOURS))
+    return false;
+  const cfg = workspace.awayReply;
+  if (!cfg?.enabled) return false;
+  if (isWithinBusinessHours(workspace)) return false;
+  if (await recentlyTriggered(conv, "away_reply", null, 6)) return true;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: cfg.message,
+    triggerType: "away_reply",
+  });
+  return true;
+};
+
+const handleAIReply = async (workspace, contact, conv, text) => {
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.AI_BOT))
+    return false;
+  if (!workspace.aiBot?.enabled) return false;
+  if (
+    (conv.botReplyCount || 0) >= (workspace.aiBot.maxTurnsPerConversation || 20)
+  )
+    return false;
+
+  const msgs = await Message.find({ conversationId: conv._id })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .lean();
+  const history = msgs
+    .reverse()
+    .map((m) => ({
+      role: m.direction === "outbound" ? "assistant" : "user",
+      content: m.content?.text || "",
+    }))
+    .filter((m) => m.content);
+
+  const { reply, escalate } = await ai.generateReply({
+    workspace,
+    history,
+    userMessage: text,
+    contact,
+  });
+
+  if (escalate) {
+    conv.status = "awaiting_human";
+    await conv.save();
+  }
+
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: reply,
+    triggerType: TRIGGERS.AI_REPLY,
+  });
+  return true;
+};
+
+const handleFallback = async (workspace, contact, conv) => {
+  const cfg = workspace.fallbackReply;
+  if (!cfg?.enabled) return false;
+  const cooldown = cfg.cooldownHours || 24;
+  if (await recentlyTriggered(conv, TRIGGERS.FALLBACK, null, cooldown))
+    return true;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text: cfg.message,
+    triggerType: TRIGGERS.FALLBACK,
+  });
+  return true;
+};
+
+// ── MAIN ENTRY ───────────────────────────────────────────────────────────────
 const handleWebhookEvent = async (workspaceId, event) => {
   try {
     const workspace = await Workspace.findById(workspaceId).select(
       "+instagram.accessToken +instagram.igUserId",
     );
-    if (!workspace || workspace.instagram?.status !== "connected") return;
+    if (!workspace) return;
+    if (workspace.instagram?.status !== "connected") return;
     if (!workspace.settings?.automationEnabled) return;
 
     const { type, senderId, senderUsername, senderName, text } = event;
+    if (!senderId) return;
 
-    // Don't DM yourself
-    const ownIgId = decrypt(workspace.instagram.igUserId);
-    if (senderId === ownIgId) return;
-
-    // ── Comment trigger: check against keyword triggers ───────────────────────
-    if (type === TRIGGERS.POST_COMMENT) {
-      const matched = (workspace.keywordTriggers || []).find((t) =>
-        matchesKeyword(text, t),
-      );
-      if (!matched) return; // comment doesn't match any keyword — ignore
-
-      logger.info(
-        `[Keyword] Comment "${text}" matched keyword "${matched.keyword}" for workspace ${workspaceId}`,
-      );
-
-      // Find or create contact
-      let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
-      if (!contact) {
-        contact = await Contact.create({
-          workspaceId,
-          igUserId: senderId,
-          username: senderUsername || senderId,
-          name: senderName || senderUsername || "Instagram User",
-          source: "keyword_comment",
-          tags: [],
-        });
-      }
-
-      // Dedup: don't re-trigger same keyword within 24h
-      const recentKeyword = await Conversation.findOne({
-        workspaceId,
-        contactId: contact._id,
-        "metadata.triggerType": TRIGGERS.KEYWORD_DM,
-        "metadata.keyword": matched.keyword,
-        createdAt: { $gte: new Date(Date.now() - 24 * 3600000) },
-      });
-      if (recentKeyword) {
-        logger.debug(`Dedup: @${senderUsername} already triggered keyword "${matched.keyword}" recently`);
-        return;
-      }
-
-      logger.info(`Sending keyword DM to @${senderUsername || senderId} for keyword "${matched.keyword}"`);
-      await sendKeywordDM(workspace, contact, matched);
-      return;
-    }
-
-    // ── Direct message trigger: auto-reply ────────────────────────────────────
-    if (type !== TRIGGERS.DIRECT_MESSAGE) return;
-
-    // Find or create contact
-    let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
-    if (!contact) {
-      contact = await Contact.create({
-        workspaceId,
-        igUserId: senderId,
-        username: senderUsername || senderId,
-        name: senderName || senderUsername || "Instagram User",
-        source: type,
-        tags: [],
-      });
-    }
-
-    // Dedup: don't re-trigger greeting within 24h for same trigger type
-    const recent = await Conversation.findOne({
-      workspaceId,
-      contactId: contact._id,
-      "metadata.triggerType": type,
-      createdAt: { $gte: new Date(Date.now() - 24 * 3600000) },
-    });
-    if (recent) {
-      logger.debug(
-        `Dedup: @${senderUsername} already triggered ${type} recently`,
-      );
-      return;
-    }
-
-    // Send greeting DM immediately (no delay)
-    logger.info(`Sending greeting DM to @${senderUsername || senderId}`);
-    await sendGreetingDM(workspace, contact, type);
-  } catch (err) {
-    logger.error("handleWebhookEvent error", { err: err.message, workspaceId });
-  }
-};
-
-// ── Send greeting DM and create conversation ──────────────────────────────────
-const sendGreetingDM = async (workspace, contact, triggerType) => {
-  const accessToken = decrypt(workspace.instagram.accessToken);
-  const igUserId = decrypt(workspace.instagram.igUserId);
-  const firstName = (contact.name || contact.username).split(" ")[0];
-
-  const greetingText = (
-    workspace.dmMessages?.greeting || "Hey {name}! 👋 Thanks for following!"
-  ).replace(/\{name\}/gi, firstName);
-
-  const result = await sendDM(accessToken, contact.igUserId, greetingText);
-
-  const followUpIntervalMs =
-    (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
-
-  const conversation = await Conversation.create({
-    workspaceId: workspace._id,
-    contactId: contact._id,
-    channelType: "instagram",
-    status: "open",
-    metadata: {
-      triggerType,
-      followUpStep: 1,
-      nextFollowupAt: new Date(Date.now() + followUpIntervalMs),
-    },
-  });
-
-  await Message.create({
-    workspaceId: workspace._id,
-    conversationId: conversation._id,
-    contactId: contact._id,
-    direction: "outbound",
-    channelType: "instagram",
-    content: { type: "text", text: greetingText },
-    status: result.success ? "sent" : "failed",
-    metadata: { igMessageId: result.messageId },
-  });
-
-  logger.info(`Greeting DM sent to @${contact.username}`);
-};
-
-// ── Send keyword-triggered DM ─────────────────────────────────────────────────
-const sendKeywordDM = async (workspace, contact, trigger) => {
-  const accessToken = decrypt(workspace.instagram.accessToken);
-  const firstName = (contact.name || contact.username).split(" ")[0];
-  const text = trigger.replyMessage.replace(/\{name\}/gi, firstName);
-
-  const result = await sendDM(accessToken, contact.igUserId, text);
-
-  const conversation = await Conversation.create({
-    workspaceId: workspace._id,
-    contactId: contact._id,
-    channelType: "instagram",
-    status: "open",
-    metadata: {
-      triggerType: TRIGGERS.KEYWORD_DM,
-      keyword: trigger.keyword,
-      followUpStep: 0, // no follow-ups for keyword DMs (one-shot reply)
-    },
-  });
-
-  await Message.create({
-    workspaceId: workspace._id,
-    conversationId: conversation._id,
-    contactId: contact._id,
-    direction: "outbound",
-    channelType: "instagram",
-    content: { type: "text", text },
-    status: result.success ? "sent" : "failed",
-    metadata: { igMessageId: result.messageId },
-  });
-
-  logger.info(`Keyword DM sent to @${contact.username} (keyword: "${trigger.keyword}")`);
-};
-
-// ── Follow-up scheduler (called by cron job every 30 mins) ───────────────────
-const processScheduledFollowups = async () => {
-  const pending = await Conversation.find({
-    channelType: "instagram",
-    status: "open",
-    "metadata.followUpStep": { $in: [1, 2, 3] },
-    "metadata.nextFollowupAt": { $lte: new Date() },
-  }).populate("contactId");
-
-  for (const conv of pending) {
     try {
-      const hasReplied = await Message.exists({
-        conversationId: conv._id,
-        direction: "inbound",
+      const ownIgId = decrypt(workspace.instagram.igUserId);
+      if (senderId === ownIgId) return;
+    } catch {}
+
+    if (type === TRIGGERS.POST_COMMENT) {
+      await handlePostComment(workspace, senderId, text, {
+        username: senderUsername,
       });
-      if (hasReplied) {
-        conv.status = "resolved";
-        conv.metadata.followUpStep = 0;
-        conv.markModified("metadata");
-        await conv.save();
-        continue;
-      }
-
-      const workspace = await Workspace.findById(conv.workspaceId).select(
-        "+instagram.accessToken +instagram.igUserId",
-      );
-      if (!workspace || workspace.instagram?.status !== "connected") continue;
-      if (!workspace.settings?.automationEnabled) continue;
-
-      const accessToken = decrypt(workspace.instagram.accessToken);
-      const igUserId = decrypt(workspace.instagram.igUserId);
-      const contact = conv.contactId;
-      const firstName = (contact.name || contact.username).split(" ")[0];
-      const step = conv.metadata.followUpStep;
-
-      const msgs = [
-        workspace.dmMessages?.followUp1 || "Hey {name}, just checking in! 😊",
-        workspace.dmMessages?.followUp2 ||
-          "Hi {name}! Happy to help with anything!",
-        workspace.dmMessages?.followUp3 ||
-          "Hey {name}, last message from me — I'm here whenever you're ready! 🙌",
-      ];
-
-      const text = (msgs[step - 1] || "").replace(/\{name\}/gi, firstName);
-      if (!text.trim()) continue;
-
-      const result = await sendDM(accessToken, contact.igUserId, text);
-
-      await Message.create({
-        workspaceId: workspace._id,
-        conversationId: conv._id,
-        contactId: contact._id,
-        direction: "outbound",
-        channelType: "instagram",
-        content: { type: "text", text },
-        status: result.success ? "sent" : "failed",
-        metadata: { igMessageId: result.messageId, followUpStep: step },
-      });
-
-      const intervalMs =
-        (workspace.dmMessages?.followUpIntervalHours ?? 3) * 3600000;
-      const nextStep = step + 1;
-
-      if (nextStep > 3) {
-        conv.status = "resolved";
-        conv.metadata.followUpStep = 0;
-      } else {
-        conv.metadata.followUpStep = nextStep;
-        conv.metadata.nextFollowupAt = new Date(Date.now() + intervalMs);
-      }
-      conv.markModified("metadata");
-      await conv.save();
-
-      logger.info(`Follow-up ${step} sent to @${contact.username}`);
-    } catch (err) {
-      logger.error("Follow-up error", { convId: conv._id, err: err.message });
+      return;
     }
+    if (type === TRIGGERS.STORY_MENTION) {
+      await handleStoryMention(workspace, senderId, {
+        username: senderUsername,
+      });
+      return;
+    }
+    if (type === TRIGGERS.LIVE_COMMENT) {
+      await handleLiveComment(workspace, senderId, text, {
+        username: senderUsername,
+      });
+      return;
+    }
+    if (type === TRIGGERS.REF_URL) {
+      await handleRefUrl(workspace, senderId, event.refCode, {
+        username: senderUsername,
+      });
+      return;
+    }
+
+    if (
+      type === TRIGGERS.DIRECT_MESSAGE ||
+      type === TRIGGERS.STORY_REPLY ||
+      type === TRIGGERS.SHARE_TO_STORY ||
+      type === TRIGGERS.POSTBACK
+    ) {
+      const contact = await upsertContact(workspace._id, senderId, {
+        username: senderUsername,
+        name: senderName,
+        source: type,
+      });
+      const conv = await getOrCreateConversation(workspace, contact);
+      const blocked = guardSend(workspace, contact, conv);
+      if (blocked) return;
+
+      if (text) {
+        await Message.create({
+          workspaceId: workspace._id,
+          conversationId: conv._id,
+          contactId: contact._id,
+          direction: "inbound",
+          channelType: "instagram",
+          content: { type: "text", text },
+          status: "received",
+          metadata: { inboundTriggerType: type },
+        });
+        conv.lastMessageAt = new Date();
+        conv.lastMessagePreview = text.slice(0, 120);
+        conv.unreadByAgentCount = (conv.unreadByAgentCount || 0) + 1;
+        await conv.save();
+      }
+
+      if (type === TRIGGERS.POSTBACK) {
+        if (await handlePostback(workspace, contact, conv, event.payload))
+          return;
+      }
+      if (type === TRIGGERS.STORY_REPLY) {
+        if (await handleStoryReply(workspace, contact, conv, text)) return;
+      }
+      if (type === TRIGGERS.SHARE_TO_STORY) {
+        if (await handleShare(workspace, contact, conv)) return;
+      }
+      if (await handleAwayReply(workspace, contact, conv)) return;
+      if (text && (await handleDMKeyword(workspace, contact, conv, text)))
+        return;
+      if (text && (await handleAIReply(workspace, contact, conv, text))) return;
+      if (await handleWelcome(workspace, contact, conv)) return;
+      await handleFallback(workspace, contact, conv);
+      return;
+    }
+  } catch (err) {
+    logger.error("handleWebhookEvent error", {
+      err: err.message,
+      stack: err.stack,
+      workspaceId,
+    });
   }
 };
 
-// ── Follower polling ──────────────────────────────────────────────────────────
-// Instagram Graph API does NOT provide a /me/followers endpoint.
-// New-follower DM automation via polling is not possible with the Instagram API.
-// Automation is triggered by: incoming DMs and post comments (via webhooks).
-const pollNewFollowers = async () => {
-  // No-op: Instagram API doesn't support fetching follower lists
-  logger.debug(
-    "[Poller] pollNewFollowers: skipped — Instagram API does not expose followers list",
-  );
+const processScheduledFollowups = async () => {
+  return;
 };
 
 module.exports = {
   handleWebhookEvent,
   TRIGGERS,
   processScheduledFollowups,
-  pollNewFollowers,
+  _internal: { personalize, matchKeyword, isWithinBusinessHours },
 };

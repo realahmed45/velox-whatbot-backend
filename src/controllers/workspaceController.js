@@ -263,18 +263,27 @@ const disconnectWhatsApp = asyncHandler(async (req, res) => {
 
 // @PUT /api/workspaces/:workspaceId/dm-messages — Save DM automation messages
 const saveDmMessages = asyncHandler(async (req, res) => {
-  const { greeting, followUp1, followUp2, followUp3, followUpIntervalHours } = req.body;
+  const {
+    enabled,
+    greeting,
+    followUp1,
+    followUp2,
+    followUp3,
+    followUpIntervalHours,
+  } = req.body;
   const update = {};
+  if (enabled !== undefined) update["dmMessages.enabled"] = !!enabled;
   if (greeting !== undefined) update["dmMessages.greeting"] = greeting;
   if (followUp1 !== undefined) update["dmMessages.followUp1"] = followUp1;
   if (followUp2 !== undefined) update["dmMessages.followUp2"] = followUp2;
   if (followUp3 !== undefined) update["dmMessages.followUp3"] = followUp3;
-  if (followUpIntervalHours !== undefined) update["dmMessages.followUpIntervalHours"] = followUpIntervalHours;
+  if (followUpIntervalHours !== undefined)
+    update["dmMessages.followUpIntervalHours"] = followUpIntervalHours;
 
   const workspace = await Workspace.findByIdAndUpdate(
     req.workspace._id,
     { $set: update },
-    { new: true }
+    { new: true },
   );
   res.json({ success: true, dmMessages: workspace.dmMessages });
 });
@@ -283,21 +292,26 @@ const saveDmMessages = asyncHandler(async (req, res) => {
 const saveAutomationSettings = asyncHandler(async (req, res) => {
   const { minDelayMinutes, maxDelayMinutes, automationEnabled } = req.body;
   const update = {};
-  if (minDelayMinutes !== undefined) update["settings.minDelayMinutes"] = minDelayMinutes;
-  if (maxDelayMinutes !== undefined) update["settings.maxDelayMinutes"] = maxDelayMinutes;
-  if (automationEnabled !== undefined) update["settings.automationEnabled"] = automationEnabled;
+  if (minDelayMinutes !== undefined)
+    update["settings.minDelayMinutes"] = minDelayMinutes;
+  if (maxDelayMinutes !== undefined)
+    update["settings.maxDelayMinutes"] = maxDelayMinutes;
+  if (automationEnabled !== undefined)
+    update["settings.automationEnabled"] = automationEnabled;
 
   const workspace = await Workspace.findByIdAndUpdate(
     req.workspace._id,
     { $set: update },
-    { new: true }
+    { new: true },
   );
   res.json({ success: true, settings: workspace.settings });
 });
 
 // ── GET keyword triggers ──────────────────────────────────────────────────────
 const getKeywordTriggers = asyncHandler(async (req, res) => {
-  const workspace = await Workspace.findById(req.workspace._id).select("keywordTriggers");
+  const workspace = await Workspace.findById(req.workspace._id).select(
+    "keywordTriggers",
+  );
   res.json({ keywordTriggers: workspace.keywordTriggers || [] });
 });
 
@@ -307,17 +321,118 @@ const saveKeywordTriggers = asyncHandler(async (req, res) => {
   if (!Array.isArray(keywordTriggers)) {
     return res.status(400).json({ error: "keywordTriggers must be an array" });
   }
-  // Validate each trigger
   for (const t of keywordTriggers) {
-    if (!t.keyword?.trim()) return res.status(400).json({ error: "Each trigger needs a keyword" });
-    if (!t.replyMessage?.trim()) return res.status(400).json({ error: "Each trigger needs a replyMessage" });
+    if (!t.keyword?.trim())
+      return res.status(400).json({ error: "Each trigger needs a keyword" });
+    if (!t.replyMessage?.trim())
+      return res
+        .status(400)
+        .json({ error: "Each trigger needs a replyMessage" });
   }
   const workspace = await Workspace.findByIdAndUpdate(
     req.workspace._id,
     { $set: { keywordTriggers } },
-    { new: true }
+    { new: true },
   );
   res.json({ success: true, keywordTriggers: workspace.keywordTriggers });
+});
+
+// ── Generic getter/setter for any single-field trigger config ─────────────────
+const getTriggerField = (fieldName) =>
+  asyncHandler(async (req, res) => {
+    const ws = await Workspace.findById(req.workspace._id).select(fieldName);
+    res.json({ [fieldName]: ws?.[fieldName] ?? null });
+  });
+
+const setTriggerField = (fieldName) =>
+  asyncHandler(async (req, res) => {
+    const value = req.body[fieldName];
+    if (value === undefined) {
+      return res.status(400).json({ error: `${fieldName} is required` });
+    }
+    const ws = await Workspace.findByIdAndUpdate(
+      req.workspace._id,
+      { $set: { [fieldName]: value } },
+      { new: true },
+    );
+    res.json({ success: true, [fieldName]: ws[fieldName] });
+  });
+
+// DM keyword triggers
+const getDmKeywordTriggers = getTriggerField("dmKeywordTriggers");
+const saveDmKeywordTriggers = asyncHandler(async (req, res) => {
+  const { dmKeywordTriggers } = req.body;
+  if (!Array.isArray(dmKeywordTriggers))
+    return res
+      .status(400)
+      .json({ error: "dmKeywordTriggers must be an array" });
+  const ws = await Workspace.findByIdAndUpdate(
+    req.workspace._id,
+    { $set: { dmKeywordTriggers } },
+    { new: true },
+  );
+  res.json({ success: true, dmKeywordTriggers: ws.dmKeywordTriggers });
+});
+
+// Story reply / mention / share / live comment / ref urls / starters
+const getStoryReplyTrigger = getTriggerField("storyReplyTrigger");
+const setStoryReplyTrigger = setTriggerField("storyReplyTrigger");
+const getStoryMentionTrigger = getTriggerField("storyMentionTrigger");
+const setStoryMentionTrigger = setTriggerField("storyMentionTrigger");
+const getShareToStoryTrigger = getTriggerField("shareToStoryTrigger");
+const setShareToStoryTrigger = setTriggerField("shareToStoryTrigger");
+const getLiveCommentTriggers = getTriggerField("liveCommentTriggers");
+const setLiveCommentTriggers = setTriggerField("liveCommentTriggers");
+const getRefUrlTriggers = getTriggerField("refUrlTriggers");
+const setRefUrlTriggers = setTriggerField("refUrlTriggers");
+const getConversationStarters = getTriggerField("conversationStarters");
+const setConversationStarters = setTriggerField("conversationStarters");
+const getFallbackReply = getTriggerField("fallbackReply");
+const setFallbackReply = setTriggerField("fallbackReply");
+const getAwayReply = getTriggerField("awayReply");
+const setAwayReply = setTriggerField("awayReply");
+
+// AI Bot config (Scale plan only — gated at route level)
+const getAiBotConfig = asyncHandler(async (req, res) => {
+  const ws = await Workspace.findById(req.workspace._id).select("aiBot");
+  res.json({ aiBot: ws?.aiBot ?? null });
+});
+const saveAiBotConfig = asyncHandler(async (req, res) => {
+  const { aiBot } = req.body;
+  if (!aiBot) return res.status(400).json({ error: "aiBot is required" });
+  const ws = await Workspace.findByIdAndUpdate(
+    req.workspace._id,
+    { $set: { aiBot } },
+    { new: true },
+  );
+  res.json({ success: true, aiBot: ws.aiBot });
+});
+
+// All trigger/bot config in one shot (used by Automation page)
+const getAutomationConfig = asyncHandler(async (req, res) => {
+  const ws = await Workspace.findById(req.workspace._id).select(
+    "keywordTriggers dmKeywordTriggers storyReplyTrigger storyMentionTrigger shareToStoryTrigger liveCommentTriggers refUrlTriggers conversationStarters fallbackReply awayReply aiBot dmMessages settings subscription businessHours",
+  );
+  res.json({
+    keywordTriggers: ws.keywordTriggers || [],
+    dmKeywordTriggers: ws.dmKeywordTriggers || [],
+    storyReplyTrigger: ws.storyReplyTrigger || { enabled: false },
+    storyMentionTrigger: ws.storyMentionTrigger || { enabled: false },
+    shareToStoryTrigger: ws.shareToStoryTrigger || { enabled: false },
+    liveCommentTriggers: ws.liveCommentTriggers || [],
+    refUrlTriggers: ws.refUrlTriggers || [],
+    conversationStarters: ws.conversationStarters || {
+      enabled: false,
+      options: [],
+    },
+    fallbackReply: ws.fallbackReply || { enabled: true },
+    awayReply: ws.awayReply || { enabled: false },
+    aiBot: ws.aiBot || { enabled: false },
+    dmMessages: ws.dmMessages || {},
+    settings: ws.settings || {},
+    subscription: ws.subscription || {},
+    businessHours: ws.businessHours || [],
+  });
 });
 
 module.exports = {
@@ -333,6 +448,27 @@ module.exports = {
   saveAutomationSettings,
   getKeywordTriggers,
   saveKeywordTriggers,
+  getDmKeywordTriggers,
+  saveDmKeywordTriggers,
+  getStoryReplyTrigger,
+  setStoryReplyTrigger,
+  getStoryMentionTrigger,
+  setStoryMentionTrigger,
+  getShareToStoryTrigger,
+  setShareToStoryTrigger,
+  getLiveCommentTriggers,
+  setLiveCommentTriggers,
+  getRefUrlTriggers,
+  setRefUrlTriggers,
+  getConversationStarters,
+  setConversationStarters,
+  getFallbackReply,
+  setFallbackReply,
+  getAwayReply,
+  setAwayReply,
+  getAiBotConfig,
+  saveAiBotConfig,
+  getAutomationConfig,
   inviteMember,
   completeOnboarding,
   updateOnboardingStep,

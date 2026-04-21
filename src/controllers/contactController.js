@@ -197,6 +197,71 @@ const addTag = asyncHandler(async (req, res) => {
   res.json({ success: true, contact });
 });
 
+// @DELETE /api/contacts/:id/tags/:tag — Remove tag
+const removeTag = asyncHandler(async (req, res) => {
+  const tag = String(req.params.tag || "")
+    .toLowerCase()
+    .trim();
+  const contact = await Contact.findOneAndUpdate(
+    { _id: req.params.id, workspaceId: req.workspace._id },
+    { $pull: { tags: tag } },
+    { new: true },
+  );
+  if (!contact) {
+    res.status(404);
+    throw new Error("Contact not found");
+  }
+  res.json({ success: true, contact });
+});
+
+// @POST /api/contacts/:id/opt-out — Mark contact as opted out
+const optOutContact = asyncHandler(async (req, res) => {
+  const contact = await Contact.findOneAndUpdate(
+    { _id: req.params.id, workspaceId: req.workspace._id },
+    { $set: { optedOut: true, optedOutAt: new Date() } },
+    { new: true },
+  );
+  if (!contact) {
+    res.status(404);
+    throw new Error("Contact not found");
+  }
+  res.json({ success: true, contact });
+});
+
+// @POST /api/contacts/:id/opt-in — Re-subscribe
+const optInContact = asyncHandler(async (req, res) => {
+  const contact = await Contact.findOneAndUpdate(
+    { _id: req.params.id, workspaceId: req.workspace._id },
+    { $set: { optedOut: false, optedOutAt: null, optedIn: true } },
+    { new: true },
+  );
+  if (!contact) {
+    res.status(404);
+    throw new Error("Contact not found");
+  }
+  res.json({ success: true, contact });
+});
+
+// @POST /api/contacts/:id/notes — Add a note
+const addNote = asyncHandler(async (req, res) => {
+  const { content } = req.body;
+  if (!content) {
+    res.status(400);
+    throw new Error("content required");
+  }
+  const contact = await Contact.findOne({
+    _id: req.params.id,
+    workspaceId: req.workspace._id,
+  });
+  if (!contact) {
+    res.status(404);
+    throw new Error("Contact not found");
+  }
+  contact.notes.push({ content, addedBy: req.user._id });
+  await contact.save();
+  res.json({ success: true, contact });
+});
+
 module.exports = {
   getContacts,
   getContact,
@@ -205,4 +270,8 @@ module.exports = {
   exportContacts,
   importContacts,
   addTag,
+  removeTag,
+  optOutContact,
+  optInContact,
+  addNote,
 };

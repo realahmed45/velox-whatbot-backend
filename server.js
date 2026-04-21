@@ -24,6 +24,7 @@ const billingRoutes = require("./src/routes/billing");
 const instagramRoutes = require("./src/routes/instagram");
 const broadcastRoutes = require("./src/routes/broadcasts");
 const uploadRoutes = require("./src/routes/upload");
+const planRoutes = require("./src/routes/plans");
 
 const app = express();
 const server = http.createServer(app);
@@ -98,6 +99,7 @@ app.use("/api/billing", billingRoutes);
 app.use("/api/instagram", instagramRoutes);
 app.use("/api/broadcasts", broadcastRoutes);
 app.use("/api/upload", uploadRoutes);
+app.use("/api/plans", planRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
@@ -114,27 +116,20 @@ initSocket(server);
 initQueues();
 
 // ─── Instagram Cron Jobs ───────────────────────────────────
+// Note: Instagram Graph API does NOT expose follow events or a followers list,
+// so we do not poll for new followers. We only process scheduled follow-ups.
 const cron = require("node-cron");
 const {
   processScheduledFollowups,
-  pollNewFollowers,
 } = require("./src/services/instagram/automationEngine");
 
-// Every 5 minutes: poll for new followers (Instagram API doesn't provide real-time follow webhooks)
-cron.schedule("*/5 * * * *", () => {
-  pollNewFollowers().catch((e) =>
-    logger.warn("[Cron] pollNewFollowers error: " + e.message),
-  );
-});
-
-// Every 30 minutes: send scheduled follow-up DMs
 cron.schedule("*/30 * * * *", () => {
   processScheduledFollowups().catch((e) =>
     logger.warn("[Cron] processScheduledFollowups error: " + e.message),
   );
 });
 
-logger.info("Cron jobs registered: follower-poll (5min), follow-ups (30min)");
+logger.info("Cron jobs registered: follow-ups (30min)");
 
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;

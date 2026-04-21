@@ -1,7 +1,7 @@
 {
-  "name": "flowgram-backend",
-  "version": "1.0.0",
-  "description": "Flowgram Backend API - Instagram DM Automation SaaS",
+  "name": "botlify-backend",
+  "version": "1.1.0",
+  "description": "Botlify Backend API - Instagram DM Automation SaaS",
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
@@ -31,6 +31,7 @@
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.8",
+    "openai": "^4.67.3",
     "pdfkit": "^0.14.0",
     "socket.io": "^4.6.2",
     "uuid": "^9.0.1",

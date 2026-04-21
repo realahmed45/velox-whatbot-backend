@@ -12,6 +12,8 @@ const {
   getQuickReplies,
   createQuickReply,
   deleteQuickReply,
+  toggleBot,
+  updateConversationTags,
 } = require("../controllers/inboxController");
 
 router.use(protect);
@@ -28,5 +30,7 @@ router.post("/:conversationId/resolve", resolveConversation);
 router.post("/:conversationId/send", sendAgentMessage);
 router.post("/:conversationId/notes", addNote);
 router.patch("/:conversationId/assign", assignConversation);
+router.patch("/:conversationId/bot", toggleBot);
+router.patch("/:conversationId/tags", updateConversationTags);
 
 module.exports = router;

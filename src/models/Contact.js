@@ -55,14 +55,30 @@ const contactSchema = new mongoose.Schema(
     deletedAt: Date,
 
     optedIn: { type: Boolean, default: true },
+    optedOut: { type: Boolean, default: false },
+    optedOutAt: Date,
+
+    // Last automation trigger that touched this contact
+    lastTriggerType: String,
+    source: { type: String, default: "instagram" },
+
+    // Free-form display name fallback
+    username: { type: String, trim: true },
   },
   {
     timestamps: true,
   },
 );
 
-// Unique contact per workspace per phone
-contactSchema.index({ workspaceId: 1, phone: 1 }, { unique: true });
+// Unique contact per workspace per phone (sparse — allows null for IG-only contacts)
+contactSchema.index(
+  { workspaceId: 1, phone: 1 },
+  { unique: true, partialFilterExpression: { phone: { $type: "string" } } },
+);
+contactSchema.index(
+  { workspaceId: 1, igUserId: 1 },
+  { unique: true, partialFilterExpression: { igUserId: { $type: "string" } } },
+);
 contactSchema.index({ workspaceId: 1, tags: 1 });
 contactSchema.index({ workspaceId: 1, lastSeenAt: -1 });
 

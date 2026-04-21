@@ -30,9 +30,7 @@ router.get("/settings", protect, igCtrl.getSettings);
 router.put("/settings", protect, igCtrl.updateSettings);
 
 // ── Debug / Test (protected) ──────────────────────────────────────────────────
-// Manually fire a new_follower event for a given igUserId → triggers DM immediately
+// Manually fire a trigger for testing
 router.post("/test/trigger", protect, igCtrl.testTrigger);
-// Manually run the follower poller right now
-router.post("/test/poll", protect, igCtrl.testPoll);
 
 module.exports = router;

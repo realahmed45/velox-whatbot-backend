@@ -7,3 +7,8 @@ coverage/
 .DS_Store
 Thumbs.db
 *.local
+
+# Accidentally-committed secret files (never commit these)
+%TEMP%gitcreds.txt
+*gitcreds*
+*.secret

@@ -210,7 +210,6 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
   if (body.object !== "instagram") return;
 
   for (const entry of body.entry || []) {
-    // Instagram Login API: entry.id is the IG user (account) id
     const entryIgUserId = String(entry.id);
 
     const workspaces = await Workspace.find({
@@ -226,34 +225,108 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
       }
       if (wsIgId !== entryIgUserId) continue;
 
-      // Process messaging events (incoming DMs)
+      // ── Messaging events (DMs, story replies, shares, postbacks, referrals) ──
       for (const msg of entry.messaging || []) {
         const senderId = msg.sender?.id;
         if (!senderId || senderId === wsIgId) continue;
 
-        const event = {
+        // Postback (conversation starter / CTA button click)
+        if (msg.postback) {
+          await handleWebhookEvent(ws._id, {
+            type: "postback",
+            senderId,
+            payload: msg.postback.payload,
+            text: msg.postback.title,
+          });
+          continue;
+        }
+
+        // Referral (ref URL deep link)
+        if (msg.referral) {
+          await handleWebhookEvent(ws._id, {
+            type: "ref_url",
+            senderId,
+            refCode: msg.referral.ref,
+          });
+          continue;
+        }
+
+        const message = msg.message || {};
+
+        // Story reply
+        if (message.reply_to?.story) {
+          await handleWebhookEvent(ws._id, {
+            type: "story_reply",
+            senderId,
+            text: message.text,
+            storyId: message.reply_to.story.id,
+          });
+          continue;
+        }
+
+        // Share (attachment type=share / story_mention)
+        const attachments = message.attachments || [];
+        const isShare = attachments.some((a) =>
+          ["share", "story_mention", "template"].includes(a.type),
+        );
+        if (isShare) {
+          await handleWebhookEvent(ws._id, {
+            type: "share_to_story",
+            senderId,
+            text: message.text,
+          });
+          continue;
+        }
+
+        // Plain direct message
+        await handleWebhookEvent(ws._id, {
           type: "direct_message",
           senderId,
           senderUsername: null,
           senderName: null,
-          text: msg.message?.text,
-        };
-
-        await handleWebhookEvent(ws._id, event);
+          text: message.text,
+        });
       }
 
-      // Process change events (comments, etc.)
-      // NOTE: Instagram API does NOT provide 'follows' webhook - followers are detected via polling
+      // ── Change events (comments, mentions, live_comments) ────────────────────
       for (const change of entry.changes || []) {
-        // New comment on a post
-        if (change.field === "comments" && change.value) {
-          const event = {
+        const field = change.field;
+        const v = change.value || {};
+
+        if (field === "comments") {
+          await handleWebhookEvent(ws._id, {
             type: "post_comment",
-            senderId: change.value.from?.id,
-            text: change.value.text,
-            postId: change.value.media?.id,
-          };
-          await handleWebhookEvent(ws._id, event);
+            senderId: v.from?.id,
+            senderUsername: v.from?.username,
+            text: v.text,
+            postId: v.media?.id,
+          });
+        } else if (field === "mentions" || field === "story_mentions") {
+          await handleWebhookEvent(ws._id, {
+            type: "story_mention",
+            senderId: v.from?.id || v.sender_id,
+            senderUsername: v.from?.username,
+          });
+        } else if (field === "live_comments") {
+          await handleWebhookEvent(ws._id, {
+            type: "live_comment",
+            senderId: v.from?.id,
+            senderUsername: v.from?.username,
+            text: v.text,
+          });
+        } else if (field === "messaging_postbacks") {
+          await handleWebhookEvent(ws._id, {
+            type: "postback",
+            senderId: v.sender?.id,
+            payload: v.postback?.payload,
+            text: v.postback?.title,
+          });
+        } else if (field === "messaging_referral") {
+          await handleWebhookEvent(ws._id, {
+            type: "ref_url",
+            senderId: v.sender?.id,
+            refCode: v.referral?.ref,
+          });
         }
       }
     }
@@ -290,17 +363,6 @@ exports.testTrigger = asyncHandler(async (req, res) => {
     success: true,
     message: `Triggered ${triggerType} for ${igUserId}`,
   });
-});
-
-// ── POST /api/instagram/test/poll ─────────────────────────────────────────────
-// Manually runs the follower poller right now
-exports.testPoll = asyncHandler(async (req, res) => {
-  const {
-    pollNewFollowers,
-  } = require("../services/instagram/automationEngine");
-  logger.info("[Test] Manual poll triggered");
-  await pollNewFollowers();
-  res.json({ success: true, message: "Poll completed — check server logs" });
 });
 
 // ── PUT /api/instagram/settings ──────────────────────────────────────────────

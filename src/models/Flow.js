@@ -70,7 +70,6 @@ const flowNodeSchema = new mongoose.Schema(
       type: String,
       enum: [
         // Triggers — Instagram
-        "new_follower",
         "keyword_dm",
         "direct_message",
         "story_mention",

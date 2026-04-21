@@ -9,6 +9,10 @@ const {
   exportContacts,
   importContacts,
   addTag,
+  removeTag,
+  optOutContact,
+  optInContact,
+  addNote,
 } = require("../controllers/contactController");
 
 router.use(protect);
@@ -19,5 +23,9 @@ router.post("/import", importContacts);
 router.route("/").get(getContacts);
 router.route("/:id").get(getContact).put(updateContact).delete(deleteContact);
 router.post("/:id/tags", addTag);
+router.delete("/:id/tags/:tag", removeTag);
+router.post("/:id/opt-out", optOutContact);
+router.post("/:id/opt-in", optInContact);
+router.post("/:id/notes", addNote);
 
 module.exports = router;
