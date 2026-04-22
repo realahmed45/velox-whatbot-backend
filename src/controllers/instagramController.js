@@ -156,6 +156,119 @@ exports.disconnect = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
+// ── POST /api/instagram/deauthorize ──────────────────────────────────────────
+// Meta calls this when a user removes the app from their IG account.
+// We parse the signed_request, find the workspace by encrypted igUserId, and
+// wipe the stored Instagram credentials. Respond 200 fast.
+const parseSignedRequest = (signedRequest, appSecret) => {
+  if (!signedRequest || !appSecret) return null;
+  const [sigB64, payloadB64] = signedRequest.split(".");
+  if (!sigB64 || !payloadB64) return null;
+  const b64urlToBuf = (s) =>
+    Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  const expected = crypto
+    .createHmac("sha256", appSecret)
+    .update(payloadB64)
+    .digest();
+  const given = b64urlToBuf(sigB64);
+  if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given))
+    return null;
+  try {
+    return JSON.parse(b64urlToBuf(payloadB64).toString("utf8"));
+  } catch {
+    return null;
+  }
+};
+
+exports.deauthorize = asyncHandler(async (req, res) => {
+  const signed = req.body?.signed_request;
+  const payload = parseSignedRequest(signed, IG_APP_SECRET);
+  if (!payload?.user_id) {
+    logger.warn("[IG deauthorize] invalid signed_request");
+    return res.sendStatus(200);
+  }
+  const igUserId = String(payload.user_id);
+  // Find workspace by matching the encrypted igUserId
+  const all = await Workspace.find({
+    "instagram.status": "connected",
+  }).select("+instagram.igUserId");
+  for (const ws of all) {
+    try {
+      if (decrypt(ws.instagram.igUserId) === igUserId) {
+        await Workspace.findByIdAndUpdate(ws._id, {
+          $unset: {
+            "instagram.igUserId": 1,
+            "instagram.accessToken": 1,
+            "instagram.pageId": 1,
+            "instagram.sessionCookie": 1,
+          },
+          "instagram.status": "disconnected",
+          "instagram.webhookSubscribed": false,
+        });
+        logger.info(`[IG deauthorize] cleared workspace ${ws._id}`);
+      }
+    } catch {}
+  }
+  res.sendStatus(200);
+});
+
+// ── POST /api/instagram/data-deletion ────────────────────────────────────────
+// Meta requires a public data-deletion endpoint. Users can request full
+// deletion of their data. We wipe the workspace and return a status URL +
+// confirmation_code as Meta expects.
+exports.dataDeletion = asyncHandler(async (req, res) => {
+  const signed = req.body?.signed_request;
+  const payload = parseSignedRequest(signed, IG_APP_SECRET);
+  if (!payload?.user_id) {
+    return res.status(400).json({ error: "Invalid signed_request" });
+  }
+  const igUserId = String(payload.user_id);
+  const code = crypto.randomBytes(8).toString("hex");
+  // Best-effort wipe of any workspace connected to this IG user
+  const all = await Workspace.find({
+    "instagram.status": "connected",
+  }).select("+instagram.igUserId");
+  for (const ws of all) {
+    try {
+      if (decrypt(ws.instagram.igUserId) === igUserId) {
+        await Workspace.findByIdAndUpdate(ws._id, {
+          $unset: {
+            "instagram.igUserId": 1,
+            "instagram.accessToken": 1,
+            "instagram.pageId": 1,
+            "instagram.sessionCookie": 1,
+            "instagram.username": 1,
+            "instagram.displayName": 1,
+            "instagram.profilePicture": 1,
+          },
+          "instagram.status": "disconnected",
+          "instagram.webhookSubscribed": false,
+        });
+        logger.info(`[IG data-deletion] wiped workspace ${ws._id} code=${code}`);
+      }
+    } catch {}
+  }
+  const base = process.env.API_PUBLIC_URL || "https://velox-whatbot-backend.onrender.com";
+  res.json({
+    url: `${base}/api/instagram/data-deletion/status?code=${code}`,
+    confirmation_code: code,
+  });
+});
+
+// Public status page Meta links users to after a deletion request.
+exports.dataDeletionStatus = (req, res) => {
+  const code = String(req.query.code || "");
+  res.type("html").send(
+    `<!doctype html><html><head><title>Data Deletion - Botlify</title></head>
+<body style="font-family:system-ui;max-width:640px;margin:60px auto;padding:20px">
+<h1>Botlify Data Deletion</h1>
+<p>Your Instagram data has been removed from Botlify.</p>
+<p>Confirmation code: <code>${code.replace(/[^a-f0-9]/gi, "")}</code></p>
+<p>If you have further questions contact support@botlify.app.</p>
+</body></html>`,
+  );
+};
+
 // ── GET /api/instagram/connection ────────────────────────────────────────────
 exports.getConnection = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
@@ -370,27 +483,42 @@ exports.getSettings = asyncHandler(async (req, res) => {
 });
 
 // ── POST /api/instagram/test/trigger ────────────────────────────────────────
-// Body: { igUserId: "123", username: "testuser", triggerType: "post_comment", text: "DM me" }
+// Body: { triggerType: "direct_message"|"post_comment"|...,
+//         text: "hi", username?: "demo_user" }
+// Runs the automation engine end-to-end against the real workspace config so
+// a conversation + inbound + outbound message appear in the Inbox. Great for
+// product demos/screencasts when a real IG→IG tester loop isn't available.
 exports.testTrigger = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
-  const { igUserId, username, triggerType = "post_comment", text } = req.body;
-  if (!igUserId) return res.status(400).json({ error: "igUserId is required" });
+  const {
+    triggerType = "direct_message",
+    text = "hi",
+    username = "demo_user",
+    igUserId,
+  } = req.body;
+
+  // Synthesize a fake-but-stable IG sender id per workspace so repeated
+  // simulate clicks reuse the same demo contact/conversation.
+  const fakeSenderId =
+    igUserId || `demo_${crypto.createHash("md5").update(String(workspaceId)).digest("hex").slice(0, 12)}`;
 
   const event = {
     type: triggerType,
-    senderId: String(igUserId),
-    senderUsername: username || null,
-    senderName: username || null,
-    text: text || null,
+    senderId: fakeSenderId,
+    senderUsername: username,
+    senderName: username,
+    text,
   };
 
   logger.info(
-    `[Test] Triggering ${triggerType} for ${igUserId} in workspace ${workspaceId}`,
+    `[Simulate] ${triggerType} text="${text}" ws=${workspaceId}`,
   );
   await handleWebhookEvent(workspaceId, event);
   res.json({
     success: true,
-    message: `Triggered ${triggerType} for ${igUserId}`,
+    message:
+      "Simulated event dispatched. Open the Inbox tab to see the conversation.",
+    event,
   });
 });
 
@@ -436,6 +564,63 @@ exports.resubscribeWebhook = asyncHandler(async (req, res) => {
     });
     return res.status(502).json({ success: false, message: msg });
   }
+});
+
+// ── GET /api/instagram/debug/identity ────────────────────────────────────────
+// Returns the decrypted IG numeric user ID + workspace ID so you can build
+// a Postman webhook payload that exactly mimics what Meta would POST.
+exports.debugIdentity = asyncHandler(async (req, res) => {
+  const workspaceId = req.headers["x-workspace-id"];
+  const ws = await Workspace.findById(workspaceId).select(
+    "+instagram.igUserId +instagram.pageId instagram.username",
+  );
+  if (!ws?.instagram?.igUserId) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Instagram not connected" });
+  }
+  let igUserId, pageId;
+  try {
+    igUserId = decrypt(ws.instagram.igUserId);
+  } catch (e) {
+    return res
+      .status(500)
+      .json({ success: false, message: "Could not decrypt IG user ID" });
+  }
+  try {
+    pageId = ws.instagram.pageId ? decrypt(ws.instagram.pageId) : null;
+  } catch {
+    pageId = null;
+  }
+  const webhookUrl = `${req.protocol}://${req.get("host")}/api/instagram/webhook`;
+  res.json({
+    success: true,
+    workspaceId: String(ws._id),
+    username: ws.instagram.username,
+    igUserId,
+    pageId,
+    webhookUrl,
+    examplePayload: {
+      object: "instagram",
+      entry: [
+        {
+          id: igUserId,
+          time: Math.floor(Date.now() / 1000),
+          messaging: [
+            {
+              sender: { id: "REPLACE_WITH_TESTER_IG_USER_ID" },
+              recipient: { id: igUserId },
+              timestamp: Date.now(),
+              message: {
+                mid: `m_${Date.now()}`,
+                text: "price",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  });
 });
 
 // ── GET /api/instagram/diagnose ──────────────────────────────────────────────

@@ -19,6 +19,14 @@ router.delete("/connect", protect, igCtrl.disconnect);
 // Get connection status
 router.get("/connection", protect, igCtrl.getConnection);
 
+// ── Meta-required public callbacks (NO auth — Meta calls these directly) ─────
+// Deauthorize: Meta POSTs here when a user removes the app from their IG.
+router.post("/deauthorize", igCtrl.deauthorize);
+// Data deletion request: user-initiated full wipe. Returns {url, confirmation_code}.
+router.post("/data-deletion", igCtrl.dataDeletion);
+// Public status page Meta links the user to after a deletion request.
+router.get("/data-deletion/status", igCtrl.dataDeletionStatus);
+
 // ── Webhook ───────────────────────────────────────────────────────────────────
 // Meta sends GET to verify the webhook
 router.get("/webhook", igCtrl.verifyWebhook);
@@ -34,6 +42,8 @@ router.put("/settings", protect, igCtrl.updateSettings);
 router.post("/test/trigger", protect, igCtrl.testTrigger);
 // Health check — "why isn't my automation working?"
 router.get("/diagnose", protect, igCtrl.diagnose);
+// Reveal decrypted IG identity for Postman webhook simulation
+router.get("/debug/identity", protect, igCtrl.debugIdentity);
 // Force re-subscribe to Meta webhook fields
 router.post("/webhook/resubscribe", protect, igCtrl.resubscribeWebhook);
 
