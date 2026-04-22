@@ -63,7 +63,7 @@ const messageSchema = new mongoose.Schema(
     // Status: sent → delivered → read
     status: {
       type: String,
-      enum: ["pending", "sent", "delivered", "read", "failed"],
+      enum: ["pending", "sent", "delivered", "read", "failed", "received"],
       default: "pending",
     },
     statusUpdatedAt: Date,
@@ -77,6 +77,16 @@ const messageSchema = new mongoose.Schema(
     nodeId: String,
 
     failureReason: String,
+
+    // Channel (whatsapp / instagram) — for multi-channel inbox
+    channelType: {
+      type: String,
+      enum: ["whatsapp", "instagram"],
+      default: "whatsapp",
+    },
+
+    // Free-form metadata (trigger type, keyword, provider ids, etc.)
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   {
     timestamps: true,

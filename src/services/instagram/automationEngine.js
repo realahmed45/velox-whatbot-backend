@@ -179,9 +179,12 @@ const sendAndLog = async ({
     conversationId: conversation._id,
     contactId: contact._id,
     direction: "outbound",
+    sender: "bot",
+    type: "text",
+    text: finalText,
     channelType: "instagram",
-    content: { type: "text", text: finalText },
     status: result.success ? "sent" : "failed",
+    failureReason: result.success ? undefined : result.error,
     metadata: { triggerType, keyword, igMessageId: result.messageId },
   });
 
@@ -576,8 +579,10 @@ const handleWebhookEvent = async (workspaceId, event) => {
           conversationId: conv._id,
           contactId: contact._id,
           direction: "inbound",
+          sender: "customer",
+          type: "text",
+          text,
           channelType: "instagram",
-          content: { type: "text", text },
           status: "received",
           metadata: { inboundTriggerType: type },
         });
