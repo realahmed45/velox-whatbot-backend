@@ -156,6 +156,68 @@ const getSubscribedApps = async (accessToken) => {
   return data?.data || [];
 };
 
+/**
+ * Publish a photo post to Instagram
+ * Two-step process:
+ * 1. Create media container
+ * 2. Publish the container
+ *
+ * @param {string} accessToken - Instagram access token
+ * @param {string} igUserId - Instagram user ID
+ * @param {string} imageUrl - Publicly accessible image URL (must be HTTPS)
+ * @param {string} caption - Post caption (optional)
+ * @returns {Promise<{success: boolean, mediaId?: string, error?: string}>}
+ */
+const publishPost = async (accessToken, igUserId, imageUrl, caption = "") => {
+  try {
+    // Step 1: Create media container
+    const { data: containerData } = await axios.post(
+      `${IG_GRAPH}/${igUserId}/media`,
+      {
+        image_url: imageUrl,
+        caption: caption,
+      },
+      {
+        params: { access_token: accessToken },
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+      },
+    );
+
+    const containerId = containerData.id;
+    if (!containerId) {
+      throw new Error("No container ID returned from Instagram");
+    }
+
+    // Step 2: Publish the container
+    const { data: publishData } = await axios.post(
+      `${IG_GRAPH}/${igUserId}/media_publish`,
+      {
+        creation_id: containerId,
+      },
+      {
+        params: { access_token: accessToken },
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+      },
+    );
+
+    return {
+      success: true,
+      mediaId: publishData.id,
+    };
+  } catch (err) {
+    logger.error("Instagram publishPost error", {
+      error: err.response?.data || err.message,
+      imageUrl,
+    });
+    return {
+      success: false,
+      error: err.response?.data?.error?.message || err.message,
+    };
+  }
+};
+
 module.exports = {
   exchangeCodeForToken,
   getLongLivedToken,
@@ -165,4 +227,5 @@ module.exports = {
   sendDM,
   subscribeWebhook,
   getSubscribedApps,
+  publishPost,
 };

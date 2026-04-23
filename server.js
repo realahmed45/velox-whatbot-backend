@@ -25,6 +25,7 @@ const instagramRoutes = require("./src/routes/instagram");
 const broadcastRoutes = require("./src/routes/broadcasts");
 const uploadRoutes = require("./src/routes/upload");
 const planRoutes = require("./src/routes/plans");
+const scheduledPostsRoutes = require("./src/routes/scheduledPosts");
 
 const app = express();
 const server = http.createServer(app);
@@ -104,6 +105,7 @@ app.use("/api/instagram", instagramRoutes);
 app.use("/api/broadcasts", broadcastRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/plans", planRoutes);
+app.use("/api/scheduled-posts", scheduledPostsRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
@@ -133,7 +135,15 @@ cron.schedule("*/30 * * * *", () => {
   );
 });
 
-logger.info("Cron jobs registered: follow-ups (30min)");
+// Process scheduled posts every 5 minutes
+const { processScheduledPosts } = require("./src/jobs/scheduledPostsJob");
+cron.schedule("*/5 * * * *", () => {
+  processScheduledPosts().catch((e) =>
+    logger.warn("[Cron] processScheduledPosts error: " + e.message),
+  );
+});
+
+logger.info("Cron jobs registered: follow-ups (30min), scheduled-posts (5min)");
 
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
