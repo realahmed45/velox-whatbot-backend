@@ -5,6 +5,7 @@ const { protect } = require("../middleware/auth");
 const {
   uploadImage,
   uploadDocument,
+  uploadBuffer,
 } = require("../services/cloudinaryService");
 
 router.use(protect);
@@ -18,11 +19,18 @@ router.post(
       res.status(400);
       throw new Error("No image file provided");
     }
+
+    // Upload buffer to Cloudinary
+    const result = await uploadBuffer(req.file.buffer, {
+      folder: "scheduled-posts",
+      resource_type: "image",
+    });
+
     res.json({
       success: true,
-      url: req.file.path,
-      publicId: req.file.filename,
-      format: req.file.mimetype,
+      url: result.secure_url,
+      publicId: result.public_id,
+      format: result.format,
     });
   }),
 );
@@ -36,10 +44,17 @@ router.post(
       res.status(400);
       throw new Error("No document file provided");
     }
+
+    // Upload buffer to Cloudinary
+    const result = await uploadBuffer(req.file.buffer, {
+      folder: "documents",
+      resource_type: "raw",
+    });
+
     res.json({
       success: true,
-      url: req.file.path,
-      publicId: req.file.filename,
+      url: result.secure_url,
+      publicId: result.public_id,
       fileName: req.file.originalname,
     });
   }),
