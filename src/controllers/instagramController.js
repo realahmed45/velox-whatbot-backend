@@ -254,7 +254,7 @@ exports.dataDeletion = asyncHandler(async (req, res) => {
     } catch {}
   }
   const base =
-    process.env.API_PUBLIC_URL || "https://botlify-backend.onrender.com";
+    process.env.API_PUBLIC_URL || "https://velox-whatbot-backend.onrender.com";
   res.json({
     url: `${base}/api/instagram/data-deletion/status?code=${code}`,
     confirmation_code: code,

@@ -70,13 +70,19 @@ app.use(
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      // Default allow-list when env not set: localhost + Vercel preview/prod.
+      // Default allow-list (always on, regardless of env):
+      //  - localhost / 127.0.0.1 (any port) for dev
+      //  - any *.vercel.app preview/prod
+      //  - any *.onrender.com (server-to-server)
+      //  - botlify.site apex + www subdomain (production frontend)
       const fallback = [
         /^https?:\/\/localhost(:\d+)?$/,
+        /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
         /\.vercel\.app$/,
         /\.onrender\.com$/,
+        /^https?:\/\/(www\.)?botlify\.site$/,
       ];
-      if (!origin) return cb(null, true); // server-to-server / curl
+      if (!origin) return cb(null, true); // server-to-server / curl / health
       if (allowed.includes(origin)) return cb(null, true);
       if (fallback.some((re) => re.test(origin))) return cb(null, true);
       return cb(new Error(`CORS: origin ${origin} not allowed`));
