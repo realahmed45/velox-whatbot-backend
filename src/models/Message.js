@@ -87,6 +87,14 @@ const messageSchema = new mongoose.Schema(
 
     // Free-form metadata (trigger type, keyword, provider ids, etc.)
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+    // AI sentiment analysis on inbound messages
+    sentiment: {
+      type: String,
+      enum: ["positive", "neutral", "negative", "angry"],
+    },
+    intent: String,
+    urgency: { type: String, enum: ["low", "medium", "high"] },
   },
   {
     timestamps: true,
@@ -96,5 +104,13 @@ const messageSchema = new mongoose.Schema(
 messageSchema.index({ conversationId: 1, createdAt: 1 });
 messageSchema.index({ workspaceId: 1, createdAt: -1 });
 messageSchema.index({ workspaceId: 1, direction: 1, createdAt: -1 });
+// TTL: auto-delete messages older than 180 days to keep collection bounded.
+// Honour an env override if operators want to retain longer.
+const MESSAGE_TTL_SECONDS =
+  Number(process.env.MESSAGE_TTL_DAYS || 180) * 24 * 60 * 60;
+messageSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: MESSAGE_TTL_SECONDS },
+);
 
 module.exports = mongoose.model("Message", messageSchema);

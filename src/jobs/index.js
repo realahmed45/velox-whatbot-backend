@@ -25,6 +25,7 @@ const initQueues = () => {
     // Register workers
     require("./broadcastJob")(connection);
     require("./usageResetJob")(connection);
+    require("./igTokenRefreshJob")(connection);
 
     logger.info("BullMQ queues initialized");
   } catch (err) {

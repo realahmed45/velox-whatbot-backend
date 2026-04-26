@@ -17,6 +17,12 @@ const scheduledPostSchema = new mongoose.Schema(
       type: String,
       required: true, // Cloudinary URL
     },
+    // Post kind — regular feed image or Story (C6)
+    postType: {
+      type: String,
+      enum: ["image", "story"],
+      default: "image",
+    },
     caption: {
       type: String,
       default: "",
@@ -36,6 +42,31 @@ const scheduledPostSchema = new mongoose.Schema(
     publishedAt: Date,
     publishedPostId: String, // Instagram media ID after successful publish
     errorMessage: String,
+
+    // Recurring posts — cron-style repeats
+    recurring: {
+      enabled: { type: Boolean, default: false },
+      // frequency: daily | weekly | monthly
+      frequency: {
+        type: String,
+        enum: ["daily", "weekly", "monthly"],
+        default: "weekly",
+      },
+      // days of week for weekly (0=Sun..6=Sat)
+      daysOfWeek: [{ type: Number, min: 0, max: 6 }],
+      // hour + minute to repeat at
+      hour: { type: Number, default: 9 },
+      minute: { type: Number, default: 0 },
+      // stop after N occurrences (optional)
+      maxOccurrences: Number,
+      occurrences: { type: Number, default: 0 },
+      // parent recurring post id (for child instances)
+      parentId: { type: mongoose.Schema.Types.ObjectId, ref: "ScheduledPost" },
+    },
+
+    // Bulk upload batch id (to group a CSV import)
+    bulkBatchId: String,
+
     metadata: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

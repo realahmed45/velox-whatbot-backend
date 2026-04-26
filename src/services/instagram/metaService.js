@@ -94,13 +94,24 @@ const sendDM = async (accessToken, recipientIgId, text) => {
     );
     return { success: true, messageId: data.message_id };
   } catch (err) {
+    const apiErr = err.response?.data?.error || {};
+    const isRateLimit =
+      apiErr.code === 4 ||
+      apiErr.code === 17 ||
+      apiErr.code === 32 ||
+      apiErr.code === 613 ||
+      apiErr.error_subcode === 2018278;
     logger.error("Instagram sendDM error", {
       error: err.response?.data || err.message,
       recipientIgId,
+      rateLimited: isRateLimit,
     });
     return {
       success: false,
-      error: err.response?.data?.error?.message || err.message,
+      rateLimited: isRateLimit,
+      code: apiErr.code,
+      subcode: apiErr.error_subcode,
+      error: apiErr.message || err.message,
     };
   }
 };
@@ -218,6 +229,74 @@ const publishPost = async (accessToken, igUserId, imageUrl, caption = "") => {
   }
 };
 
+/**
+ * Publish an Instagram Story (C6).
+ * Uses media_type=STORIES on the container create call, then publishes.
+ * Supports image stories. Video stories require video_url + upload polling
+ * which we can layer in later if needed.
+ */
+const publishStory = async (accessToken, igUserId, imageUrl) => {
+  try {
+    const { data: containerData } = await axios.post(
+      `${IG_GRAPH}/${igUserId}/media`,
+      {
+        image_url: imageUrl,
+        media_type: "STORIES",
+      },
+      {
+        params: { access_token: accessToken },
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+      },
+    );
+    const containerId = containerData.id;
+    if (!containerId) throw new Error("No container ID returned for story");
+
+    const { data: publishData } = await axios.post(
+      `${IG_GRAPH}/${igUserId}/media_publish`,
+      { creation_id: containerId },
+      {
+        params: { access_token: accessToken },
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+      },
+    );
+    return { success: true, mediaId: publishData.id };
+  } catch (err) {
+    logger.error("Instagram publishStory error", {
+      error: err.response?.data || err.message,
+      imageUrl,
+    });
+    return {
+      success: false,
+      error: err.response?.data?.error?.message || err.message,
+    };
+  }
+};
+
+/**
+ * Hide or delete a comment on a post.
+ * IG Graph API: POST /{comment-id}?hide=true
+ */
+const hideComment = async (accessToken, commentId) => {
+  try {
+    const { data } = await axios.post(`${IG_GRAPH}/${commentId}`, null, {
+      params: { hide: "true", access_token: accessToken },
+      timeout: 10000,
+    });
+    return { success: true, data };
+  } catch (err) {
+    logger.warn("Instagram hideComment error", {
+      commentId,
+      error: err.response?.data || err.message,
+    });
+    return {
+      success: false,
+      error: err.response?.data?.error?.message || err.message,
+    };
+  }
+};
+
 module.exports = {
   exchangeCodeForToken,
   getLongLivedToken,
@@ -228,4 +307,6 @@ module.exports = {
   subscribeWebhook,
   getSubscribedApps,
   publishPost,
+  publishStory,
+  hideComment,
 };

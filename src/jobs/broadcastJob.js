@@ -2,11 +2,11 @@ const { Worker } = require("bullmq");
 const BroadcastCampaign = require("../models/BroadcastCampaign");
 const Contact = require("../models/Contact");
 const Workspace = require("../models/Workspace");
-const { sendMessage } = require("../services/whatsapp/dispatcher");
+const ig = require("../services/instagram/metaService");
+const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 
-const DELAY_MS = 1200; // ~50 msgs/min to avoid rate limits
-
+const DELAY_MS = 1200;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 module.exports = (connection) => {
@@ -19,38 +19,73 @@ module.exports = (connection) => {
       const campaign = await BroadcastCampaign.findById(campaignId);
       if (!campaign || campaign.status === "cancelled") return;
 
-      const workspace = await Workspace.findById(workspaceId);
-      if (!workspace) {
+      const workspace = await Workspace.findById(workspaceId).select(
+        "+instagram.accessToken +instagram.igUserId",
+      );
+      if (!workspace || workspace.instagram?.status !== "connected") {
         campaign.status = "failed";
+        campaign.stats = campaign.stats || {};
+        campaign.stats.error = "Instagram not connected";
         await campaign.save();
         return;
       }
 
-      // Build contact query
-      const filter = { workspaceId, isDeleted: false, optedIn: true };
+      let token;
+      try {
+        token = decrypt(workspace.instagram.accessToken);
+      } catch {
+        campaign.status = "failed";
+        campaign.stats = campaign.stats || {};
+        campaign.stats.error = "Token unreadable. Reconnect Instagram.";
+        await campaign.save();
+        return;
+      }
+
+      const filter = {
+        workspaceId,
+        isDeleted: { $ne: true },
+        optedIn: { $ne: false },
+        igUserId: { $exists: true, $ne: null },
+      };
       const seg = campaign.targetSegment;
       if (seg?.type === "tag" && seg.tags?.length)
         filter.tags = { $in: seg.tags };
 
-      const contacts = await Contact.find(filter).select("phone name").lean();
-      let sent = 0,
-        failed = 0;
+      const contacts = await Contact.find(filter)
+        .select("igUserId name igUsername")
+        .lean();
+
+      let sent = 0;
+      let failed = 0;
 
       for (const contact of contacts) {
+        if (!contact.igUserId) {
+          failed++;
+          continue;
+        }
         try {
-          let text = campaign.message.replace(
+          const text = String(campaign.message || "").replace(
             /{{name}}/gi,
-            contact.name || "Customer",
+            contact.name || contact.igUsername || "there",
           );
-          const msg = campaign.mediaUrl
-            ? { type: "image", url: campaign.mediaUrl, caption: text }
-            : { type: "text", text };
-
-          await sendMessage(workspace, contact.phone, msg);
-          sent++;
+          const result = await ig.sendDM(token, contact.igUserId, text);
+          if (result?.success) sent++;
+          else {
+            failed++;
+            logger.warn(
+              `[BroadcastJob] send failed ${contact.igUserId}: ${result?.error}`,
+            );
+            // If we got rate-limited, back off significantly to avoid escalating.
+            if (result?.rateLimited) {
+              logger.warn(
+                `[BroadcastJob] rate-limited; sleeping 60s before next send`,
+              );
+              await sleep(60_000);
+            }
+          }
         } catch (err) {
           logger.error(
-            `[BroadcastJob] Failed to send to ${contact.phone}: ${err.message}`,
+            `[BroadcastJob] Failed to send to ${contact.igUserId}: ${err.message}`,
           );
           failed++;
         }
@@ -58,13 +93,14 @@ module.exports = (connection) => {
       }
 
       campaign.status = "sent";
+      campaign.stats = campaign.stats || {};
       campaign.stats.sent = sent;
       campaign.stats.failed = failed;
       campaign.stats.totalTargeted = contacts.length;
       await campaign.save();
 
       logger.info(
-        `[BroadcastJob] Campaign ${campaignId} done — sent:${sent} failed:${failed}`,
+        `[BroadcastJob] Campaign ${campaignId} done. sent:${sent} failed:${failed}`,
       );
     },
     { connection, concurrency: 1 },

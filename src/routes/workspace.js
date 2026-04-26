@@ -32,6 +32,7 @@ router.post(
 
 // Team / onboarding
 router.post("/:workspaceId/members/invite", requireOwner, c.inviteMember);
+router.delete("/:workspaceId/members/:userId", requireOwner, c.removeMember);
 router.post("/:workspaceId/invite", requireOwner, c.inviteMember);
 router.post("/:workspaceId/complete-onboarding", c.completeOnboarding);
 router.patch("/:workspaceId/onboarding-step", c.updateOnboardingStep);

@@ -87,6 +87,8 @@ const updateWorkspace = asyncHandler(async (req, res) => {
     "timezone",
     "settings",
     "industry",
+    "language",
+    "branding",
   ];
   const updates = {};
   allowed.forEach((field) => {
@@ -233,6 +235,23 @@ const inviteMember = asyncHandler(async (req, res) => {
   });
 
   res.json({ success: true, message: `Invitation sent to ${email}` });
+});
+
+// @DELETE /api/workspaces/:workspaceId/members/:userId — Remove team member
+const removeMember = asyncHandler(async (req, res) => {
+  if (req.workspaceRole !== "owner") {
+    res.status(403);
+    throw new Error("Only owners can remove members");
+  }
+  const { userId } = req.params;
+  const ws = req.workspace;
+  if (ws.owner.toString() === userId) {
+    res.status(400);
+    throw new Error("Cannot remove the workspace owner");
+  }
+  ws.members = (ws.members || []).filter((m) => m.user.toString() !== userId);
+  await ws.save();
+  res.json({ success: true });
 });
 
 // @POST /api/workspaces/:workspaceId/complete-onboarding
@@ -512,6 +531,7 @@ module.exports = {
   saveAiBotConfig,
   getAutomationConfig,
   inviteMember,
+  removeMember,
   completeOnboarding,
   updateOnboardingStep,
 };

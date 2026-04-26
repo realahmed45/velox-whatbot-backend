@@ -26,6 +26,14 @@ const broadcastRoutes = require("./src/routes/broadcasts");
 const uploadRoutes = require("./src/routes/upload");
 const planRoutes = require("./src/routes/plans");
 const scheduledPostsRoutes = require("./src/routes/scheduledPosts");
+const aiRoutes = require("./src/routes/ai");
+const dripRoutes = require("./src/routes/drip");
+const giveawayRoutes = require("./src/routes/giveaways");
+const competitorRoutes = require("./src/routes/competitors");
+const integrationRoutes = require("./src/routes/integrations");
+const linkInBioRoutes = require("./src/routes/linkInBio");
+const publicRoutes = require("./src/routes/publicRoutes");
+const referralRoutes = require("./src/routes/referral");
 
 const app = express();
 const server = http.createServer(app);
@@ -41,12 +49,39 @@ connectDB();
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: false, // API server; CSP handled at frontend host
   }),
 );
 
+// Permissions-Policy: lock down browser APIs we never use.
+app.use((req, res, next) => {
+  res.setHeader(
+    "Permissions-Policy",
+    "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+  );
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
+
 app.use(
   cors({
-    origin: "*",
+    origin: (origin, cb) => {
+      const allowed = (process.env.CORS_ORIGINS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      // Default allow-list when env not set: localhost + Vercel preview/prod.
+      const fallback = [
+        /^https?:\/\/localhost(:\d+)?$/,
+        /\.vercel\.app$/,
+        /\.onrender\.com$/,
+      ];
+      if (!origin) return cb(null, true); // server-to-server / curl
+      if (allowed.includes(origin)) return cb(null, true);
+      if (fallback.some((re) => re.test(origin))) return cb(null, true);
+      return cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    credentials: false,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"],
   }),
@@ -71,27 +106,52 @@ app.use(
 app.use("/api/", rateLimiter);
 
 // ─── Health Check ──────────────────────────────────────────
-app.get("/health", (req, res) =>
-  res.json({ status: "ok", version: "6", timestamp: new Date().toISOString() }),
-);
-
-// ─── Email Debug (remove after confirming email works) ─────
-app.get("/api/debug/test-email", async (req, res) => {
+app.get("/health", (req, res) => {
+  let redisStatus = "unknown";
   try {
-    const { sendVerificationEmail } = require("./src/services/emailService");
-    const to = req.query.to || "realahmedali4@gmail.com";
-    await sendVerificationEmail({
-      to,
-      name: "Test User",
-      verificationUrl: `${process.env.CLIENT_URL}/verify-email?token=test123`,
-    });
-    res.json({ success: true, message: `Test email sent to ${to}` });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ success: false, error: err.message, code: err.code });
+    const { getRedisClient } = require("./src/config/redis");
+    const r = getRedisClient && getRedisClient();
+    redisStatus = r?.status || "unavailable";
+  } catch {
+    redisStatus = "error";
   }
+  const mongoose = require("mongoose");
+  const mongoStateMap = {
+    0: "disconnected",
+    1: "connected",
+    2: "connecting",
+    3: "disconnecting",
+  };
+  res.json({
+    status: "ok",
+    version: "6",
+    timestamp: new Date().toISOString(),
+    services: {
+      redis: redisStatus,
+      mongo: mongoStateMap[mongoose.connection.readyState] || "unknown",
+    },
+  });
 });
+
+// ─── Email Debug (dev only) ───────────────────────────────
+if (process.env.NODE_ENV !== "production") {
+  app.get("/api/debug/test-email", async (req, res) => {
+    try {
+      const { sendVerificationEmail } = require("./src/services/emailService");
+      const to = req.query.to || "realahmedali4@gmail.com";
+      await sendVerificationEmail({
+        to,
+        name: "Test User",
+        verificationUrl: `${process.env.CLIENT_URL}/verify-email?token=test123`,
+      });
+      res.json({ success: true, message: `Test email sent to ${to}` });
+    } catch (err) {
+      res
+        .status(500)
+        .json({ success: false, error: err.message, code: err.code });
+    }
+  });
+}
 
 // ─── API Routes ────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
@@ -106,6 +166,15 @@ app.use("/api/broadcasts", broadcastRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/scheduled-posts", scheduledPostsRoutes);
+app.use("/api/workspaces/:workspaceId/ai", aiRoutes);
+app.use("/api/ai", aiRoutes);
+app.use("/api/drip-campaigns", dripRoutes);
+app.use("/api/giveaways", giveawayRoutes);
+app.use("/api/competitors", competitorRoutes);
+app.use("/api/integrations", integrationRoutes);
+app.use("/api/bio", linkInBioRoutes);
+app.use("/api/public", publicRoutes);
+app.use("/api/referral", referralRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
@@ -143,7 +212,33 @@ cron.schedule("*/5 * * * *", () => {
   );
 });
 
-logger.info("Cron jobs registered: follow-ups (30min), scheduled-posts (5min)");
+// Process drip campaign enrollments every 1 minute
+const { processDripEnrollments } = require("./src/jobs/dripJob");
+cron.schedule("*/1 * * * *", () => {
+  processDripEnrollments().catch((e) =>
+    logger.warn("[Cron] processDripEnrollments error: " + e.message),
+  );
+});
+
+// Close expired giveaways every 5 minutes
+const { processExpiredGiveaways } = require("./src/jobs/giveawayJob");
+cron.schedule("*/5 * * * *", () => {
+  processExpiredGiveaways().catch((e) =>
+    logger.warn("[Cron] processExpiredGiveaways error: " + e.message),
+  );
+});
+
+// Poll follower counts every 6 hours (IG has no follow webhook)
+const { pollFollowers } = require("./src/jobs/followerPollingJob");
+cron.schedule("0 */6 * * *", () => {
+  pollFollowers().catch((e) =>
+    logger.warn("[Cron] pollFollowers error: " + e.message),
+  );
+});
+
+logger.info(
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), giveaways (5min), followers (6h)",
+);
 
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;

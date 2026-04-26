@@ -1,6 +1,9 @@
 const ScheduledPost = require("../models/ScheduledPost");
 const Workspace = require("../models/Workspace");
-const { publishPost } = require("../services/instagram/metaService");
+const {
+  publishPost,
+  publishStory,
+} = require("../services/instagram/metaService");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 
@@ -54,13 +57,16 @@ const processScheduledPosts = async () => {
         const accessToken = decrypt(workspace.instagram.accessToken);
         const igUserId = decrypt(workspace.instagram.igUserId);
 
-        // Publish to Instagram
-        const result = await publishPost(
-          accessToken,
-          igUserId,
-          post.imageUrl,
-          post.caption,
-        );
+        // Publish to Instagram (story or feed image)
+        const result =
+          post.postType === "story"
+            ? await publishStory(accessToken, igUserId, post.imageUrl)
+            : await publishPost(
+                accessToken,
+                igUserId,
+                post.imageUrl,
+                post.caption,
+              );
 
         if (result.success) {
           post.status = "published";
@@ -70,6 +76,11 @@ const processScheduledPosts = async () => {
           logger.info(
             `[ScheduledPosts] Post ${post._id} published successfully: ${result.mediaId}`,
           );
+
+          // If this was a recurring post, schedule the next occurrence
+          if (post.recurring?.enabled) {
+            await scheduleNextRecurrence(post);
+          }
         } else {
           post.status = "failed";
           post.errorMessage = result.error || "Unknown error";
@@ -92,6 +103,67 @@ const processScheduledPosts = async () => {
   } catch (err) {
     logger.error("[ScheduledPosts] Job error:", err);
   }
+};
+
+/**
+ * Compute the next run time for a recurring post.
+ */
+const computeNextRun = (recurring, from = new Date()) => {
+  const next = new Date(from);
+  next.setSeconds(0, 0);
+  next.setHours(recurring.hour ?? 9, recurring.minute ?? 0, 0, 0);
+
+  if (recurring.frequency === "daily") {
+    if (next <= from) next.setDate(next.getDate() + 1);
+    return next;
+  }
+  if (recurring.frequency === "weekly") {
+    const days = recurring.daysOfWeek?.length
+      ? [...recurring.daysOfWeek].sort((a, b) => a - b)
+      : [next.getDay()];
+    for (let i = 0; i < 14; i++) {
+      const candidate = new Date(next);
+      candidate.setDate(next.getDate() + i);
+      if (days.includes(candidate.getDay()) && candidate > from)
+        return candidate;
+    }
+  }
+  if (recurring.frequency === "monthly") {
+    if (next <= from) next.setMonth(next.getMonth() + 1);
+    return next;
+  }
+  // fallback: +1 week
+  next.setDate(next.getDate() + 7);
+  return next;
+};
+
+/**
+ * After a recurring post publishes, create the next scheduled occurrence.
+ */
+const scheduleNextRecurrence = async (post) => {
+  const r = post.recurring || {};
+  const newOccurrences = (r.occurrences || 0) + 1;
+  if (r.maxOccurrences && newOccurrences >= r.maxOccurrences) return;
+
+  const nextRun = computeNextRun(r, new Date());
+  await ScheduledPost.create({
+    workspaceId: post.workspaceId,
+    channelType: post.channelType,
+    imageUrl: post.imageUrl,
+    caption: post.caption,
+    scheduledTime: nextRun,
+    status: "pending",
+    recurring: {
+      enabled: true,
+      frequency: r.frequency,
+      daysOfWeek: r.daysOfWeek,
+      hour: r.hour,
+      minute: r.minute,
+      maxOccurrences: r.maxOccurrences,
+      occurrences: newOccurrences,
+      parentId: r.parentId || post._id,
+    },
+  });
 };
 
 module.exports = { processScheduledPosts };

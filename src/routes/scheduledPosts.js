@@ -1,19 +1,15 @@
 const express = require("express");
 const router = express.Router();
-const {
-  getScheduledPosts,
-  createScheduledPost,
-  cancelScheduledPost,
-  getSmartTiming,
-} = require("../controllers/scheduledPostsController");
+const c = require("../controllers/scheduledPostsController");
 const { protect } = require("../middleware/auth");
 
-// All routes require authentication
 router.use(protect);
 
-router.get("/", getScheduledPosts);
-router.post("/", createScheduledPost);
-router.delete("/:id", cancelScheduledPost);
-router.get("/smart-timing", getSmartTiming);
+router.get("/", c.getScheduledPosts);
+router.post("/", c.createScheduledPost);
+router.post("/bulk", c.bulkCreate);
+router.post("/ai-caption", c.aiCaption);
+router.get("/smart-timing", c.getSmartTiming);
+router.delete("/:id", c.cancelScheduledPost);
 
 module.exports = router;

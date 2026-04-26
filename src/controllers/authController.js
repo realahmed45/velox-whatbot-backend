@@ -16,7 +16,7 @@ const logger = require("../utils/logger");
 
 // @POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
-  const { name, email, password, businessName } = req.body;
+  const { name, email, password, businessName, ref } = req.body;
 
   if (!name || !email || !password) {
     res.status(400);
@@ -47,6 +47,21 @@ const register = asyncHandler(async (req, res) => {
     members: [{ user: user._id, role: "owner" }],
     industry: "other",
   });
+
+  // Referral tracking (G8): if a ref code was provided, link the new workspace
+  // to the referrer and bump their signup counter.
+  if (ref) {
+    const refCode = String(ref).toUpperCase().trim();
+    const referrer = await Workspace.findOne({ "referral.code": refCode });
+    if (referrer && String(referrer._id) !== String(workspace._id)) {
+      workspace.referral.referredBy = referrer._id;
+      await workspace.save();
+      await Workspace.updateOne(
+        { _id: referrer._id },
+        { $inc: { "referral.signups": 1 } },
+      );
+    }
+  }
 
   user.workspaces = [workspace._id];
   user.activeWorkspace = workspace._id;

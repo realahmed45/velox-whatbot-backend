@@ -660,6 +660,191 @@ const FLOW_TEMPLATES = [
       },
     ],
   },
+  {
+    key: "lead_qualification",
+    name: "Lead Qualification Bot",
+    description:
+      "Greet prospect, ask qualifying questions (budget, timeline, need), tag hot leads, hand off to sales.",
+    icon: "🎯",
+    keyFlows: ["Greet & Ask Budget", "Timeline Check", "Tag & Handoff"],
+    estimatedDailyMessages: "20–60",
+    flows: [
+      {
+        name: "Lead Qualifier",
+        description: "Qualify inbound Instagram DM leads",
+        priority: 20,
+        nodes: [
+          {
+            id: "t1",
+            type: "trigger",
+            nodeType: "first_message",
+            position: { x: 250, y: 40 },
+            data: { label: "First DM" },
+          },
+          {
+            id: "a1",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 160 },
+            data: {
+              label: "Greet",
+              message:
+                "Hey! 👋 Thanks for reaching out. Quick question — what's your approximate budget?\n\n1️⃣ Under $500\n2️⃣ $500–$2,000\n3️⃣ $2,000+",
+            },
+          },
+          {
+            id: "a2",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 300 },
+            data: {
+              label: "Ask Timeline",
+              message:
+                "Great! And when are you looking to start?\n\n1️⃣ ASAP\n2️⃣ Within a month\n3️⃣ Just browsing",
+            },
+          },
+          {
+            id: "a3",
+            type: "action",
+            nodeType: "add_tag",
+            position: { x: 250, y: 440 },
+            data: { label: "Tag Lead", tag: "hot-lead" },
+          },
+          {
+            id: "a4",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 560 },
+            data: {
+              label: "Handoff",
+              message:
+                "Perfect — one of our team will follow up shortly with next steps. 🚀",
+            },
+          },
+        ],
+        edges: [
+          { id: "e1", source: "t1", target: "a1" },
+          { id: "e2", source: "a1", target: "a2" },
+          { id: "e3", source: "a2", target: "a3" },
+          { id: "e4", source: "a3", target: "a4" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "ecommerce",
+    name: "E-commerce Storefront",
+    description:
+      "Product catalog, sizing help, discount codes, order tracking, abandoned cart recovery.",
+    icon: "🛍️",
+    keyFlows: ["Product Menu", "Discount Code", "Order Status"],
+    estimatedDailyMessages: "50–150",
+    flows: [
+      {
+        name: "Shop Assistant",
+        description: "Help customers browse and buy",
+        priority: 15,
+        nodes: [
+          {
+            id: "t1",
+            type: "trigger",
+            nodeType: "first_message",
+            position: { x: 250, y: 40 },
+            data: { label: "First Message" },
+          },
+          {
+            id: "a1",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 160 },
+            data: {
+              label: "Welcome",
+              message:
+                "Welcome to *{{businessName}}* 🛍️\n\nHow can we help?\n\n1️⃣ Browse Products\n2️⃣ Track My Order\n3️⃣ Sizing Help\n4️⃣ Get Discount Code",
+            },
+          },
+          {
+            id: "a2",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 300 },
+            data: {
+              label: "Discount",
+              message:
+                "Use code *WELCOME10* for 10% off your first order 🎁\n\nShop now 👉 {{shopUrl}}",
+            },
+          },
+        ],
+        edges: [
+          { id: "e1", source: "t1", target: "a1" },
+          { id: "e2", source: "a1", target: "a2" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "appointment",
+    name: "Appointment Booking",
+    description:
+      "Service menu, availability check, booking confirmation, reminders — perfect for clinics, salons, coaches.",
+    icon: "📅",
+    keyFlows: ["Service Menu", "Pick Time", "Confirm"],
+    estimatedDailyMessages: "15–50",
+    flows: [
+      {
+        name: "Book Appointment",
+        description: "Guide customer through booking an appointment",
+        priority: 12,
+        nodes: [
+          {
+            id: "t1",
+            type: "trigger",
+            nodeType: "first_message",
+            position: { x: 250, y: 40 },
+            data: { label: "First Message" },
+          },
+          {
+            id: "a1",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 160 },
+            data: {
+              label: "Service Menu",
+              message:
+                "Hi! 👋 Thanks for reaching out to *{{businessName}}*.\n\nWhich service would you like to book?\n\n1️⃣ Consultation\n2️⃣ Full Session\n3️⃣ Follow-up",
+            },
+          },
+          {
+            id: "a2",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 300 },
+            data: {
+              label: "Ask Time",
+              message:
+                "Great choice! What day and time works best for you?\n\n📅 We're open Mon–Sat, 10am–7pm.",
+            },
+          },
+          {
+            id: "a3",
+            type: "action",
+            nodeType: "send_text",
+            position: { x: 250, y: 440 },
+            data: {
+              label: "Confirm",
+              message:
+                "Perfect! ✅ We've noted your request. A team member will confirm the exact slot shortly.\n\nSee you soon! 💙",
+            },
+          },
+        ],
+        edges: [
+          { id: "e1", source: "t1", target: "a1" },
+          { id: "e2", source: "a1", target: "a2" },
+          { id: "e3", source: "a2", target: "a3" },
+        ],
+      },
+    ],
+  },
 ];
 
 module.exports = { FLOW_TEMPLATES };

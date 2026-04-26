@@ -171,7 +171,10 @@ const parseSignedRequest = (signedRequest, appSecret) => {
     .update(payloadB64)
     .digest();
   const given = b64urlToBuf(sigB64);
-  if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given))
+  if (
+    expected.length !== given.length ||
+    !crypto.timingSafeEqual(expected, given)
+  )
     return null;
   try {
     return JSON.parse(b64urlToBuf(payloadB64).toString("utf8"));
@@ -244,11 +247,14 @@ exports.dataDeletion = asyncHandler(async (req, res) => {
           "instagram.status": "disconnected",
           "instagram.webhookSubscribed": false,
         });
-        logger.info(`[IG data-deletion] wiped workspace ${ws._id} code=${code}`);
+        logger.info(
+          `[IG data-deletion] wiped workspace ${ws._id} code=${code}`,
+        );
       }
     } catch {}
   }
-  const base = process.env.API_PUBLIC_URL || "https://velox-whatbot-backend.onrender.com";
+  const base =
+    process.env.API_PUBLIC_URL || "https://botlify-backend.onrender.com";
   res.json({
     url: `${base}/api/instagram/data-deletion/status?code=${code}`,
     confirmation_code: code,
@@ -308,22 +314,23 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
     `[IG webhook] inbound ${Buffer.isBuffer(rawBody) ? rawBody.length : 0}B sig=${req.headers["x-hub-signature-256"] ? "present" : "missing"}`,
   );
 
-  // Verify Meta signature using the raw Buffer
+  // Verify Meta signature using the raw Buffer.
+  // We always 200 to Meta even on signature mismatch — returning 4xx puts our
+  // endpoint into Meta's bad list. Just log and drop the event.
   const sig = req.headers["x-hub-signature-256"];
+  let signatureValid = true;
   if (sig && IG_APP_SECRET) {
     const expected =
       "sha256=" +
-      crypto
-        .createHmac("sha256", IG_APP_SECRET)
-        .update(rawBody) // ← must use raw Buffer, not stringified JSON
-        .digest("hex");
+      crypto.createHmac("sha256", IG_APP_SECRET).update(rawBody).digest("hex");
     if (sig !== expected) {
-      logger.warn("Instagram webhook signature mismatch");
-      return res.sendStatus(403);
+      logger.warn("Instagram webhook signature mismatch — dropping");
+      signatureValid = false;
     }
   }
 
-  res.sendStatus(200); // respond fast to Meta
+  res.sendStatus(200); // respond fast to Meta no matter what
+  if (!signatureValid) return;
 
   // Parse the raw Buffer into a JS object
   let body;
@@ -335,6 +342,21 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
   }
 
   if (body.object !== "instagram") return;
+
+  // Idempotency: dedupe by message id (mid) using in-memory LRU cache.
+  // Meta retries on 5xx; without dedupe the same auto-reply fires twice.
+  const seen = (exports._seenWebhookIds = exports._seenWebhookIds || new Map());
+  const isDup = (id) => {
+    if (!id) return false;
+    if (seen.has(id)) return true;
+    seen.set(id, Date.now());
+    if (seen.size > 5000) {
+      // evict oldest 1000
+      const keys = Array.from(seen.keys()).slice(0, 1000);
+      keys.forEach((k) => seen.delete(k));
+    }
+    return false;
+  };
 
   for (const entry of body.entry || []) {
     const entryIgUserId = String(entry.id);
@@ -371,6 +393,7 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
       for (const msg of entry.messaging || []) {
         const senderId = msg.sender?.id;
         if (!senderId || senderId === wsIgId) continue;
+        if (isDup(msg.message?.mid || msg.postback?.mid)) continue;
 
         // Postback (conversation starter / CTA button click)
         if (msg.postback) {
@@ -421,12 +444,31 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
         }
 
         // Plain direct message
+        // Voice note support (G7): if message has an audio attachment and no
+        // text, download & transcribe via Whisper before passing to the
+        // automation engine so keyword matching / AI replies work on voice.
+        let messageText = message.text;
+        const audioAttachment = attachments.find(
+          (a) => a.type === "audio" && a.payload?.url,
+        );
+        if (!messageText && audioAttachment) {
+          try {
+            const { transcribeAudio } = require("../services/ai/openaiService");
+            const out = await transcribeAudio({
+              url: audioAttachment.payload.url,
+            });
+            if (out?.text) messageText = out.text;
+          } catch (err) {
+            console.warn("[IG voice] transcribe failed:", err.message);
+          }
+        }
+
         await handleWebhookEvent(ws._id, {
           type: "direct_message",
           senderId,
           senderUsername: null,
           senderName: null,
-          text: message.text,
+          text: messageText,
         });
       }
 
@@ -434,6 +476,7 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
       for (const change of entry.changes || []) {
         const field = change.field;
         const v = change.value || {};
+        if (isDup(v.id || v.comment_id)) continue;
 
         if (field === "comments") {
           await handleWebhookEvent(ws._id, {
@@ -500,7 +543,8 @@ exports.testTrigger = asyncHandler(async (req, res) => {
   // Synthesize a fake-but-stable IG sender id per workspace so repeated
   // simulate clicks reuse the same demo contact/conversation.
   const fakeSenderId =
-    igUserId || `demo_${crypto.createHash("md5").update(String(workspaceId)).digest("hex").slice(0, 12)}`;
+    igUserId ||
+    `demo_${crypto.createHash("md5").update(String(workspaceId)).digest("hex").slice(0, 12)}`;
 
   const event = {
     type: triggerType,
@@ -510,9 +554,7 @@ exports.testTrigger = asyncHandler(async (req, res) => {
     text,
   };
 
-  logger.info(
-    `[Simulate] ${triggerType} text="${text}" ws=${workspaceId}`,
-  );
+  logger.info(`[Simulate] ${triggerType} text="${text}" ws=${workspaceId}`);
   await handleWebhookEvent(workspaceId, event);
   res.json({
     success: true,
@@ -740,6 +782,22 @@ exports.updateSettings = asyncHandler(async (req, res) => {
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[`settings.${key}`] = req.body[key];
   }
+
+  // VIP comment prioritizer (B4) — accept the full sub-object on this same endpoint.
+  if (req.body.vipComments !== undefined) {
+    const v = req.body.vipComments || {};
+    updates["vipComments.enabled"] = !!v.enabled;
+    if (Array.isArray(v.usernames)) {
+      updates["vipComments.usernames"] = v.usernames
+        .map((u) => String(u).toLowerCase().replace(/^@/, "").trim())
+        .filter(Boolean)
+        .slice(0, 200);
+    }
+    if (typeof v.autoDmTemplate === "string") {
+      updates["vipComments.autoDmTemplate"] = v.autoDmTemplate.slice(0, 500);
+    }
+  }
+
   await Workspace.findByIdAndUpdate(workspaceId, updates);
   res.json({ success: true });
 });

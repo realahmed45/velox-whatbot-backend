@@ -8,6 +8,7 @@ const {
   getFlowAnalytics,
   getContactsGrowth,
 } = require("../controllers/analyticsController");
+const { getRoiReport } = require("../controllers/roiController");
 
 router.use(protect);
 router.use(requireWorkspace);
@@ -17,5 +18,6 @@ router.get("/messages-over-time", getMessagesOverTime);
 router.get("/peak-hours", getPeakHours);
 router.get("/flows", getFlowAnalytics);
 router.get("/contacts-growth", getContactsGrowth);
+router.get("/roi", getRoiReport);
 
 module.exports = router;

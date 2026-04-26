@@ -4,6 +4,7 @@ const Workspace = require("../models/Workspace");
 const Message = require("../models/Message");
 const { decrypt } = require("../utils/encryption");
 const moment = require("moment");
+const crypto = require("crypto");
 
 /**
  * GET /api/scheduled-posts
@@ -76,14 +77,98 @@ exports.createScheduledPost = asyncHandler(async (req, res) => {
     channelType: "instagram",
     imageUrl,
     caption: caption || "",
+    postType: req.body.postType === "story" ? "story" : "image",
     scheduledTime: scheduleDate,
     status: "pending",
+    recurring: req.body.recurring || { enabled: false },
   });
 
   res.status(201).json({
     success: true,
     post,
   });
+});
+
+/**
+ * POST /api/scheduled-posts/bulk
+ * Bulk create posts from an array
+ * Body: { posts: [{ imageUrl, caption, scheduledTime }, ...] }
+ */
+exports.bulkCreate = asyncHandler(async (req, res) => {
+  const workspaceId = req.headers["x-workspace-id"];
+  const { posts } = req.body;
+  if (!Array.isArray(posts) || posts.length === 0) {
+    return res.status(400).json({ message: "posts array required" });
+  }
+  if (posts.length > 100) {
+    return res.status(400).json({ message: "Max 100 posts per batch" });
+  }
+
+  const workspace = await Workspace.findById(workspaceId).select(
+    "+instagram.accessToken",
+  );
+  if (!workspace || workspace.instagram?.status !== "connected") {
+    return res.status(400).json({ message: "Instagram not connected" });
+  }
+
+  const batchId = crypto.randomBytes(8).toString("hex");
+  const now = Date.now();
+  const docs = [];
+  const errors = [];
+
+  posts.forEach((p, i) => {
+    if (!p.imageUrl || !p.scheduledTime) {
+      errors.push({ index: i, error: "imageUrl and scheduledTime required" });
+      return;
+    }
+    const when = new Date(p.scheduledTime);
+    if (when.getTime() <= now) {
+      errors.push({ index: i, error: "scheduledTime must be in the future" });
+      return;
+    }
+    docs.push({
+      workspaceId,
+      channelType: "instagram",
+      imageUrl: p.imageUrl,
+      caption: p.caption || "",
+      scheduledTime: when,
+      status: "pending",
+      bulkBatchId: batchId,
+    });
+  });
+
+  const inserted = docs.length
+    ? await ScheduledPost.insertMany(docs, { ordered: false })
+    : [];
+
+  res.status(201).json({
+    success: true,
+    batchId,
+    inserted: inserted.length,
+    skipped: errors.length,
+    errors,
+  });
+});
+
+/**
+ * POST /api/scheduled-posts/ai-caption
+ * Generate AI caption + hashtags for a topic
+ */
+exports.aiCaption = asyncHandler(async (req, res) => {
+  const ai = require("../services/ai/openaiService");
+  const { topic, tone, count, language } = req.body;
+  if (!topic) return res.status(400).json({ message: "topic is required" });
+  const ws = await Workspace.findById(req.headers["x-workspace-id"]).select(
+    "aiBot",
+  );
+  const result = await ai.generateCaption({
+    topic: topic.trim(),
+    brandVoice: ws?.aiBot?.personality || "",
+    tone: tone || "casual",
+    count: Math.min(5, Math.max(1, parseInt(count) || 3)),
+    language: language || "en",
+  });
+  res.json({ success: true, ...result });
 });
 
 /**

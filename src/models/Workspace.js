@@ -139,6 +139,7 @@ const workspaceSchema = new mongoose.Schema(
       notifyOnNewFollower: { type: Boolean, default: true },
       usageAlerts: { type: Boolean, default: true },
       businessHoursEnabled: { type: Boolean, default: false },
+      averageOrderValue: { type: Number, default: 25 },
     },
 
     // DM Automation messages
@@ -319,6 +320,86 @@ const workspaceSchema = new mongoose.Schema(
       },
     },
 
+    // Hide negative comments — auto-moderation on post comments
+    hideNegativeComments: {
+      enabled: { type: Boolean, default: false },
+      mode: {
+        type: String,
+        enum: ["profanity_only", "profanity_and_toxic", "all_flagged"],
+        default: "profanity_and_toxic",
+      },
+      blockedWords: [{ type: String, lowercase: true, trim: true }],
+      competitorNames: [{ type: String, lowercase: true, trim: true }],
+      hiddenCount: { type: Number, default: 0 },
+    },
+
+    // VIP Comment Prioritizer (B4) — flag comments from watched usernames
+    vipComments: {
+      enabled: { type: Boolean, default: false },
+      usernames: [{ type: String, lowercase: true, trim: true }],
+      autoDmTemplate: {
+        type: String,
+        default: "",
+      },
+      flaggedCount: { type: Number, default: 0 },
+    },
+
+    // Sentiment tagging on inbound messages
+    sentimentAnalysis: {
+      enabled: { type: Boolean, default: false },
+      autoFlagAngry: { type: Boolean, default: true },
+    },
+
+    // UI language preference — applies to agent dashboard
+    language: {
+      type: String,
+      enum: ["en", "ur", "ar", "es", "fr", "hi"],
+      default: "en",
+    },
+
+    // White-label branding (F11)
+    branding: {
+      customDomain: { type: String, default: null },
+      brandName: { type: String, default: null },
+      logoUrl: { type: String, default: null },
+      primaryColor: { type: String, default: null },
+      hideBotlify: { type: Boolean, default: false },
+    },
+
+    // Follower history snapshots (polled every 6h since IG has no follow webhook)
+    followerHistory: [
+      {
+        count: Number,
+        at: { type: Date, default: Date.now },
+      },
+    ],
+
+    // Third-party integrations
+    integrations: {
+      shopify: {
+        storeUrl: String,
+        accessToken: { type: String, select: false },
+        connectedAt: Date,
+        productCount: { type: Number, default: 0 },
+      },
+      mailchimp: {
+        apiKey: { type: String, select: false },
+        listId: String,
+        serverPrefix: String, // e.g. "us1"
+        connectedAt: Date,
+      },
+    },
+
+    // Referral program (G8)
+    referral: {
+      code: { type: String, unique: true, sparse: true, index: true },
+      referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "Workspace" },
+      signups: { type: Number, default: 0 },
+      paidConversions: { type: Number, default: 0 },
+      creditsEarned: { type: Number, default: 0 },
+      creditsAvailable: { type: Number, default: 0 },
+    },
+
     // Agency
     isAgencyManaged: { type: Boolean, default: false },
     agencyWorkspace: { type: mongoose.Schema.Types.ObjectId, ref: "Workspace" },
@@ -341,6 +422,16 @@ workspaceSchema.pre("save", async function (next) {
       .slice(0, 30);
     const random = Math.random().toString(36).slice(2, 7);
     this.slug = `${base}-${random}`;
+  }
+  if (this.isNew && !this.referral?.code) {
+    const code =
+      "BOT" +
+      Math.random()
+        .toString(36)
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 6);
+    this.referral = { ...(this.referral || {}), code };
   }
   next();
 });

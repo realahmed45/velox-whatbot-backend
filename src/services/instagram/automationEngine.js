@@ -18,11 +18,14 @@ const Workspace = require("../../models/Workspace");
 const Contact = require("../../models/Contact");
 const Conversation = require("../../models/Conversation");
 const Message = require("../../models/Message");
+const { DripCampaign, DripEnrollment } = require("../../models/DripCampaign");
+const Giveaway = require("../../models/Giveaway");
 const { sendDM } = require("./metaService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 const { planHasFeature, FEATURES } = require("../../config/plans");
 const ai = require("../ai/openaiService");
+const { dispatchEvent } = require("../webhookDispatcher");
 
 const TRIGGERS = {
   POST_COMMENT: "post_comment",
@@ -515,6 +518,102 @@ const handleFallback = async (workspace, contact, conv) => {
   return true;
 };
 
+// ── Drip enrollment on keyword match ────────────────────────────────────────
+const tryEnrollDripByKeyword = async (workspace, contact, text) => {
+  if (!text) return;
+  try {
+    const campaigns = await DripCampaign.find({
+      workspaceId: workspace._id,
+      enabled: true,
+      "trigger.type": "keyword",
+    });
+    for (const c of campaigns) {
+      const kw = c.trigger?.keyword;
+      if (!kw) continue;
+      if (!text.toLowerCase().includes(kw.toLowerCase())) continue;
+
+      const already = await DripEnrollment.findOne({
+        campaignId: c._id,
+        contactId: contact._id,
+        status: "active",
+      });
+      if (already) continue;
+
+      const firstDelay = c.steps[0]?.delayMinutes || 0;
+      await DripEnrollment.create({
+        workspaceId: workspace._id,
+        campaignId: c._id,
+        contactId: contact._id,
+        currentStep: 0,
+        nextRunAt: new Date(Date.now() + firstDelay * 60 * 1000),
+        status: "active",
+      });
+      c.stats.enrolled = (c.stats.enrolled || 0) + 1;
+      await c.save();
+      logger.info(
+        `[drip] Enrolled ${contact.igUsername} in campaign ${c.name}`,
+      );
+    }
+  } catch (err) {
+    logger.warn(`[drip] enroll error: ${err.message}`);
+  }
+};
+
+// ── Giveaway participant tracking ───────────────────────────────────────────
+const trackGiveawayEntry = async (
+  workspace,
+  postId,
+  senderId,
+  username,
+  commentText,
+  commentId,
+) => {
+  if (!postId) return;
+  try {
+    const active = await Giveaway.find({
+      workspaceId: workspace._id,
+      postId,
+      status: "active",
+      endsAt: { $gt: new Date() },
+    });
+    for (const g of active) {
+      // Keyword filter if set
+      if (
+        g.entryKeyword &&
+        !commentText?.toLowerCase().includes(g.entryKeyword.toLowerCase())
+      ) {
+        continue;
+      }
+      // Skip duplicates
+      if (g.participants.some((p) => p.igUserId === senderId)) continue;
+      g.participants.push({
+        igUserId: senderId,
+        igUsername: username,
+        commentId,
+        commentText,
+        commentedAt: new Date(),
+      });
+      await g.save();
+    }
+  } catch (err) {
+    logger.warn(`[giveaway] entry tracking error: ${err.message}`);
+  }
+};
+
+// ── Sentiment enrichment ────────────────────────────────────────────────────
+const enrichMessageSentiment = async (workspace, messageDoc, text) => {
+  if (!workspace.sentimentAnalysis?.enabled || !text) return;
+  try {
+    const result = await ai.analyzeSentiment(text);
+    messageDoc.sentiment = result.sentiment;
+    messageDoc.intent = result.intent;
+    messageDoc.urgency = result.urgency;
+    await messageDoc.save();
+  } catch (err) {
+    logger.debug(`[sentiment] ${err.message}`);
+  }
+};
+
 // ── MAIN ENTRY ───────────────────────────────────────────────────────────────
 const handleWebhookEvent = async (workspaceId, event) => {
   try {
@@ -534,6 +633,88 @@ const handleWebhookEvent = async (workspaceId, event) => {
     } catch {}
 
     if (type === TRIGGERS.POST_COMMENT) {
+      // Track giveaway entries (if any active on this post)
+      if (event.postId) {
+        await trackGiveawayEntry(
+          workspace,
+          event.postId,
+          senderId,
+          senderUsername,
+          text,
+          event.commentId,
+        );
+      }
+      // Hide negative comments (if enabled)
+      if (workspace.hideNegativeComments?.enabled && event.commentId) {
+        try {
+          const { hide, reason } = await ai.moderateComment(
+            text,
+            workspace.hideNegativeComments.competitorNames || [],
+          );
+          if (hide) {
+            const { hideComment } = require("./metaService");
+            if (typeof hideComment === "function") {
+              const token = decrypt(workspace.instagram.accessToken);
+              await hideComment(token, event.commentId).catch(() => {});
+            }
+            workspace.hideNegativeComments.hiddenCount =
+              (workspace.hideNegativeComments.hiddenCount || 0) + 1;
+            await workspace.save();
+            logger.info(
+              `[moderation] Hidden comment ${event.commentId}: ${reason}`,
+            );
+            return;
+          }
+        } catch (err) {
+          logger.debug(`[moderation] ${err.message}`);
+        }
+      }
+
+      // VIP Comment Prioritizer (B4) — flag comments from watched users.
+      if (
+        workspace.vipComments?.enabled &&
+        senderUsername &&
+        Array.isArray(workspace.vipComments.usernames) &&
+        workspace.vipComments.usernames.length
+      ) {
+        const handle = String(senderUsername).toLowerCase().replace(/^@/, "");
+        const isVip = workspace.vipComments.usernames.some(
+          (u) => String(u).toLowerCase().replace(/^@/, "") === handle,
+        );
+        if (isVip) {
+          try {
+            const contact = await upsertContact(workspace._id, senderId, {
+              username: senderUsername,
+              source: "post_comment",
+            });
+            contact.tags = Array.from(
+              new Set([...(contact.tags || []), "vip"]),
+            );
+            contact.isVip = true;
+            await contact.save();
+            workspace.vipComments.flaggedCount =
+              (workspace.vipComments.flaggedCount || 0) + 1;
+            await workspace.save();
+            logger.info(
+              `[VIP] Flagged comment from @${senderUsername} on post ${event.postId}`,
+            );
+            // Optional auto-DM to VIP
+            const tmpl = workspace.vipComments.autoDmTemplate;
+            if (tmpl) {
+              const conv = await getOrCreateConversation(workspace, contact);
+              await sendAndLog({
+                workspace,
+                contact,
+                conversation: conv,
+                text: tmpl,
+                triggerType: "vip_reply",
+              }).catch(() => {});
+            }
+          } catch (err) {
+            logger.debug(`[VIP] ${err.message}`);
+          }
+        }
+      }
       await handlePostComment(workspace, senderId, text, {
         username: senderUsername,
       });
@@ -590,6 +771,26 @@ const handleWebhookEvent = async (workspaceId, event) => {
         conv.lastMessagePreview = text.slice(0, 120);
         conv.unreadByAgentCount = (conv.unreadByAgentCount || 0) + 1;
         await conv.save();
+
+        // Enrich with sentiment (async, non-blocking)
+        const savedMsg = await Message.findOne({
+          conversationId: conv._id,
+          direction: "inbound",
+        }).sort({ createdAt: -1 });
+        if (savedMsg) {
+          enrichMessageSentiment(workspace, savedMsg, text).catch(() => {});
+        }
+
+        // Try to enroll contact into a matching drip campaign
+        tryEnrollDripByKeyword(workspace, contact, text).catch(() => {});
+
+        // Fire outbound webhook: message.inbound
+        dispatchEvent(workspace._id, "message.inbound", {
+          contactId: contact._id,
+          igUsername: contact.igUsername,
+          text,
+          type,
+        }).catch(() => {});
       }
 
       if (type === TRIGGERS.POSTBACK) {

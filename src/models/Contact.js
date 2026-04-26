@@ -32,6 +32,9 @@ const contactSchema = new mongoose.Schema(
     // Custom tags
     tags: [{ type: String, lowercase: true, trim: true }],
 
+    // VIP flag (set by VIP Comment Prioritizer or manually)
+    isVip: { type: Boolean, default: false },
+
     // Custom fields
     customFields: [customFieldValueSchema],
 
