@@ -219,6 +219,87 @@ const matchAndStartFlow = async (
   logger.info(
     `No trigger matched for message: "${messageBody}" in workspace ${workspace._id}`,
   );
+
+  // ── AI fallback: if AI is enabled, let the chatbot answer ──
+  if (workspace.aiSettings?.enabled) {
+    try {
+      await runAiFallback({
+        workspace,
+        conversation,
+        contact,
+        messageBody,
+      });
+    } catch (err) {
+      logger.error("AI fallback failed", { err: err.message });
+    }
+  }
+};
+
+/**
+ * AI fallback — runs when no flow trigger matched. Generates a reply
+ * using the workspace's configured AI provider (Groq / OpenAI / etc.)
+ */
+const runAiFallback = async ({
+  workspace,
+  conversation,
+  contact,
+  messageBody,
+}) => {
+  const aiService = require("./ai");
+
+  // Pull last 10 messages for context
+  const recent = await Message.find({
+    conversationId: conversation._id,
+  })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .lean();
+
+  const history = recent
+    .reverse()
+    .filter((m) => m.text)
+    .map((m) => ({
+      role: m.direction === "inbound" ? "user" : "assistant",
+      content: m.text,
+    }));
+
+  const { reply, escalate, tokens, provider } = await aiService.generateReply({
+    workspace,
+    history,
+    userMessage: messageBody,
+    contact,
+  });
+
+  if (escalate) {
+    conversation.status = "awaiting_human";
+    conversation.unreadByAgentCount += 1;
+    await conversation.save();
+  }
+
+  if (!reply) return;
+
+  // Send via dispatcher (WhatsApp). For Instagram, the IG controller handles AI on its own path.
+  if (workspace.whatsapp?.type && workspace.whatsapp.type !== "none") {
+    await sendMessage(workspace, contact.phone, { type: "text", text: reply });
+  }
+
+  // Store outgoing message
+  await Message.create({
+    workspaceId: workspace._id,
+    conversationId: conversation._id,
+    contactId: contact._id,
+    direction: "outbound",
+    type: "text",
+    sender: "ai",
+    text: reply,
+    status: "sent",
+    meta: { provider, tokens },
+  });
+
+  // Track usage
+  workspace.usage.messagesThisMonth =
+    (workspace.usage.messagesThisMonth || 0) + 1;
+  await workspace.save();
 };
 
 /**

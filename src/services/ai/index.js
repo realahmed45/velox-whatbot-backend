@@ -1,0 +1,219 @@
+/**
+ * Botlify — Unified AI provider abstraction.
+ *
+ * Default: Groq (free, fast) → Llama 3.1 70B
+ * Fallbacks: OpenAI (gpt-4o-mini) if configured, otherwise canned reply.
+ *
+ * Workspaces can override via workspace.aiSettings.provider.
+ */
+const logger = require("../../utils/logger");
+
+let groqClient = null;
+let openaiClient = null;
+
+const getGroqClient = () => {
+  if (groqClient) return groqClient;
+  if (!process.env.GROQ_API_KEY) return null;
+  try {
+    // Groq uses the OpenAI SDK (drop-in compatible)
+    const OpenAI = require("openai");
+    groqClient = new OpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      baseURL: "https://api.groq.com/openai/v1",
+    });
+    return groqClient;
+  } catch {
+    logger.warn("OpenAI SDK not installed (used by Groq client)");
+    return null;
+  }
+};
+
+const getOpenaiClient = () => {
+  if (openaiClient) return openaiClient;
+  if (!process.env.OPENAI_API_KEY) return null;
+  try {
+    const OpenAI = require("openai");
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return openaiClient;
+  } catch {
+    return null;
+  }
+};
+
+const fallbackReply = (contact) => {
+  const first = contact?.name?.split?.(" ")?.[0] || "there";
+  return `Hey ${first}! Thanks for your message — a teammate will get back to you very soon. 💙`;
+};
+
+/**
+ * Build the system prompt from workspace.aiSettings (or legacy aiBot).
+ */
+const buildSystemPrompt = (workspace, contact) => {
+  // Read aiSettings (v2), fall back to legacy aiBot for older IG installs
+  const v2 = workspace.aiSettings || {};
+  const legacy = workspace.aiBot || {};
+  const ai = {
+    systemPrompt: v2.systemPrompt || legacy.personality,
+    businessContext: v2.businessContext || legacy.businessInfo,
+    faqs: v2.faqs && v2.faqs.length ? v2.faqs : legacy.faqs,
+  };
+  const channel = workspace.activeChannel || "instagram";
+  const lines = [
+    ai.systemPrompt ||
+      "You are a friendly, professional assistant. Keep replies short, warm, and helpful.",
+  ];
+
+  if (ai.businessContext) {
+    lines.push("", "Business context:", ai.businessContext);
+  }
+
+  if (Array.isArray(ai.faqs) && ai.faqs.length) {
+    lines.push("", "Known FAQs (use these if the user asks):");
+    ai.faqs
+      .filter((f) => f && f.question && f.answer)
+      .slice(0, 30)
+      .forEach((f, i) => {
+        lines.push(`${i + 1}. Q: ${f.question}\n   A: ${f.answer}`);
+      });
+  }
+
+  const handle =
+    contact?.igUsername || contact?.username || contact?.phone || "user";
+  lines.push("", `The customer's identifier is: ${handle}.`);
+  lines.push(
+    `You are replying via ${channel === "whatsapp" ? "WhatsApp" : channel === "instagram" ? "Instagram DM" : "messaging"}.`,
+  );
+  lines.push(
+    "Keep replies 1-3 sentences, natural, and warm. Never invent prices, links, addresses, or policies that you weren't told.",
+  );
+  lines.push(
+    "If the user clearly wants a human, escalate by responding with: ESCALATE: <short reason>.",
+  );
+  lines.push("Never pretend to be human. Never fabricate facts.");
+
+  return lines.join("\n");
+};
+
+/**
+ * Generate a chatbot reply.
+ *
+ * @param {Object} opts
+ * @param {Object} opts.workspace
+ * @param {Array}  opts.history     [{role:'user'|'assistant', content:'...'}]
+ * @param {string} opts.userMessage
+ * @param {Object} opts.contact
+ * @returns {Promise<{reply:string, escalate:boolean, tokens:number, provider:string}>}
+ */
+const generateReply = async ({
+  workspace,
+  history = [],
+  userMessage,
+  contact,
+}) => {
+  const ai = {
+    ...(workspace.aiBot || {}),
+    ...(workspace.aiSettings || {}),
+  };
+  // Map legacy field names
+  if (!ai.handoffKeywords && workspace.aiBot?.escalateOnKeywords)
+    ai.handoffKeywords = workspace.aiBot.escalateOnKeywords;
+
+  // 1. Early escalation by keyword
+  const escalateKw = ai.handoffKeywords || ["human", "agent", "support"];
+  const lower = (userMessage || "").toLowerCase();
+  let escalate = escalateKw.some((kw) =>
+    lower.includes(String(kw).toLowerCase()),
+  );
+
+  // 2. Determine provider
+  const requested = (ai.provider || "groq").toLowerCase();
+  let client = null;
+  let model = null;
+  let providerUsed = null;
+
+  if (requested === "groq" || requested === "auto") {
+    client = getGroqClient();
+    model = ai.model || "llama-3.1-70b-versatile";
+    providerUsed = "groq";
+  }
+
+  if (!client && (requested === "openai" || requested === "auto")) {
+    client = getOpenaiClient();
+    model = ai.model || "gpt-4o-mini";
+    providerUsed = "openai";
+  }
+
+  // Auto fallback chain — try the other provider if primary missing
+  if (!client) {
+    client = getGroqClient();
+    if (client) {
+      model = "llama-3.1-70b-versatile";
+      providerUsed = "groq";
+    }
+  }
+  if (!client) {
+    client = getOpenaiClient();
+    if (client) {
+      model = "gpt-4o-mini";
+      providerUsed = "openai";
+    }
+  }
+
+  if (!client) {
+    return {
+      reply: fallbackReply(contact),
+      escalate: true,
+      tokens: 0,
+      provider: "none",
+    };
+  }
+
+  const systemPrompt = buildSystemPrompt(workspace, contact);
+
+  try {
+    const response = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...history.slice(-10),
+        { role: "user", content: userMessage || "" },
+      ],
+      temperature: typeof ai.temperature === "number" ? ai.temperature : 0.4,
+      max_tokens: ai.maxTokens || 240,
+    });
+
+    let reply =
+      response.choices?.[0]?.message?.content?.trim() ||
+      "Thanks for your message! A teammate will reply shortly.";
+
+    // Detect ESCALATE: prefix
+    if (/^\s*ESCALATE\s*:/i.test(reply)) {
+      escalate = true;
+      reply =
+        reply.replace(/^\s*ESCALATE\s*:\s*/i, "").trim() ||
+        fallbackReply(contact);
+    }
+
+    return {
+      reply,
+      escalate,
+      tokens: response.usage?.total_tokens || 0,
+      provider: providerUsed,
+    };
+  } catch (err) {
+    logger.error(`AI generateReply (${providerUsed}) failed`, {
+      err: err.message,
+    });
+    return {
+      reply: fallbackReply(contact),
+      escalate: true,
+      tokens: 0,
+      provider: providerUsed,
+    };
+  }
+};
+
+module.exports = {
+  generateReply,
+  buildSystemPrompt,
+};

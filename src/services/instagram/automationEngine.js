@@ -24,7 +24,8 @@ const { sendDM } = require("./metaService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 const { planHasFeature, FEATURES } = require("../../config/plans");
-const ai = require("../ai/openaiService");
+const ai = require("../ai");
+const legacyAi = require("../ai/openaiService"); // kept for transcribeAudio/captions only
 const { dispatchEvent } = require("../webhookDispatcher");
 
 const TRIGGERS = {
@@ -604,7 +605,7 @@ const trackGiveawayEntry = async (
 const enrichMessageSentiment = async (workspace, messageDoc, text) => {
   if (!workspace.sentimentAnalysis?.enabled || !text) return;
   try {
-    const result = await ai.analyzeSentiment(text);
+    const result = await legacyAi.analyzeSentiment(text);
     messageDoc.sentiment = result.sentiment;
     messageDoc.intent = result.intent;
     messageDoc.urgency = result.urgency;
@@ -647,7 +648,7 @@ const handleWebhookEvent = async (workspaceId, event) => {
       // Hide negative comments (if enabled)
       if (workspace.hideNegativeComments?.enabled && event.commentId) {
         try {
-          const { hide, reason } = await ai.moderateComment(
+          const { hide, reason } = await legacyAi.moderateComment(
             text,
             workspace.hideNegativeComments.competitorNames || [],
           );

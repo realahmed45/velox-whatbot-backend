@@ -34,6 +34,7 @@ const integrationRoutes = require("./src/routes/integrations");
 const linkInBioRoutes = require("./src/routes/linkInBio");
 const publicRoutes = require("./src/routes/publicRoutes");
 const referralRoutes = require("./src/routes/referral");
+const whatsappRoutes = require("./src/routes/whatsapp");
 
 const app = express();
 const server = http.createServer(app);
@@ -96,6 +97,8 @@ app.use(
 // ─── Body Parsing ──────────────────────────────────────────
 // Instagram webhook needs raw body for Meta signature verification
 app.use("/api/instagram/webhook", express.raw({ type: "application/json" }));
+// WhatsApp Cloud API webhook also needs raw body for signature verification
+app.use("/api/whatsapp/webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -181,6 +184,7 @@ app.use("/api/integrations", integrationRoutes);
 app.use("/api/bio", linkInBioRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/referral", referralRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
