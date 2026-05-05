@@ -10,7 +10,22 @@ const subscriptionSchema = new mongoose.Schema(
     },
     plan: {
       type: String,
-      enum: ["starter", "growth", "business", "agency"],
+      enum: [
+        // current
+        "free",
+        "ig_starter",
+        "ig_pro",
+        "wa_starter",
+        "wa_pro",
+        "bundle_pro",
+        "bundle_business",
+        // legacy aliases (kept so older docs still load)
+        "starter",
+        "growth",
+        "scale",
+        "business",
+        "agency",
+      ],
       required: true,
     },
     billingCycle: {

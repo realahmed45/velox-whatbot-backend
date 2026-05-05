@@ -4,6 +4,7 @@
  */
 const metaService = require("./metaService");
 const ultramsgService = require("./ultramsgService");
+const greenApiService = require("./greenApiService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 
@@ -38,7 +39,71 @@ const sendMessage = async (workspace, to, messagePayload) => {
     return dispatchUltramsgMessage({ instanceId, token, to, messagePayload });
   }
 
-  return { success: false, error: "Unknown WhatsApp provider" };
+  if (type === "cloud") {
+    const idInstance = decrypt(workspace.whatsapp.cloudInstanceId);
+    const apiTokenInstance = decrypt(workspace.whatsapp.cloudApiToken);
+    return dispatchCloudMessage({
+      idInstance,
+      apiTokenInstance,
+      to,
+      messagePayload,
+    });
+  }
+
+  return { success: false, error: "WhatsApp provider not configured" };
+};
+
+const dispatchCloudMessage = async ({
+  idInstance,
+  apiTokenInstance,
+  to,
+  messagePayload,
+}) => {
+  switch (messagePayload.type) {
+    case "text":
+      return greenApiService.sendTextMessage({
+        idInstance,
+        apiTokenInstance,
+        to,
+        text: messagePayload.text,
+      });
+    case "image":
+      return greenApiService.sendImageMessage({
+        idInstance,
+        apiTokenInstance,
+        to,
+        imageUrl: messagePayload.imageUrl,
+        caption: messagePayload.caption,
+      });
+    case "document":
+      return greenApiService.sendDocumentMessage({
+        idInstance,
+        apiTokenInstance,
+        to,
+        fileUrl: messagePayload.fileUrl,
+        fileName: messagePayload.fileName,
+      });
+    case "buttons": {
+      // Cloud provider does not natively render interactive buttons →
+      // fall back to numbered list in plain text.
+      const lines = (messagePayload.buttons || [])
+        .map((b, i) => `${i + 1}. ${b.label}`)
+        .join("\n");
+      return greenApiService.sendTextMessage({
+        idInstance,
+        apiTokenInstance,
+        to,
+        text: `${messagePayload.text || ""}\n\n${lines}`.trim(),
+      });
+    }
+    default:
+      return greenApiService.sendTextMessage({
+        idInstance,
+        apiTokenInstance,
+        to,
+        text: messagePayload.text || "[Unsupported message type]",
+      });
+  }
 };
 
 const dispatchMetaMessage = async ({

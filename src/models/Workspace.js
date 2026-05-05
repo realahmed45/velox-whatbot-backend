@@ -66,7 +66,7 @@ const whatsappConnectionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["none", "meta", "ultramsg"],
+      enum: ["none", "meta", "ultramsg", "cloud"],
       default: "none",
     },
     // Meta Cloud API credentials (encrypted)
@@ -77,6 +77,24 @@ const whatsappConnectionSchema = new mongoose.Schema(
     // UltraMsg (encrypted)
     ultralmsgInstanceId: { type: String, select: false },
     ultramsgToken: { type: String, select: false },
+    // Botlify Cloud (encrypted) — white-labeled QR-scan provider
+    cloudInstanceId: { type: String, select: false },
+    cloudApiToken: { type: String, select: false },
+    cloudWebhookToken: { type: String, select: false },
+    cloudState: {
+      type: String,
+      enum: [
+        "notAuthorized",
+        "authorized",
+        "blocked",
+        "sleepMode",
+        "starting",
+        "yellowCard",
+        "unknown",
+        null,
+      ],
+      default: null,
+    },
     // Display
     displayName: String,
     phoneNumber: String, // E.164 format, e.g. +923001234567
@@ -207,16 +225,31 @@ const workspaceSchema = new mongoose.Schema(
     subscription: {
       plan: {
         type: String,
-        enum: ["starter", "growth", "scale", "business", "agency"],
-        default: "starter",
+        enum: [
+          "free",
+          "ig_starter",
+          "ig_pro",
+          "wa_starter",
+          "wa_pro",
+          "bundle_pro",
+          "bundle_business",
+          // legacy
+          "starter",
+          "growth",
+          "scale",
+          "business",
+          "agency",
+        ],
+        default: "free",
       },
       status: {
         type: String,
-        enum: ["active", "suspended", "cancelled", "past_due"],
-        default: "active",
+        enum: ["trialing", "active", "suspended", "cancelled", "past_due"],
+        default: "trialing",
       },
       currentPeriodStart: Date,
       currentPeriodEnd: Date,
+      trialEndsAt: Date,
       activatedAt: Date,
       cancelAtPeriodEnd: { type: Boolean, default: false },
       billingCycleAnchor: Date,
@@ -538,31 +571,22 @@ workspaceSchema.pre("save", async function (next) {
   next();
 });
 
-// Plan limits
+// Plan limits — sourced from src/config/plans.js (single source of truth)
 workspaceSchema.methods.getPlanLimits = function () {
-  const limits = {
-    starter: { messages: 500, contacts: 50, flows: 3, numbers: 1 },
-    growth: { messages: 5000, contacts: 500, flows: Infinity, numbers: 1 },
-    scale: {
-      messages: Infinity,
-      contacts: Infinity,
-      flows: Infinity,
-      numbers: 3,
-    },
-    business: {
-      messages: 20000,
-      contacts: Infinity,
-      flows: Infinity,
-      numbers: 3,
-    },
-    agency: {
-      messages: 50000,
-      contacts: Infinity,
-      flows: Infinity,
-      numbers: 10,
-    },
+  const { getPlan } = require("../config/plans");
+  const plan = getPlan(this.subscription?.plan);
+  const l = plan.limits || {};
+  const norm = (n) => (n === -1 || n === undefined ? Infinity : n);
+  return {
+    messages: norm(l.messages),
+    contacts: norm(l.contacts),
+    flows: norm(l.flows),
+    numbers: norm(l.numbers ?? 0),
+    teamSeats: norm(l.teamSeats ?? 1),
+    aiRepliesPerDay: norm(l.aiRepliesPerDay ?? 0),
+    planId: plan.id,
+    channel: plan.channel,
   };
-  return limits[this.subscription.plan] || limits.starter;
 };
 
 module.exports = mongoose.model("Workspace", workspaceSchema);

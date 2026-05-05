@@ -6,104 +6,54 @@ const easypaisaService = require("../services/payments/easypaisaService");
 const { sendInvoiceEmail } = require("../services/emailService");
 const { v4: uuidv4 } = require("uuid");
 const moment = require("moment");
+const {
+  PLANS,
+  PLAN_PRICES,
+  PLAN_KEYS_FOR_ENUM,
+  resolvePlanId,
+  getPlan,
+} = require("../config/plans");
 
-const PLAN_PRICES = {
-  starter: { monthly: 0, annual: 0 },
-  growth: { monthly: 2999, annual: 2999 * 10 },
-  business: { monthly: 6999, annual: 6999 * 10 },
-  agency: { monthly: 14999, annual: 14999 * 10 },
-};
+const MESSAGE_LIMITS = Object.fromEntries(
+  Object.values(PLANS).map((p) => [
+    p.id,
+    p.limits?.messages === -1 ? Infinity : p.limits?.messages || 0,
+  ]),
+);
 
-const MESSAGE_LIMITS = {
-  starter: 500,
-  growth: 5000,
-  business: 20000,
-  agency: 50000,
-};
+const PUBLIC_PLAN_IDS = [
+  "free",
+  "ig_starter",
+  "ig_pro",
+  "wa_starter",
+  "wa_pro",
+  "bundle_pro",
+  "bundle_business",
+];
 
-// @GET /api/billing/plans — Get available plans
+// @GET /api/billing/plans — Get available plans (channel-grouped)
 const getPlans = asyncHandler(async (req, res) => {
-  res.json({
-    success: true,
-    plans: [
-      {
-        key: "starter",
-        name: "Starter",
-        monthlyPrice: 0,
-        annualPrice: 0,
-        messages: 500,
-        contacts: 50,
-        flows: 3,
-        numbers: 1,
-        features: [
-          "500 messages/mo",
-          "50 contacts",
-          "3 automation flows",
-          "UltraMsg QR connection",
-          "Basic inbox",
-          "Community support",
-        ],
-      },
-      {
-        key: "growth",
-        name: "Growth",
-        monthlyPrice: 2999,
-        annualPrice: 2999 * 10,
-        messages: 5000,
-        contacts: 500,
-        flows: -1,
-        numbers: 1,
-        features: [
-          "5,000 messages/mo",
-          "500 contacts",
-          "Unlimited flows",
-          "Meta Cloud API (official)",
-          "Full inbox + handover",
-          "WhatsApp broadcasts (add-on)",
-          "90-day analytics",
-          "Email support (48hr)",
-        ],
-      },
-      {
-        key: "business",
-        name: "Business",
-        monthlyPrice: 6999,
-        annualPrice: 6999 * 10,
-        messages: 20000,
-        contacts: -1,
-        flows: -1,
-        numbers: 3,
-        features: [
-          "20,000 messages/mo",
-          "Unlimited contacts",
-          "3 WhatsApp numbers",
-          "Meta / 360dialog",
-          "20,000 broadcast msgs/mo",
-          "1-year analytics",
-          "Zapier + Webhooks",
-          "Priority email support",
-        ],
-      },
-      {
-        key: "agency",
-        name: "Agency",
-        monthlyPrice: 14999,
-        annualPrice: 14999 * 10,
-        messages: 50000,
-        contacts: -1,
-        flows: -1,
-        numbers: 10,
-        features: [
-          "50,000 messages/mo",
-          "10 client workspaces",
-          "White-label option",
-          "Full REST API",
-          "50,000 broadcasts/mo",
-          "Dedicated account manager",
-        ],
-      },
-    ],
+  const plans = PUBLIC_PLAN_IDS.map((id) => {
+    const p = PLANS[id];
+    return {
+      key: p.id,
+      id: p.id,
+      name: p.name,
+      tagline: p.tagline,
+      channel: p.channel,
+      monthlyPrice: p.priceMonthly,
+      annualPrice: p.priceAnnual,
+      currency: p.currency,
+      usd: p.usd,
+      trialDays: p.trialDays || 0,
+      limits: p.limits,
+      highlights: p.highlights || [],
+      features: p.features || [],
+      recommended: !!p.recommended,
+      premium: !!p.premium,
+    };
   });
+  res.json({ success: true, plans });
 });
 
 // @GET /api/billing/subscription — Get current subscription
@@ -143,17 +93,23 @@ const initiatePayment = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Plan and payment method required");
   }
-  if (!["starter", "growth", "business", "agency"].includes(plan)) {
+  const planId = resolvePlanId(plan);
+  if (!PUBLIC_PLAN_IDS.includes(planId)) {
     res.status(400);
     throw new Error("Invalid plan");
   }
-  if (plan === "starter") {
+  if (planId === "free") {
     res.status(400);
-    throw new Error("Starter plan is free — no payment required");
+    throw new Error("Free trial does not require payment");
   }
 
-  const amount = PLAN_PRICES[plan][billingCycle];
-  const txnRef = `VW-${uuidv4().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+  const prices = PLAN_PRICES[planId];
+  const amount = prices?.[billingCycle] ?? prices?.monthly;
+  if (!amount) {
+    res.status(400);
+    throw new Error("Plan pricing unavailable");
+  }
+  const txnRef = `BL-${uuidv4().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
 
   let result;
   if (paymentMethod === "jazzcash") {
@@ -232,11 +188,11 @@ const confirmPayment = asyncHandler(async (req, res) => {
 
   await activatePlan({
     workspaceId: req.workspace._id,
-    plan,
+    plan: resolvePlanId(plan),
     billingCycle,
     paymentMethod,
     txnRef,
-    amount: PLAN_PRICES[plan][billingCycle],
+    amount: PLAN_PRICES[resolvePlanId(plan)]?.[billingCycle],
   });
 
   res.json({ success: true, message: `${plan} plan activated successfully!` });
@@ -256,13 +212,15 @@ const activatePlan = async ({
     billingCycle === "annual"
       ? moment().add(1, "year").toDate()
       : moment().add(1, "month").toDate();
+  const messagesLimit = MESSAGE_LIMITS[plan];
+  const numericLimit = messagesLimit === Infinity ? -1 : messagesLimit || 0;
 
   await Workspace.findByIdAndUpdate(workspaceId, {
     "subscription.plan": plan,
     "subscription.status": "active",
     "subscription.currentPeriodStart": now,
     "subscription.currentPeriodEnd": periodEnd,
-    "usage.messagesLimit": MESSAGE_LIMITS[plan],
+    "usage.messagesLimit": numericLimit,
     "usage.messagesThisMonth": 0,
     "usage.lastResetDate": now,
   });
