@@ -444,30 +444,6 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
         } catch {}
       }
 
-      // Backfill: if no IGBA stored, fetch /me?fields=id once and persist it
-      // so future webhooks match without a reconnect.
-      if (!wsIgBaId && ws.instagram.accessToken) {
-        try {
-          const token = decrypt(ws.instagram.accessToken);
-          const ig = require("../services/instagram/metaService");
-          const info = await ig.getIGAccountInfo(token);
-          if (info?.id) {
-            wsIgBaId = String(info.id);
-            await Workspace.updateOne(
-              { _id: ws._id },
-              { $set: { "instagram.igBusinessAccountId": encrypt(wsIgBaId) } },
-            );
-            logger.info(
-              `[IG webhook] backfilled igBusinessAccountId=${wsIgBaId} for ws=${ws._id}`,
-            );
-          }
-        } catch (err) {
-          logger.warn(
-            `[IG webhook] backfill /me failed ws=${ws._id}: ${err.message}`,
-          );
-        }
-      }
-
       if (wsIgId !== entryIgUserId && wsIgBaId !== entryIgUserId) {
         logger.info(
           `[IG webhook] ws=${ws._id} igUserId=${wsIgId} igBaId=${wsIgBaId || "n/a"} != entry=${entryIgUserId}`,
@@ -620,6 +596,90 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
       logger.warn(
         `[IG webhook] NO WORKSPACE MATCHED entry.id=${entryIgUserId} — drop`,
       );
+
+      // Claim heuristic: if exactly 1 connected workspace has no confirmed IGBA
+      // (or has a stale IGBA from the now-removed /me backfill), the webhook
+      // must belong to it. Store entry.id as its IGBA, then reprocess.
+      const unclaimedWorkspaces = workspaces.filter((ws) => {
+        if (!ws.instagram.igBusinessAccountId) return true; // no IGBA at all
+        // Has IGBA but it didn't match — could be stale value from old backfill
+        try {
+          const stored = decrypt(ws.instagram.igBusinessAccountId);
+          return stored !== entryIgUserId; // stale — needs replacing
+        } catch {
+          return true;
+        }
+      });
+      if (unclaimedWorkspaces.length === 1) {
+        const ws = unclaimedWorkspaces[0];
+        await Workspace.updateOne(
+          { _id: ws._id },
+          {
+            $set: {
+              "instagram.igBusinessAccountId": encrypt(entryIgUserId),
+            },
+          },
+        );
+        logger.info(
+          `[IG webhook] claimed igBusinessAccountId=${entryIgUserId} for ws=${ws._id} — reprocessing`,
+        );
+        // Re-run the entry processing by falling through with this workspace
+        const reprocessWorkspace = await Workspace.findById(ws._id).select(
+          "+instagram.igUserId +instagram.igBusinessAccountId +instagram.accessToken",
+        );
+        if (reprocessWorkspace) {
+          workspaces.splice(workspaces.indexOf(ws), 1, reprocessWorkspace);
+          // Process messaging and change events for claimed workspace
+          for (const msg of entry.messaging || []) {
+            const senderId = msg.sender?.id;
+            if (!senderId) continue;
+            if (isDup(msg.message?.mid || msg.postback?.mid)) continue;
+            if (msg.postback) {
+              await handleWebhookEvent(reprocessWorkspace._id, {
+                type: "postback",
+                senderId,
+                payload: msg.postback.payload,
+                text: msg.postback.title,
+              });
+              continue;
+            }
+            if (msg.referral) {
+              await handleWebhookEvent(reprocessWorkspace._id, {
+                type: "ref_url",
+                senderId,
+                refCode: msg.referral.ref,
+              });
+              continue;
+            }
+            const message = msg.message || {};
+            if (message.reply_to?.story) {
+              await handleWebhookEvent(reprocessWorkspace._id, {
+                type: "story_reply",
+                senderId,
+                text: message.text,
+                storyId: message.reply_to.story.id,
+              });
+              continue;
+            }
+            const attachments = message.attachments || [];
+            const isShare = attachments.some((a) =>
+              ["share", "story_mention", "template"].includes(a.type),
+            );
+            if (isShare) {
+              await handleWebhookEvent(reprocessWorkspace._id, {
+                type: "share_to_story",
+                senderId,
+              });
+              continue;
+            }
+            await handleWebhookEvent(reprocessWorkspace._id, {
+              type: "direct_message",
+              senderId,
+              text: message.text,
+            });
+          }
+        }
+      }
     }
   }
 });
