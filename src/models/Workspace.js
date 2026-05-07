@@ -217,7 +217,7 @@ const workspaceSchema = new mongoose.Schema(
         enum: ["groq", "openai", "gemini", "none"],
         default: "groq",
       },
-      model: { type: String, default: "llama-3.1-70b-versatile" },
+      model: { type: String, default: "llama-3.3-70b-versatile" },
       systemPrompt: {
         type: String,
         default:

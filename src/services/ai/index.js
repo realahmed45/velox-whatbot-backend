@@ -1,7 +1,7 @@
 /**
  * Botlify — Unified AI provider abstraction.
  *
- * Default: Groq (free, fast) → Llama 3.1 70B
+ * Default: Groq (free, fast) → Llama 3.3 70B
  * Fallbacks: OpenAI (gpt-4o-mini) if configured, otherwise canned reply.
  *
  * Workspaces can override via workspace.aiSettings.provider.
@@ -133,7 +133,14 @@ const generateReply = async ({
 
   if (requested === "groq" || requested === "auto") {
     client = getGroqClient();
-    model = ai.model || "llama-3.1-70b-versatile";
+    let requestedModel = ai.model || "llama-3.3-70b-versatile";
+    // Remap decommissioned Groq models to current equivalents
+    const GROQ_DEPRECATED = {
+      "llama-3.1-70b-versatile": "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant": "llama-3.1-8b-instant", // still active, keep
+      "mixtral-8x7b-32768": "llama-3.3-70b-versatile",
+    };
+    model = GROQ_DEPRECATED[requestedModel] ?? requestedModel;
     providerUsed = "groq";
   }
 
