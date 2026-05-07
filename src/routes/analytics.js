@@ -17,6 +17,7 @@ router.get("/overview", getOverview);
 router.get("/messages-over-time", getMessagesOverTime);
 router.get("/peak-hours", getPeakHours);
 router.get("/flows", getFlowAnalytics);
+router.get("/flow-performance", getFlowAnalytics); // alias used by frontend
 router.get("/contacts-growth", getContactsGrowth);
 router.get("/roi", getRoiReport);
 

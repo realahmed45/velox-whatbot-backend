@@ -261,6 +261,35 @@ const cancelSubscription = asyncHandler(async (req, res) => {
   });
 });
 
+// @POST /api/billing/select-plan — Directly activate a plan (no payment required).
+// Used during testing / manual upgrades before card payment is live.
+const selectPlan = asyncHandler(async (req, res) => {
+  const { plan, billingCycle = "monthly" } = req.body;
+  if (!plan) {
+    res.status(400);
+    throw new Error("Plan is required");
+  }
+  const planId = resolvePlanId(plan);
+  if (!PUBLIC_PLAN_IDS.includes(planId)) {
+    res.status(400);
+    throw new Error("Invalid plan");
+  }
+
+  await activatePlan({
+    workspaceId: req.workspace._id,
+    plan: planId,
+    billingCycle,
+    paymentMethod: "manual",
+    txnRef: `MANUAL-${Date.now()}`,
+    amount: PLAN_PRICES[planId]?.[billingCycle] || 0,
+  });
+
+  res.json({
+    success: true,
+    message: `Plan changed to ${planId} successfully!`,
+  });
+});
+
 module.exports = {
   getPlans,
   getSubscription,
@@ -268,4 +297,5 @@ module.exports = {
   initiatePayment,
   confirmPayment,
   cancelSubscription,
+  selectPlan,
 };

@@ -21,7 +21,13 @@ const getOverview = asyncHandler(async (req, res) => {
     totalResolved,
     totalConversations,
     botResolvedConversations,
-    avgBotResponseTime,
+    totalMessages,
+    inboundMessages,
+    outboundMessages,
+    botOutbound,
+    igMessages,
+    waMessages,
+    totalContacts,
   ] = await Promise.all([
     Message.countDocuments({ workspaceId, createdAt: { $gte: todayStart } }),
     Conversation.countDocuments({
@@ -49,51 +55,68 @@ const getOverview = asyncHandler(async (req, res) => {
       status: "resolved",
       resolvedBy: { $exists: false },
     }),
-    Message.aggregate([
-      {
-        $match: {
-          workspaceId,
-          direction: "outbound",
-          sender: "bot",
-          createdAt: { $gte: monthStart },
-        },
-      },
-      { $group: { _id: null, avgTime: { $avg: "$_id" } } },
-    ]),
+    // Flat message counts
+    Message.countDocuments({ workspaceId }),
+    Message.countDocuments({ workspaceId, direction: "inbound" }),
+    Message.countDocuments({ workspaceId, direction: "outbound" }),
+    Message.countDocuments({
+      workspaceId,
+      direction: "outbound",
+      sender: "bot",
+    }),
+    Message.countDocuments({ workspaceId, channelType: "instagram" }),
+    Message.countDocuments({
+      workspaceId,
+      channelType: { $in: ["whatsapp", "wa"] },
+    }),
+    Contact.countDocuments({ workspaceId, isDeleted: false }),
   ]);
 
   const botResolutionRate =
     totalResolved > 0
       ? Math.round((botResolvedConversations / totalResolved) * 100)
       : 0;
+  const botHandledPct =
+    totalMessages > 0 ? Math.round((botOutbound / totalMessages) * 100) : 0;
+  const replyRate =
+    inboundMessages > 0
+      ? Math.round((outboundMessages / inboundMessages) * 100)
+      : 0;
 
   const planLimits = req.workspace.getPlanLimits();
   const usage = req.workspace.usage || {};
 
-  res.json({
-    success: true,
-    overview: {
-      messagesToday,
-      conversationsThisWeek,
-      leadsThisMonth,
-      activeConversations,
-      botResolutionRate: `${botResolutionRate}%`,
-      totalContacts: await Contact.countDocuments({
-        workspaceId,
-        isDeleted: false,
-      }),
-      planUsage: {
-        used: usage.messagesThisMonth || 0,
-        limit: planLimits.messages,
-        percent:
-          planLimits.messages === Infinity
-            ? 0
-            : Math.round(
-                ((usage.messagesThisMonth || 0) / planLimits.messages) * 100,
-              ),
-      },
+  const overview = {
+    // Dashboard summary cards (flat keys the OverviewPage reads directly)
+    totalMessages,
+    inboundMessages,
+    outboundMessages,
+    igMessages,
+    waMessages,
+    totalContacts,
+    replyRate,
+    botHandled: botOutbound,
+    humanHandled: outboundMessages - botOutbound,
+    botHandledPct,
+    // Legacy / AnalyticsPage keys
+    messagesToday,
+    conversationsThisWeek,
+    leadsThisMonth,
+    activeConversations,
+    botResolutionRate: `${botResolutionRate}%`,
+    planUsage: {
+      used: usage.messagesThisMonth || 0,
+      limit: planLimits.messages,
+      percent:
+        planLimits.messages === Infinity
+          ? 0
+          : Math.round(
+              ((usage.messagesThisMonth || 0) / planLimits.messages) * 100,
+            ),
     },
-  });
+  };
+
+  res.json({ success: true, overview });
 });
 
 // @GET /api/analytics/messages-over-time — Chart data

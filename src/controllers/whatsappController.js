@@ -450,8 +450,8 @@ const provisionCloudConnection = asyncHandler(async (req, res) => {
     /\/$/,
     "",
   );
-  const successUrl = `${clientBase}/dashboard/onboarding/whatsapp/callback?status=completed`;
-  const failureUrl = `${clientBase}/dashboard/onboarding/whatsapp/callback?status=failed`;
+  const successUrl = `${clientBase}/dashboard/onboarding/whatsapp?status=completed`;
+  const failureUrl = `${clientBase}/dashboard/onboarding/whatsapp?status=failed`;
 
   // 3) Mint setup link
   const link = await kapsoService.createSetupLink({
