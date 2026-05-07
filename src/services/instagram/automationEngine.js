@@ -105,7 +105,20 @@ const upsertContact = async (
       source: source || "instagram",
       tags: [],
     });
+    return contact;
   }
+  // Refresh stale placeholder fields when we now have real values.
+  let dirty = false;
+  if (username && contact.igUsername === senderId) {
+    contact.igUsername = username;
+    contact.username = username;
+    dirty = true;
+  }
+  if (name && (!contact.name || contact.name === "Instagram User")) {
+    contact.name = name;
+    dirty = true;
+  }
+  if (dirty) await contact.save();
   return contact;
 };
 

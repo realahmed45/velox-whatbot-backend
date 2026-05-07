@@ -18,6 +18,21 @@ const REDIRECT_URI = process.env.IG_OAUTH_REDIRECT_URI;
 const WEBHOOK_VERIFY_TOKEN =
   process.env.IG_WEBHOOK_VERIFY_TOKEN || "botlify_webhook_2026";
 
+// Best-effort lookup of a customer's IG username by IGSID using the workspace's
+// stored access token. Returns null on any failure so the caller can fall back
+// to using the IGSID as a placeholder.
+const lookupIgUsername = async (ws, igsid) => {
+  try {
+    if (!ws?.instagram?.accessToken || !igsid) return null;
+    const token = decrypt(ws.instagram.accessToken);
+    const meta = require("../services/instagram/metaService");
+    const profile = await meta.getIgUserProfile(token, igsid);
+    return profile?.username || null;
+  } catch {
+    return null;
+  }
+};
+
 // ── GET /api/instagram/connect/oauth-url ─────────────────────────────────────
 // If a hosted provider is configured (BOTLIFY_IG_PROVIDER_API_KEY) we return
 // its hosted-auth URL so the customer skips Meta App Review entirely. Otherwise
@@ -543,7 +558,7 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(ws._id, {
           type: "direct_message",
           senderId,
-          senderUsername: null,
+          senderUsername: await lookupIgUsername(ws, senderId),
           senderName: null,
           text: messageText,
         });
@@ -675,6 +690,10 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
             await handleWebhookEvent(reprocessWorkspace._id, {
               type: "direct_message",
               senderId,
+              senderUsername: await lookupIgUsername(
+                reprocessWorkspace,
+                senderId,
+              ),
               text: message.text,
             });
           }

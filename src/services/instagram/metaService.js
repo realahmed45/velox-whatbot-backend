@@ -72,6 +72,29 @@ const getIGAccountInfo = async (accessToken) => {
   return data;
 };
 
+/**
+ * Look up a customer's IG profile by IGSID (the sender id from a webhook).
+ * Returns { username, name, profile_pic } or null if the lookup fails.
+ * Note: this only works for users who have messaged the IG business account.
+ */
+const getIgUserProfile = async (accessToken, igsid) => {
+  if (!accessToken || !igsid) return null;
+  try {
+    const { data } = await axios.get(`${IG_GRAPH}/${igsid}`, {
+      params: {
+        fields: "name,username,profile_pic",
+        access_token: accessToken,
+      },
+    });
+    return data || null;
+  } catch (err) {
+    logger.debug(
+      `[IG profile] lookup failed for ${igsid}: ${err.response?.data?.error?.message || err.message}`,
+    );
+    return null;
+  }
+};
+
 // ── Messaging ─────────────────────────────────────────────────────────────────
 
 /**
@@ -302,6 +325,7 @@ module.exports = {
   getLongLivedToken,
   refreshLongLivedToken,
   getIGAccountInfo,
+  getIgUserProfile,
   getRecentFollowers,
   sendDM,
   subscribeWebhook,
