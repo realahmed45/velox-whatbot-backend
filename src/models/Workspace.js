@@ -30,6 +30,9 @@ const instagramConnectionSchema = new mongoose.Schema(
     },
     // Meta OAuth fields (encrypted at rest)
     igUserId: { type: String, select: false },
+    // IG Business Account ID (returned by /me as `id`, used in webhook entry.id).
+    // Different from igUserId/IGSID returned by token exchange.
+    igBusinessAccountId: { type: String, select: false },
     accessToken: { type: String, select: false },
     pageId: { type: String, select: false },
     pageAccessToken: { type: String, select: false },

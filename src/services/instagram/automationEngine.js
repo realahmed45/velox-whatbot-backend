@@ -619,7 +619,7 @@ const enrichMessageSentiment = async (workspace, messageDoc, text) => {
 const handleWebhookEvent = async (workspaceId, event) => {
   try {
     const workspace = await Workspace.findById(workspaceId).select(
-      "+instagram.accessToken +instagram.igUserId",
+      "+instagram.accessToken +instagram.igUserId +instagram.igBusinessAccountId",
     );
     if (!workspace) {
       logger.info(`[IG flow] no workspace for id=${workspaceId}`);
@@ -644,7 +644,12 @@ const handleWebhookEvent = async (workspaceId, event) => {
 
     try {
       const ownIgId = decrypt(workspace.instagram.igUserId);
-      if (senderId === ownIgId) return;
+      let ownIgBaId;
+      try {
+        if (workspace.instagram.igBusinessAccountId)
+          ownIgBaId = decrypt(workspace.instagram.igBusinessAccountId);
+      } catch {}
+      if (senderId === ownIgId || senderId === ownIgBaId) return;
     } catch {}
 
     if (type === TRIGGERS.POST_COMMENT) {

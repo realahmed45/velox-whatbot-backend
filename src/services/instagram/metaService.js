@@ -65,7 +65,7 @@ const getIGAccountInfo = async (accessToken) => {
   const { data } = await axios.get(`${IG_GRAPH}/me`, {
     params: {
       fields:
-        "user_id,username,name,profile_picture_url,followers_count,account_type",
+        "id,user_id,username,name,profile_picture_url,followers_count,account_type",
       access_token: accessToken,
     },
   });

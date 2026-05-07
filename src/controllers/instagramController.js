@@ -123,6 +123,9 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
       "instagram.status": "connected",
       "instagram.connectionType": "meta_oauth",
       "instagram.igUserId": encrypt(igUserId),
+      "instagram.igBusinessAccountId": igInfo.id
+        ? encrypt(String(igInfo.id))
+        : undefined,
       "instagram.accessToken": encrypt(longToken),
       "instagram.username": igInfo.username,
       "instagram.displayName": igInfo.name || igInfo.username,
@@ -415,7 +418,9 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
 
     const workspaces = await Workspace.find({
       "instagram.status": "connected",
-    }).select("+instagram.igUserId +instagram.accessToken");
+    }).select(
+      "+instagram.igUserId +instagram.igBusinessAccountId +instagram.accessToken",
+    );
 
     logger.info(
       `[IG webhook] entry.id=${entryIgUserId} types=${entryTypes.join(",") || "none"} connectedWorkspaces=${workspaces.length}`,
@@ -424,22 +429,55 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
     let matched = false;
     for (const ws of workspaces) {
       let wsIgId;
+      let wsIgBaId;
       try {
         wsIgId = decrypt(ws.instagram.igUserId);
       } catch (err) {
         logger.warn(
-          `[IG webhook] decrypt failed for ws=${ws._id}: ${err.message}`,
+          `[IG webhook] decrypt igUserId failed for ws=${ws._id}: ${err.message}`,
         );
         continue;
       }
-      if (wsIgId !== entryIgUserId) {
+      if (ws.instagram.igBusinessAccountId) {
+        try {
+          wsIgBaId = decrypt(ws.instagram.igBusinessAccountId);
+        } catch {}
+      }
+
+      // Backfill: if no IGBA stored, fetch /me?fields=id once and persist it
+      // so future webhooks match without a reconnect.
+      if (!wsIgBaId && ws.instagram.accessToken) {
+        try {
+          const token = decrypt(ws.instagram.accessToken);
+          const ig = require("../services/instagram/metaService");
+          const info = await ig.getIGAccountInfo(token);
+          if (info?.id) {
+            wsIgBaId = String(info.id);
+            await Workspace.updateOne(
+              { _id: ws._id },
+              { $set: { "instagram.igBusinessAccountId": encrypt(wsIgBaId) } },
+            );
+            logger.info(
+              `[IG webhook] backfilled igBusinessAccountId=${wsIgBaId} for ws=${ws._id}`,
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            `[IG webhook] backfill /me failed ws=${ws._id}: ${err.message}`,
+          );
+        }
+      }
+
+      if (wsIgId !== entryIgUserId && wsIgBaId !== entryIgUserId) {
         logger.info(
-          `[IG webhook] ws=${ws._id} igUserId=${wsIgId} != entry=${entryIgUserId}`,
+          `[IG webhook] ws=${ws._id} igUserId=${wsIgId} igBaId=${wsIgBaId || "n/a"} != entry=${entryIgUserId}`,
         );
         continue;
       }
       matched = true;
-      logger.info(`[IG webhook] MATCH ws=${ws._id} igUserId=${wsIgId}`);
+      logger.info(
+        `[IG webhook] MATCH ws=${ws._id} via ${wsIgBaId === entryIgUserId ? "igBaId" : "igUserId"}`,
+      );
 
       // Record that Meta is actually delivering events to us (visible in diagnose)
       Workspace.updateOne(
