@@ -463,11 +463,11 @@ const handleAwayReply = async (workspace, contact, conv) => {
 const handleAIReply = async (workspace, contact, conv, text) => {
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.AI_BOT))
     return false;
-  if (!workspace.aiBot?.enabled) return false;
-  if (
-    (conv.botReplyCount || 0) >= (workspace.aiBot.maxTurnsPerConversation || 20)
-  )
-    return false;
+  // Read v2 aiSettings first, fall back to legacy aiBot for older installs.
+  const aiCfg = workspace.aiSettings || workspace.aiBot || {};
+  if (!aiCfg.enabled) return false;
+  const maxTurns = aiCfg.maxTurnsPerConversation || 20;
+  if ((conv.botReplyCount || 0) >= maxTurns) return false;
 
   const msgs = await Message.find({ conversationId: conv._id })
     .sort({ createdAt: -1 })
