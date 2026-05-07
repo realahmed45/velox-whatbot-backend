@@ -8,6 +8,14 @@ const broadcastCampaignSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // Channel the campaign belongs to. WhatsApp is the default for legacy
+    // campaigns created before per-channel separation.
+    channel: {
+      type: String,
+      enum: ["whatsapp", "instagram"],
+      default: "whatsapp",
+      index: true,
+    },
     name: { type: String, required: true },
     message: { type: String, required: true },
     mediaUrl: String,

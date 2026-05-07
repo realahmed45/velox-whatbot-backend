@@ -210,7 +210,7 @@ const workspaceSchema = new mongoose.Schema(
       default: "instagram",
     },
 
-    // AI provider settings (used by both WA and IG)
+    // AI provider settings — Instagram-scoped (legacy field shared with IG)
     aiSettings: {
       provider: {
         type: String,
@@ -222,6 +222,35 @@ const workspaceSchema = new mongoose.Schema(
         type: String,
         default:
           "You are a friendly, professional assistant. Keep replies short, warm, and helpful.",
+      },
+      businessContext: { type: String, default: "" },
+      faqs: [
+        {
+          question: String,
+          answer: String,
+        },
+      ],
+      temperature: { type: Number, default: 0.4 },
+      maxTokens: { type: Number, default: 240 },
+      enabled: { type: Boolean, default: true },
+      handoffKeywords: {
+        type: [String],
+        default: ["human", "agent", "support"],
+      },
+    },
+
+    // AI provider settings — WhatsApp-scoped (separate persona/FAQs/etc.)
+    aiSettingsWa: {
+      provider: {
+        type: String,
+        enum: ["groq", "openai", "gemini", "none"],
+        default: "groq",
+      },
+      model: { type: String, default: "llama-3.3-70b-versatile" },
+      systemPrompt: {
+        type: String,
+        default:
+          "You are a friendly, professional WhatsApp support agent. Keep replies short, warm, and helpful.",
       },
       businessContext: { type: String, default: "" },
       faqs: [

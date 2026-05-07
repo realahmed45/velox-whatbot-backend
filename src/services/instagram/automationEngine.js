@@ -504,6 +504,7 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     history,
     userMessage: text,
     contact,
+    channel: "instagram",
   });
 
   if (escalate) {

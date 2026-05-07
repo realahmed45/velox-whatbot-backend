@@ -5,9 +5,31 @@ const Contact = require("../models/Contact");
 const Flow = require("../models/Flow");
 const moment = require("moment");
 
+// Resolve channel filter from query (?channel=instagram|whatsapp).
+// Returns objects to spread into Message / Conversation / Contact `$match`/find.
+const channelFilters = (req) => {
+  const c = (req.query.channel || "").toLowerCase();
+  if (c === "instagram") {
+    return {
+      msg: { channelType: "instagram" },
+      conv: { channelType: "instagram" },
+      contact: { igUserId: { $type: "string" } },
+    };
+  }
+  if (c === "whatsapp" || c === "wa") {
+    return {
+      msg: { channelType: { $in: ["whatsapp", "wa"] } },
+      conv: { channelType: { $in: ["whatsapp", "wa"] } },
+      contact: { phone: { $type: "string" } },
+    };
+  }
+  return { msg: {}, conv: {}, contact: {} };
+};
+
 // @GET /api/analytics/overview — Dashboard summary cards
 const getOverview = asyncHandler(async (req, res) => {
   const workspaceId = req.workspace._id;
+  const ch = channelFilters(req);
   const now = new Date();
   const todayStart = moment().startOf("day").toDate();
   const weekStart = moment().startOf("isoWeek").toDate();
@@ -29,14 +51,20 @@ const getOverview = asyncHandler(async (req, res) => {
     waMessages,
     totalContacts,
   ] = await Promise.all([
-    Message.countDocuments({ workspaceId, createdAt: { $gte: todayStart } }),
+    Message.countDocuments({
+      workspaceId,
+      ...ch.msg,
+      createdAt: { $gte: todayStart },
+    }),
     Conversation.countDocuments({
       workspaceId,
+      ...ch.conv,
       createdAt: { $gte: weekStart },
     }),
     Contact.countDocuments({
       workspaceId,
       isDeleted: false,
+      ...ch.contact,
       $or: [
         { name: { $exists: true, $ne: null } },
         { email: { $exists: true, $ne: null } },
@@ -45,22 +73,29 @@ const getOverview = asyncHandler(async (req, res) => {
     }),
     Conversation.countDocuments({
       workspaceId,
+      ...ch.conv,
       status: { $in: ["bot_active", "human_active", "awaiting_human"] },
       lastMessageAt: { $gte: moment().subtract(24, "hours").toDate() },
     }),
-    Conversation.countDocuments({ workspaceId, status: "resolved" }),
-    Conversation.countDocuments({ workspaceId }),
     Conversation.countDocuments({
       workspaceId,
+      ...ch.conv,
+      status: "resolved",
+    }),
+    Conversation.countDocuments({ workspaceId, ...ch.conv }),
+    Conversation.countDocuments({
+      workspaceId,
+      ...ch.conv,
       status: "resolved",
       resolvedBy: { $exists: false },
     }),
     // Flat message counts
-    Message.countDocuments({ workspaceId }),
-    Message.countDocuments({ workspaceId, direction: "inbound" }),
-    Message.countDocuments({ workspaceId, direction: "outbound" }),
+    Message.countDocuments({ workspaceId, ...ch.msg }),
+    Message.countDocuments({ workspaceId, ...ch.msg, direction: "inbound" }),
+    Message.countDocuments({ workspaceId, ...ch.msg, direction: "outbound" }),
     Message.countDocuments({
       workspaceId,
+      ...ch.msg,
       direction: "outbound",
       sender: "bot",
     }),
@@ -69,7 +104,7 @@ const getOverview = asyncHandler(async (req, res) => {
       workspaceId,
       channelType: { $in: ["whatsapp", "wa"] },
     }),
-    Contact.countDocuments({ workspaceId, isDeleted: false }),
+    Contact.countDocuments({ workspaceId, isDeleted: false, ...ch.contact }),
   ]);
 
   const botResolutionRate =
@@ -123,6 +158,7 @@ const getOverview = asyncHandler(async (req, res) => {
 const getMessagesOverTime = asyncHandler(async (req, res) => {
   const { period = "weekly" } = req.query;
   const workspaceId = req.workspace._id;
+  const ch = channelFilters(req);
 
   let groupFormat, startDate, numBuckets;
   switch (period) {
@@ -143,7 +179,7 @@ const getMessagesOverTime = asyncHandler(async (req, res) => {
   }
 
   const data = await Message.aggregate([
-    { $match: { workspaceId, createdAt: { $gte: startDate } } },
+    { $match: { workspaceId, ...ch.msg, createdAt: { $gte: startDate } } },
     {
       $group: {
         _id: { $dateToString: { format: groupFormat, date: "$createdAt" } },
@@ -164,12 +200,14 @@ const getMessagesOverTime = asyncHandler(async (req, res) => {
 // @GET /api/analytics/peak-hours — Heatmap data
 const getPeakHours = asyncHandler(async (req, res) => {
   const workspaceId = req.workspace._id;
+  const ch = channelFilters(req);
   const thirtyDaysAgo = moment().subtract(30, "days").toDate();
 
   const data = await Message.aggregate([
     {
       $match: {
         workspaceId,
+        ...ch.msg,
         direction: "inbound",
         createdAt: { $gte: thirtyDaysAgo },
       },
@@ -191,10 +229,12 @@ const getPeakHours = asyncHandler(async (req, res) => {
 
 // @GET /api/analytics/flows — Flow performance
 const getFlowAnalytics = asyncHandler(async (req, res) => {
-  const flows = await Flow.find({
-    workspaceId: req.workspace._id,
-    status: "active",
-  })
+  const c = (req.query.channel || "").toLowerCase();
+  const filter = { workspaceId: req.workspace._id, status: "active" };
+  if (c === "instagram") filter.channel = "instagram";
+  else if (c === "whatsapp" || c === "wa")
+    filter.channel = { $in: ["whatsapp", "wa"] };
+  const flows = await Flow.find(filter)
     .select("name stats")
     .sort({ "stats.totalTriggers": -1 })
     .limit(10);
@@ -205,6 +245,7 @@ const getFlowAnalytics = asyncHandler(async (req, res) => {
 // @GET /api/analytics/contacts-growth — Contact growth trend
 const getContactsGrowth = asyncHandler(async (req, res) => {
   const workspaceId = req.workspace._id;
+  const ch = channelFilters(req);
   const thirtyDaysAgo = moment().subtract(30, "days").toDate();
 
   const data = await Contact.aggregate([
@@ -212,6 +253,7 @@ const getContactsGrowth = asyncHandler(async (req, res) => {
       $match: {
         workspaceId,
         isDeleted: false,
+        ...ch.contact,
         firstSeenAt: { $gte: thirtyDaysAgo },
       },
     },

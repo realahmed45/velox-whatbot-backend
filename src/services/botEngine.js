@@ -221,7 +221,9 @@ const matchAndStartFlow = async (
   );
 
   // ── AI fallback: if AI is enabled, let the chatbot answer ──
-  if (workspace.aiSettings?.enabled) {
+  // botEngine handles WhatsApp → read aiSettingsWa first, fall back to legacy aiSettings
+  const aiCfg = workspace.aiSettingsWa || workspace.aiSettings || {};
+  if (aiCfg.enabled) {
     try {
       await runAiFallback({
         workspace,
@@ -268,6 +270,7 @@ const runAiFallback = async ({
     history,
     userMessage: messageBody,
     contact,
+    channel: "whatsapp",
   });
 
   if (escalate) {

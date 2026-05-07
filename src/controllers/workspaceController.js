@@ -91,6 +91,7 @@ const updateWorkspace = asyncHandler(async (req, res) => {
     "branding",
     "activeChannel",
     "aiSettings",
+    "aiSettingsWa",
   ];
   const updates = {};
   allowed.forEach((field) => {

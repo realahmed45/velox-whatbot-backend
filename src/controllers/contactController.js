@@ -17,6 +17,13 @@ const getContacts = asyncHandler(async (req, res) => {
 
   if (tag) filter.tags = tag;
 
+  // Channel scoping: WhatsApp contacts have a phone, Instagram contacts have
+  // an igUserId. We use presence of those identifiers to scope the list to
+  // the active channel without needing a denormalised channel column.
+  const { channel } = req.query;
+  if (channel === "whatsapp") filter.phone = { $type: "string" };
+  else if (channel === "instagram") filter.igUserId = { $type: "string" };
+
   let query = Contact.find(filter)
     .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
     .limit(parseInt(limit))

@@ -8,9 +8,12 @@ const { getIO } = require("../socket");
 
 // @GET /api/inbox — List conversations
 const getConversations = asyncHandler(async (req, res) => {
-  const { status, search, page = 1, limit = 30 } = req.query;
+  const { status, search, channel, page = 1, limit = 30 } = req.query;
   const filter = { workspaceId: req.workspace._id };
   if (status && status !== "all") filter.status = status;
+  if (channel && ["instagram", "whatsapp"].includes(channel)) {
+    filter.channelType = channel;
+  }
 
   let query = Conversation.find(filter)
     .populate("contactId", "name phone tags")

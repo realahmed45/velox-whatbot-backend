@@ -8,9 +8,12 @@ const { getPlan } = require("../config/plans");
 
 // @GET /api/broadcasts — List campaigns
 const getCampaigns = asyncHandler(async (req, res) => {
-  const campaigns = await BroadcastCampaign.find({
-    workspaceId: req.workspace._id,
-  })
+  const filter = { workspaceId: req.workspace._id };
+  const { channel } = req.query;
+  if (channel && ["whatsapp", "instagram"].includes(channel)) {
+    filter.channel = channel;
+  }
+  const campaigns = await BroadcastCampaign.find(filter)
     .populate("createdBy", "name")
     .sort({ createdAt: -1 });
   res.json({ success: true, campaigns });
@@ -29,8 +32,15 @@ const createCampaign = asyncHandler(async (req, res) => {
     }
   }
 
-  const { name, message, mediaUrl, mediaType, targetSegment, scheduledAt } =
-    req.body;
+  const {
+    name,
+    message,
+    mediaUrl,
+    mediaType,
+    targetSegment,
+    scheduledAt,
+    channel,
+  } = req.body;
   if (!name || !message) {
     res.status(400);
     throw new Error("Name and message required");
@@ -44,6 +54,7 @@ const createCampaign = asyncHandler(async (req, res) => {
 
   const campaign = await BroadcastCampaign.create({
     workspaceId: req.workspace._id,
+    channel: channel === "instagram" ? "instagram" : "whatsapp",
     name,
     message,
     mediaUrl,

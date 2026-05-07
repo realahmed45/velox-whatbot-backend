@@ -46,18 +46,34 @@ const fallbackReply = (contact) => {
 };
 
 /**
+ * Pick the right AI config bag for the current channel.
+ * - WhatsApp → aiSettingsWa (falls back to aiSettings if WA-specific not set)
+ * - Instagram (or anything else) → aiSettings (falls back to legacy aiBot)
+ */
+const pickAiCfg = (workspace, channel) => {
+  const ch = (channel || workspace.activeChannel || "instagram").toLowerCase();
+  if (ch === "whatsapp") {
+    return workspace.aiSettingsWa || workspace.aiSettings || {};
+  }
+  return workspace.aiSettings || workspace.aiBot || {};
+};
+
+/**
  * Build the system prompt from workspace.aiSettings (or legacy aiBot).
  */
-const buildSystemPrompt = (workspace, contact) => {
-  // Read aiSettings (v2), fall back to legacy aiBot for older IG installs
-  const v2 = workspace.aiSettings || {};
+const buildSystemPrompt = (workspace, contact, channel) => {
+  const v2 = pickAiCfg(workspace, channel);
   const legacy = workspace.aiBot || {};
   const ai = {
     systemPrompt: v2.systemPrompt || legacy.personality,
     businessContext: v2.businessContext || legacy.businessInfo,
     faqs: v2.faqs && v2.faqs.length ? v2.faqs : legacy.faqs,
   };
-  const channel = workspace.activeChannel || "instagram";
+  const channelEffective = (
+    channel ||
+    workspace.activeChannel ||
+    "instagram"
+  ).toLowerCase();
   const lines = [
     ai.systemPrompt ||
       "You are a friendly, professional assistant. Keep replies short, warm, and helpful.",
@@ -81,7 +97,7 @@ const buildSystemPrompt = (workspace, contact) => {
     contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `The customer's identifier is: ${handle}.`);
   lines.push(
-    `You are replying via ${channel === "whatsapp" ? "WhatsApp" : channel === "instagram" ? "Instagram DM" : "messaging"}.`,
+    `You are replying via ${channelEffective === "whatsapp" ? "WhatsApp" : channelEffective === "instagram" ? "Instagram DM" : "messaging"}.`,
   );
   lines.push(
     "Keep replies 1-3 sentences, natural, and warm. Never invent prices, links, addresses, or policies that you weren't told.",
@@ -109,10 +125,11 @@ const generateReply = async ({
   history = [],
   userMessage,
   contact,
+  channel,
 }) => {
   const ai = {
     ...(workspace.aiBot || {}),
-    ...(workspace.aiSettings || {}),
+    ...pickAiCfg(workspace, channel),
   };
   // Map legacy field names
   if (!ai.handoffKeywords && workspace.aiBot?.escalateOnKeywords)
@@ -175,7 +192,7 @@ const generateReply = async ({
     };
   }
 
-  const systemPrompt = buildSystemPrompt(workspace, contact);
+  const systemPrompt = buildSystemPrompt(workspace, contact, channel);
 
   try {
     const response = await client.chat.completions.create({
