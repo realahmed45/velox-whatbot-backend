@@ -417,14 +417,29 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
       "instagram.status": "connected",
     }).select("+instagram.igUserId +instagram.accessToken");
 
+    logger.info(
+      `[IG webhook] entry.id=${entryIgUserId} types=${entryTypes.join(",") || "none"} connectedWorkspaces=${workspaces.length}`,
+    );
+
+    let matched = false;
     for (const ws of workspaces) {
       let wsIgId;
       try {
         wsIgId = decrypt(ws.instagram.igUserId);
-      } catch {
+      } catch (err) {
+        logger.warn(
+          `[IG webhook] decrypt failed for ws=${ws._id}: ${err.message}`,
+        );
         continue;
       }
-      if (wsIgId !== entryIgUserId) continue;
+      if (wsIgId !== entryIgUserId) {
+        logger.info(
+          `[IG webhook] ws=${ws._id} igUserId=${wsIgId} != entry=${entryIgUserId}`,
+        );
+        continue;
+      }
+      matched = true;
+      logger.info(`[IG webhook] MATCH ws=${ws._id} igUserId=${wsIgId}`);
 
       // Record that Meta is actually delivering events to us (visible in diagnose)
       Workspace.updateOne(
@@ -562,6 +577,11 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
           });
         }
       }
+    }
+    if (!matched) {
+      logger.warn(
+        `[IG webhook] NO WORKSPACE MATCHED entry.id=${entryIgUserId} — drop`,
+      );
     }
   }
 });
