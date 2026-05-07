@@ -621,12 +621,26 @@ const handleWebhookEvent = async (workspaceId, event) => {
     const workspace = await Workspace.findById(workspaceId).select(
       "+instagram.accessToken +instagram.igUserId",
     );
-    if (!workspace) return;
-    if (workspace.instagram?.status !== "connected") return;
-    if (!workspace.settings?.automationEnabled) return;
+    if (!workspace) {
+      logger.info(`[IG flow] no workspace for id=${workspaceId}`);
+      return;
+    }
+    if (workspace.instagram?.status !== "connected") {
+      logger.info(
+        `[IG flow] ws=${workspaceId} not connected (status=${workspace.instagram?.status})`,
+      );
+      return;
+    }
+    if (!workspace.settings?.automationEnabled) {
+      logger.info(`[IG flow] ws=${workspaceId} automationEnabled=false — drop`);
+      return;
+    }
 
     const { type, senderId, senderUsername, senderName, text } = event;
     if (!senderId) return;
+    logger.info(
+      `[IG flow] ws=${workspaceId} type=${type} sender=${senderId} text=${(text || "").slice(0, 60)}`,
+    );
 
     try {
       const ownIgId = decrypt(workspace.instagram.igUserId);
@@ -794,22 +808,50 @@ const handleWebhookEvent = async (workspaceId, event) => {
         }).catch(() => {});
       }
 
+      logger.info(
+        `[IG flow] ws=${workspace._id} entering trigger chain (botReplyCount=${conv.botReplyCount || 0})`,
+      );
+
       if (type === TRIGGERS.POSTBACK) {
-        if (await handlePostback(workspace, contact, conv, event.payload))
+        if (await handlePostback(workspace, contact, conv, event.payload)) {
+          logger.info(`[IG flow] handled by POSTBACK`);
           return;
+        }
       }
       if (type === TRIGGERS.STORY_REPLY) {
-        if (await handleStoryReply(workspace, contact, conv, text)) return;
+        if (await handleStoryReply(workspace, contact, conv, text)) {
+          logger.info(`[IG flow] handled by STORY_REPLY`);
+          return;
+        }
       }
       if (type === TRIGGERS.SHARE_TO_STORY) {
-        if (await handleShare(workspace, contact, conv)) return;
+        if (await handleShare(workspace, contact, conv)) {
+          logger.info(`[IG flow] handled by SHARE_TO_STORY`);
+          return;
+        }
       }
-      if (await handleAwayReply(workspace, contact, conv)) return;
-      if (text && (await handleDMKeyword(workspace, contact, conv, text)))
+      if (await handleAwayReply(workspace, contact, conv)) {
+        logger.info(`[IG flow] handled by AWAY_REPLY`);
         return;
-      if (text && (await handleAIReply(workspace, contact, conv, text))) return;
-      if (await handleWelcome(workspace, contact, conv)) return;
+      }
+      if (text && (await handleDMKeyword(workspace, contact, conv, text))) {
+        logger.info(`[IG flow] handled by DM_KEYWORD`);
+        return;
+      }
+      if (text && (await handleAIReply(workspace, contact, conv, text))) {
+        logger.info(`[IG flow] handled by AI_REPLY`);
+        return;
+      }
+      const aiCfg = workspace.aiSettings || workspace.aiBot || {};
+      logger.info(
+        `[IG flow] AI did not handle (plan=${workspace.subscription?.plan} aiEnabled=${!!aiCfg.enabled} hasText=${!!text})`,
+      );
+      if (await handleWelcome(workspace, contact, conv)) {
+        logger.info(`[IG flow] handled by WELCOME`);
+        return;
+      }
       await handleFallback(workspace, contact, conv);
+      logger.info(`[IG flow] reached FALLBACK (or nothing)`);
       return;
     }
   } catch (err) {
