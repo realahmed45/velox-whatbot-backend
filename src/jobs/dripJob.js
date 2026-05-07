@@ -7,7 +7,7 @@ const Workspace = require("../models/Workspace");
 const Contact = require("../models/Contact");
 const Message = require("../models/Message");
 const Conversation = require("../models/Conversation");
-const { sendDM } = require("../services/instagram/metaService");
+const { sendDM } = require("../services/instagram");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 

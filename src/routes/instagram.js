@@ -8,10 +8,15 @@ const igCtrl = require("../controllers/instagramController");
 const { protect } = require("../middleware/auth");
 
 // ── OAuth Connect ─────────────────────────────────────────────────────────────
-// Step 1: Redirect user to Meta OAuth
+// Step 1: Redirect user to Meta OAuth (auto-switches to hosted provider when configured)
 router.get("/connect/oauth-url", protect, igCtrl.getOAuthUrl);
 // Step 2: Meta redirects back with code
 router.get("/connect/callback", igCtrl.oauthCallback);
+
+// Hosted provider (white-labeled) — alternate path; auto-selected by getOAuthUrl
+router.get("/connect/botlify-url", protect, igCtrl.getBotlifyOAuthUrl);
+router.get("/connect/callback-botlify", igCtrl.botlifyOAuthCallback);
+
 // Session-cookie connect (fallback)
 router.post("/connect/session", protect, igCtrl.connectBySession);
 // Disconnect
@@ -32,6 +37,8 @@ router.get("/data-deletion/status", igCtrl.dataDeletionStatus);
 router.get("/webhook", igCtrl.verifyWebhook);
 // Meta sends POST with events
 router.post("/webhook", igCtrl.receiveWebhook);
+// Hosted provider (white-labeled) — POSTs translated events here
+router.post("/webhook/botlify", igCtrl.receiveBotlifyWebhook);
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 router.get("/settings", protect, igCtrl.getSettings);

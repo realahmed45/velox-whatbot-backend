@@ -20,7 +20,7 @@ const Conversation = require("../../models/Conversation");
 const Message = require("../../models/Message");
 const { DripCampaign, DripEnrollment } = require("../../models/DripCampaign");
 const Giveaway = require("../../models/Giveaway");
-const { sendDM } = require("./metaService");
+const { sendDM } = require(".");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 const { planHasFeature, FEATURES } = require("../../config/plans");
@@ -653,7 +653,7 @@ const handleWebhookEvent = async (workspaceId, event) => {
             workspace.hideNegativeComments.competitorNames || [],
           );
           if (hide) {
-            const { hideComment } = require("./metaService");
+            const { hideComment } = require(".");
             if (typeof hideComment === "function") {
               const token = decrypt(workspace.instagram.accessToken);
               await hideComment(token, event.commentId).catch(() => {});

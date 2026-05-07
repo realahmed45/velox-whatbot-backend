@@ -1,6 +1,6 @@
 const { Worker, Queue } = require("bullmq");
 const Workspace = require("../models/Workspace");
-const ig = require("../services/instagram/metaService");
+const ig = require("../services/instagram");
 const { encrypt, decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 

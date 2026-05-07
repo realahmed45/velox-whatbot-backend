@@ -4,7 +4,7 @@
  */
 const Giveaway = require("../models/Giveaway");
 const Workspace = require("../models/Workspace");
-const { sendDM } = require("../services/instagram/metaService");
+const { sendDM } = require("../services/instagram");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 
@@ -53,7 +53,9 @@ const processExpiredGiveaways = async () => {
             );
             w.notified = true;
           } catch (err) {
-            logger.warn(`[giveaway] DM to ${w.igUsername} failed: ${err.message}`);
+            logger.warn(
+              `[giveaway] DM to ${w.igUsername} failed: ${err.message}`,
+            );
           }
         }
       }

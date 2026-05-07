@@ -5,6 +5,7 @@
 const metaService = require("./metaService");
 const ultramsgService = require("./ultramsgService");
 const greenApiService = require("./greenApiService");
+const kapsoService = require("./kapsoService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 
@@ -48,6 +49,11 @@ const sendMessage = async (workspace, to, messagePayload) => {
       to,
       messagePayload,
     });
+  }
+
+  if (type === "kapso") {
+    const phoneNumberId = decrypt(workspace.whatsapp.kapsoPhoneNumberId);
+    return dispatchKapsoMessage({ phoneNumberId, to, messagePayload });
   }
 
   return { success: false, error: "WhatsApp provider not configured" };
@@ -210,6 +216,60 @@ const dispatchUltramsgMessage = async ({
       return ultramsgService.sendTextMessage({
         instanceId,
         token,
+        to,
+        text: messagePayload.text || "[Unsupported message type]",
+      });
+  }
+};
+
+// ──────────────────────────────────────────────────────────
+// Kapso (Botlify Cloud Pro — official Meta Cloud API)
+// ──────────────────────────────────────────────────────────
+const dispatchKapsoMessage = async ({ phoneNumberId, to, messagePayload }) => {
+  switch (messagePayload.type) {
+    case "text":
+      return kapsoService.sendTextMessage({
+        phoneNumberId,
+        to,
+        text: messagePayload.text,
+      });
+    case "image":
+      return kapsoService.sendImageMessage({
+        phoneNumberId,
+        to,
+        imageUrl: messagePayload.imageUrl,
+        caption: messagePayload.caption,
+      });
+    case "document":
+      return kapsoService.sendDocumentMessage({
+        phoneNumberId,
+        to,
+        fileUrl: messagePayload.fileUrl,
+        fileName: messagePayload.fileName,
+        caption: messagePayload.caption,
+      });
+    case "buttons":
+      return kapsoService.sendButtonMessage({
+        phoneNumberId,
+        to,
+        bodyText: messagePayload.text,
+        buttons: messagePayload.buttons,
+        headerText: messagePayload.header,
+        footerText: messagePayload.footer,
+      });
+    case "list":
+      return kapsoService.sendListMessage({
+        phoneNumberId,
+        to,
+        bodyText: messagePayload.text,
+        buttonText: messagePayload.buttonText,
+        sections: messagePayload.sections,
+        headerText: messagePayload.header,
+        footerText: messagePayload.footer,
+      });
+    default:
+      return kapsoService.sendTextMessage({
+        phoneNumberId,
         to,
         text: messagePayload.text || "[Unsupported message type]",
       });

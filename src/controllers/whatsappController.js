@@ -4,6 +4,8 @@ const Workspace = require("../models/Workspace");
 const metaService = require("../services/whatsapp/metaService");
 const ultramsgService = require("../services/whatsapp/ultramsgService");
 const greenApiService = require("../services/whatsapp/greenApiService");
+const greenApiPartnerService = require("../services/whatsapp/greenApiPartnerService");
+const kapsoService = require("../services/whatsapp/kapsoService");
 const dispatcher = require("../services/whatsapp/dispatcher");
 const { processIncomingMessage } = require("../services/botEngine");
 const { encrypt, decrypt } = require("../utils/encryption");
@@ -24,7 +26,9 @@ const findWorkspace = async (req, withSecrets = false) => {
       "+whatsapp.metaPhoneNumberId +whatsapp.metaAccessToken " +
         "+whatsapp.metaWabaId +whatsapp.ultralmsgInstanceId " +
         "+whatsapp.ultramsgToken +whatsapp.cloudInstanceId " +
-        "+whatsapp.cloudApiToken +whatsapp.cloudWebhookToken",
+        "+whatsapp.cloudApiToken +whatsapp.cloudWebhookToken " +
+        "+whatsapp.kapsoCustomerId +whatsapp.kapsoPhoneNumberId " +
+        "+whatsapp.kapsoWabaId +whatsapp.kapsoSetupLinkId",
     );
   }
   return q;
@@ -40,7 +44,9 @@ const buildWebhookBaseUrl = () => {
 
 const sanitizeWaForResponse = (workspace) => {
   if (!workspace?.whatsapp) return null;
-  const w = workspace.whatsapp.toObject ? workspace.whatsapp.toObject() : workspace.whatsapp;
+  const w = workspace.whatsapp.toObject
+    ? workspace.whatsapp.toObject()
+    : workspace.whatsapp;
   // Strip credentials
   delete w.metaPhoneNumberId;
   delete w.metaAccessToken;
@@ -51,6 +57,12 @@ const sanitizeWaForResponse = (workspace) => {
   delete w.cloudInstanceId;
   delete w.cloudApiToken;
   delete w.cloudWebhookToken;
+  delete w.kapsoCustomerId;
+  delete w.kapsoSetupLinkId;
+  // Keep kapsoPhoneNumberId & kapsoWabaId out of the public response too —
+  // these are infra identifiers, not customer-visible data.
+  delete w.kapsoPhoneNumberId;
+  delete w.kapsoWabaId;
   return w;
 };
 
@@ -222,7 +234,7 @@ const handleCloudWebhook = asyncHandler(async (req, res) => {
 
 // @POST /api/whatsapp/onboard — generic, picks provider based on body.type
 const onboardChannel = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, true));
+  const ws = await await findWorkspace(req, true);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
 
   const { type } = req.body || {};
@@ -295,7 +307,10 @@ const onboardChannel = asyncHandler(async (req, res) => {
     // Live WhatsApp numbers carry per-number infrastructure cost, so we only
     // allow them on plans that include WhatsApp. Free trial users see a
     // friendly upsell instead of being able to provision a real number.
-    const { planAllowsWhatsAppLiveNumber, getPlan } = require("../config/plans");
+    const {
+      planAllowsWhatsAppLiveNumber,
+      getPlan,
+    } = require("../config/plans");
     const planId = ws.subscription?.plan || "free";
     const subStatus = ws.subscription?.status;
     const isTrialing = subStatus === "trialing" || planId === "free";
@@ -361,9 +376,282 @@ const onboardChannel = asyncHandler(async (req, res) => {
   }
 });
 
-// @GET /api/whatsapp/cloud/qr — proxy QR fetch to provider
+// @POST /api/whatsapp/connect/provision
+// Body: { instant?: boolean, areaCode?: string }
+//
+// Zero-credential, white-labeled WhatsApp onboarding via the official Meta
+// Cloud API (Botlify Cloud Pro). We:
+//   1. Ensure a tenant "customer" exists with our upstream provider.
+//   2. Generate a one-time embedded-signup link scoped to that customer.
+//   3. Hand the URL back to the frontend, which redirects the user.
+//
+// Two flows are supported via `instant`:
+//   - false (default) → Meta embedded signup. Customer logs in with FB and
+//     authorizes their existing WhatsApp Business number. End result:
+//     dedicated, official Cloud API access on their own number.
+//   - true            → Provider auto-provisions a fresh US WhatsApp number.
+//     Zero verification, instant. Returns a US dial code.
+//
+// Idempotent: if the workspace already has a Kapso customer we reuse it. We
+// always mint a fresh setup link (they're single-use & 30-day expiring).
+const provisionCloudConnection = asyncHandler(async (req, res) => {
+  const ws = await await findWorkspace(req, true);
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+
+  // Plan gate — same rules as manual onboard
+  const { planAllowsWhatsAppLiveNumber, getPlan } = require("../config/plans");
+  const planId = ws.subscription?.plan || "free";
+  const subStatus = ws.subscription?.status;
+  const isTrialing = subStatus === "trialing" || planId === "free";
+  if (isTrialing || !planAllowsWhatsAppLiveNumber(planId)) {
+    const plan = getPlan(planId);
+    return res.status(402).json({
+      success: false,
+      code: "PLAN_UPGRADE_REQUIRED",
+      message:
+        "Connecting a live WhatsApp number requires a paid WhatsApp or Bundle plan.",
+      currentPlan: plan?.id || planId,
+      upgradeOptions: ["wa_starter", "wa_pro", "bundle_pro"],
+    });
+  }
+
+  if (!kapsoService.isConfigured()) {
+    return res.status(503).json({
+      message:
+        "WhatsApp provisioning is not yet configured on this server. Please try again shortly.",
+    });
+  }
+
+  const instant = !!req.body?.instant;
+  const areaCode = req.body?.areaCode;
+
+  // 1) Ensure a customer record on the upstream provider
+  let customerId = ws.whatsapp?.kapsoCustomerId
+    ? decrypt(ws.whatsapp.kapsoCustomerId)
+    : null;
+
+  if (!customerId) {
+    const created = await kapsoService.createCustomer({
+      name: ws.name || `Botlify-${String(ws._id).slice(-6)}`,
+      externalId: String(ws._id),
+    });
+    if (!created.success) {
+      logger.error("[provision] createCustomer failed", created.error);
+      return res.status(502).json({
+        message:
+          "Could not start your WhatsApp connection. Please try again in a moment.",
+      });
+    }
+    customerId = created.customerId;
+  }
+
+  // 2) Build redirect URLs that bring the user back into our app.
+  const clientBase = (process.env.CLIENT_URL || "https://botlify.site").replace(
+    /\/$/,
+    "",
+  );
+  const successUrl = `${clientBase}/dashboard/onboarding/whatsapp/callback?status=completed`;
+  const failureUrl = `${clientBase}/dashboard/onboarding/whatsapp/callback?status=failed`;
+
+  // 3) Mint setup link
+  const link = await kapsoService.createSetupLink({
+    customerId,
+    successUrl,
+    failureUrl,
+    instantNumber: instant,
+    areaCode: instant ? areaCode || null : null,
+    // For "use my own number" we default to dedicated (API-only). Coexistence
+    // (using their existing WA Business app) is a separate feature flag we can
+    // expose later via req.body.connectionType.
+    connectionType: instant ? null : req.body?.connectionType || "dedicated",
+  });
+
+  if (!link.success || !link.url) {
+    logger.error("[provision] createSetupLink failed", link.error);
+    return res.status(502).json({
+      message:
+        "Could not start your WhatsApp connection. Please try again in a moment.",
+    });
+  }
+
+  // 4) Persist customer + setup link IDs (encrypted) so we can reconcile
+  //    on the success-redirect/webhook callback.
+  ws.whatsapp = {
+    ...(ws.whatsapp?.toObject?.() || {}),
+    type: "kapso",
+    status: "pending",
+    kapsoCustomerId: encrypt(String(customerId)),
+    kapsoSetupLinkId: encrypt(String(link.setupLinkId || "")),
+    kapsoConnectionType: instant
+      ? "dedicated"
+      : req.body?.connectionType || "dedicated",
+    displayName: ws.whatsapp?.displayName || "Botlify",
+    botActive: ws.whatsapp?.botActive ?? true,
+  };
+  await ws.save();
+
+  return res.json({
+    success: true,
+    redirectUrl: link.url,
+    instant,
+  });
+});
+
+// @POST /api/whatsapp/connect/finalize
+// Body: { phoneNumberId, businessAccountId?, displayPhoneNumber? }
+//
+// Called by the frontend after the customer is redirected back from the
+// upstream embedded-signup page with success query params. We trust the
+// query params loosely — the project webhook is the authoritative source —
+// but we use them for instant UI confirmation.
+const finalizeCloudConnection = asyncHandler(async (req, res) => {
+  const ws = await await findWorkspace(req, true);
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+
+  const { phoneNumberId, businessAccountId, displayPhoneNumber } =
+    req.body || {};
+  if (!phoneNumberId) {
+    return res.status(400).json({ message: "Missing phone identifier" });
+  }
+
+  ws.whatsapp = {
+    ...(ws.whatsapp?.toObject?.() || {}),
+    type: "kapso",
+    status: "connected",
+    kapsoPhoneNumberId: encrypt(String(phoneNumberId)),
+    kapsoWabaId: businessAccountId
+      ? encrypt(String(businessAccountId))
+      : ws.whatsapp?.kapsoWabaId,
+    phoneNumber: displayPhoneNumber || ws.whatsapp?.phoneNumber,
+    displayName: ws.whatsapp?.displayName || "Botlify",
+    connectedAt: new Date(),
+    webhookSubscribed: true,
+    botActive: true,
+  };
+  await ws.save();
+
+  res.json({ success: true, whatsapp: sanitizeWaForResponse(ws) });
+});
+
+// @POST /api/whatsapp/webhook/kapso
+// Project-level webhook from the upstream provider. Handles:
+//   whatsapp.phone_number.created — links a phone number to a workspace
+//   whatsapp.message.received     — inbound messages to bot engine
+//   whatsapp.message.status       — delivery/read/failed updates
+//
+// `req.body` is a Buffer here (raw middleware mounted at /api/whatsapp/webhook).
+const handleKapsoWebhook = asyncHandler(async (req, res) => {
+  // Verify signature against the RAW buffer
+  const signature = req.headers["x-webhook-signature"];
+  const ok = kapsoService.verifyWebhookSignature({
+    rawBody: req.body,
+    signature,
+  });
+  if (!ok) {
+    logger.warn("[kapso webhook] invalid signature");
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  // Parse JSON now that signature is verified
+  let payload;
+  try {
+    payload =
+      typeof req.body === "string" || Buffer.isBuffer(req.body)
+        ? JSON.parse(req.body.toString("utf8"))
+        : req.body;
+  } catch {
+    return res.status(400).json({ error: "Invalid JSON" });
+  }
+
+  res.status(200).json({ status: "ok" });
+
+  const parsed = kapsoService.parseWebhookPayload(payload);
+  if (!parsed) return;
+
+  // Phone-number connected → resolve workspace by encrypted kapsoCustomerId
+  if (parsed._kind === "phone_connected") {
+    if (!parsed.customerId) return;
+    const candidates = await Workspace.find({
+      "whatsapp.type": "kapso",
+    }).select("+whatsapp.kapsoCustomerId");
+    const ws = candidates.find((w) => {
+      try {
+        return (
+          decrypt(w.whatsapp.kapsoCustomerId) === String(parsed.customerId)
+        );
+      } catch {
+        return false;
+      }
+    });
+    if (!ws) {
+      logger.warn(
+        `[kapso webhook] phone_connected: no workspace for customer ${parsed.customerId}`,
+      );
+      return;
+    }
+    ws.whatsapp.kapsoPhoneNumberId = encrypt(String(parsed.phoneNumberId));
+    if (parsed.wabaId) {
+      ws.whatsapp.kapsoWabaId = encrypt(String(parsed.wabaId));
+    }
+    if (parsed.displayPhoneNumber) {
+      ws.whatsapp.phoneNumber = parsed.displayPhoneNumber;
+    }
+    ws.whatsapp.status = "connected";
+    ws.whatsapp.webhookSubscribed = true;
+    ws.whatsapp.connectedAt = new Date();
+    await ws.save();
+    return;
+  }
+
+  // Inbound message → resolve workspace by phoneNumberId
+  if (parsed._kind === "message") {
+    if (!parsed.phoneNumberId) return;
+    const candidates = await Workspace.find({
+      "whatsapp.type": "kapso",
+      "whatsapp.status": "connected",
+    }).select("+whatsapp.kapsoPhoneNumberId");
+    const ws = candidates.find((w) => {
+      try {
+        return (
+          decrypt(w.whatsapp.kapsoPhoneNumberId) ===
+          String(parsed.phoneNumberId)
+        );
+      } catch {
+        return false;
+      }
+    });
+    if (!ws) return;
+    ws.whatsapp.lastMessageAt = new Date();
+    ws.whatsapp.lastWebhookAt = new Date();
+    await ws.save();
+
+    await processIncomingMessage({
+      workspace: ws,
+      phone: parsed.from,
+      messageBody: parsed.body,
+      messageType: parsed.type,
+      mediaUrl: parsed.mediaUrl,
+      buttonPayload: parsed.buttonPayload,
+    });
+    return;
+  }
+
+  // Status update → mark Message row
+  if (parsed._kind === "status") {
+    if (!parsed.messageId) return;
+    const Message = require("../models/Message");
+    if (["delivered", "read", "failed", "sent"].includes(parsed.status)) {
+      await Message.findOneAndUpdate(
+        { whatsappMessageId: parsed.messageId },
+        { status: parsed.status, statusUpdatedAt: new Date() },
+      );
+    }
+  }
+});
+
+// @GET /api/whatsapp/cloud/qr  (legacy QR-scan flow — Botlify Cloud / Green-API)
 const getCloudQr = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, true));
+  const ws = await await findWorkspace(req, true);
   if (!ws || ws.whatsapp?.type !== "cloud") {
     return res.status(400).json({ message: "Cloud connection not configured" });
   }
@@ -407,7 +695,7 @@ const getCloudQr = asyncHandler(async (req, res) => {
 
 // @GET /api/whatsapp/cloud/state
 const getCloudState = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, true));
+  const ws = await await findWorkspace(req, true);
   if (!ws || ws.whatsapp?.type !== "cloud") {
     return res.status(400).json({ message: "Cloud connection not configured" });
   }
@@ -429,14 +717,14 @@ const getCloudState = asyncHandler(async (req, res) => {
 
 // @GET /api/whatsapp/status
 const getStatus = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, false));
+  const ws = await await findWorkspace(req, false);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
   res.json({ whatsapp: sanitizeWaForResponse(ws) });
 });
 
 // @POST /api/whatsapp/test  body: { phone, message? }
 const sendTestMessage = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, true));
+  const ws = await await findWorkspace(req, true);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
   const { phone, message } = req.body || {};
   if (!phone) return res.status(400).json({ message: "Phone is required" });
@@ -456,7 +744,7 @@ const sendTestMessage = asyncHandler(async (req, res) => {
 
 // @POST /api/whatsapp/toggle  body: { active }
 const toggleBot = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, false));
+  const ws = await await findWorkspace(req, false);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
   if (!ws.whatsapp) ws.whatsapp = {};
   ws.whatsapp.botActive =
@@ -469,18 +757,39 @@ const toggleBot = asyncHandler(async (req, res) => {
 
 // @DELETE /api/whatsapp/disconnect
 const disconnect = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, true));
+  const ws = await await findWorkspace(req, true);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
 
-  // Best-effort logout for cloud provider
+  // Best-effort logout + instance deletion for cloud provider so we don't
+  // keep getting billed for an unused instance.
   if (ws.whatsapp?.type === "cloud" && ws.whatsapp.cloudInstanceId) {
+    const idInstance = decrypt(ws.whatsapp.cloudInstanceId);
     try {
       await greenApiService.logout({
-        idInstance: decrypt(ws.whatsapp.cloudInstanceId),
+        idInstance,
         apiTokenInstance: decrypt(ws.whatsapp.cloudApiToken),
       });
     } catch (e) {
       logger.warn("[cloud disconnect] logout failed", e.message);
+    }
+    if (greenApiPartnerService.isConfigured()) {
+      try {
+        await greenApiPartnerService.deleteInstance({ idInstance });
+      } catch (e) {
+        logger.warn("[cloud disconnect] partner delete failed", e.message);
+      }
+    }
+  }
+
+  // Kapso (Botlify Cloud Pro) cleanup — delete the customer so we stop being
+  // billed for the seat. Phone numbers attached to the customer are removed
+  // server-side as part of customer deletion.
+  if (ws.whatsapp?.type === "kapso" && ws.whatsapp.kapsoCustomerId) {
+    try {
+      const customerId = decrypt(ws.whatsapp.kapsoCustomerId);
+      await kapsoService.deleteCustomer(customerId);
+    } catch (e) {
+      logger.warn("[kapso disconnect] deleteCustomer failed", e.message);
     }
   }
 
@@ -495,12 +804,11 @@ const disconnect = asyncHandler(async (req, res) => {
 
 // @PUT /api/whatsapp/automation  body: { welcomeMessage?, awayMessage?, keywordTriggers? }
 const updateAutomation = asyncHandler(async (req, res) => {
-  const ws = await (await findWorkspace(req, false));
+  const ws = await await findWorkspace(req, false);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
   if (!ws.whatsapp) ws.whatsapp = {};
   const { welcomeMessage, awayMessage, keywordTriggers } = req.body || {};
-  if (welcomeMessage !== undefined)
-    ws.whatsapp.welcomeMessage = welcomeMessage;
+  if (welcomeMessage !== undefined) ws.whatsapp.welcomeMessage = welcomeMessage;
   if (awayMessage !== undefined) ws.whatsapp.awayMessage = awayMessage;
   if (Array.isArray(keywordTriggers))
     ws.whatsapp.keywordTriggers = keywordTriggers;
@@ -514,8 +822,11 @@ module.exports = {
   handleMetaWebhook,
   handleUltramsgWebhook,
   handleCloudWebhook,
+  handleKapsoWebhook,
   // Onboarding + management
   onboardChannel,
+  provisionCloudConnection,
+  finalizeCloudConnection,
   getCloudQr,
   getCloudState,
   getStatus,

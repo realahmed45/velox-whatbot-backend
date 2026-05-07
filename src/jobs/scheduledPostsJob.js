@@ -1,9 +1,6 @@
 const ScheduledPost = require("../models/ScheduledPost");
 const Workspace = require("../models/Workspace");
-const {
-  publishPost,
-  publishStory,
-} = require("../services/instagram/metaService");
+const { publishPost, publishStory } = require("../services/instagram");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 

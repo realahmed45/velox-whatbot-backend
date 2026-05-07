@@ -2,7 +2,7 @@ const { Worker } = require("bullmq");
 const BroadcastCampaign = require("../models/BroadcastCampaign");
 const Contact = require("../models/Contact");
 const Workspace = require("../models/Workspace");
-const ig = require("../services/instagram/metaService");
+const ig = require("../services/instagram");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 

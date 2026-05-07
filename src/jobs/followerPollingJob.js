@@ -4,7 +4,7 @@
  * and appends to `followerHistory` if changed. Caps history at 180 entries.
  */
 const Workspace = require("../models/Workspace");
-const { getIGAccountInfo } = require("../services/instagram/metaService");
+const { getIGAccountInfo } = require("../services/instagram");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 

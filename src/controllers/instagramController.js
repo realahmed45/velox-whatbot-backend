@@ -5,7 +5,7 @@
 const asyncHandler = require("express-async-handler");
 const crypto = require("crypto");
 const Workspace = require("../models/Workspace");
-const ig = require("../services/instagram/metaService");
+const ig = require("../services/instagram");
 const {
   handleWebhookEvent,
 } = require("../services/instagram/automationEngine");
@@ -19,8 +19,37 @@ const WEBHOOK_VERIFY_TOKEN =
   process.env.IG_WEBHOOK_VERIFY_TOKEN || "botlify_webhook_2026";
 
 // ── GET /api/instagram/connect/oauth-url ─────────────────────────────────────
-// Instagram Business Login — goes straight to Instagram, no Facebook in the middle
+// If a hosted provider is configured (BOTLIFY_IG_PROVIDER_API_KEY) we return
+// its hosted-auth URL so the customer skips Meta App Review entirely. Otherwise
+// fall back to direct Instagram Business Login.
 exports.getOAuthUrl = asyncHandler(async (req, res) => {
+  // Hosted provider takes priority when configured.
+  const botlifyIgEarly = require("../services/instagram/botlifyIgService");
+  if (botlifyIgEarly.isConfigured()) {
+    const workspaceId = req.headers["x-workspace-id"];
+    const state = Buffer.from(
+      JSON.stringify({ workspaceId, userId: req.user._id, ts: Date.now() }),
+    ).toString("base64");
+    const base =
+      process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+    const callbackUrl = `${base}/api/instagram/connect/callback-botlify`;
+    try {
+      const { url } = await botlifyIgEarly.createHostedAuthLink({
+        state,
+        callbackUrl,
+      });
+      return res.json({ url });
+    } catch (err) {
+      logger.error(
+        "[IG connect] hosted provider failed, falling back to Meta",
+        {
+          err: err.response?.data || err.message,
+        },
+      );
+      // fall through to Meta OAuth below
+    }
+  }
+
   const workspaceId = req.headers["x-workspace-id"];
   const state = Buffer.from(
     JSON.stringify({ workspaceId, userId: req.user._id }),
@@ -144,12 +173,31 @@ exports.connectBySession = asyncHandler(async (req, res) => {
 // ── DELETE /api/instagram/connect ────────────────────────────────────────────
 exports.disconnect = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
+  const ws = await Workspace.findById(workspaceId).select(
+    "+instagram.botlifyAccountId instagram.connectionType",
+  );
+  // Best-effort: tell the hosted provider to drop the account too.
+  if (
+    ws?.instagram?.connectionType === "botlify_oauth" &&
+    ws.instagram.botlifyAccountId
+  ) {
+    try {
+      const botlifyIgSvc = require("../services/instagram/botlifyIgService");
+      const acc = decrypt(ws.instagram.botlifyAccountId);
+      await botlifyIgSvc.disconnectAccount(acc);
+    } catch (e) {
+      logger.warn("[IG disconnect] provider cleanup failed", {
+        err: e.message,
+      });
+    }
+  }
   await Workspace.findByIdAndUpdate(workspaceId, {
     $unset: {
       "instagram.igUserId": 1,
       "instagram.accessToken": 1,
       "instagram.pageId": 1,
       "instagram.sessionCookie": 1,
+      "instagram.botlifyAccountId": 1,
     },
     "instagram.status": "disconnected",
   });
@@ -800,4 +848,272 @@ exports.updateSettings = asyncHandler(async (req, res) => {
 
   await Workspace.findByIdAndUpdate(workspaceId, updates);
   res.json({ success: true });
+});
+
+// ─── Hosted IG provider (Botlify Cloud — white-labeled) ─────────────────────
+const botlifyIg = require("../services/instagram/botlifyIgService");
+
+// GET /api/instagram/connect/botlify-url
+// Returns a one-time hosted-auth URL the user is redirected to. Provider walks
+// them through Instagram login + permissions, then bounces them to our
+// callback below. Customers never see the upstream provider name.
+exports.getBotlifyOAuthUrl = asyncHandler(async (req, res) => {
+  if (!botlifyIg.isConfigured()) {
+    return res.status(503).json({
+      message: "Instagram provider not yet configured on this server.",
+    });
+  }
+  const workspaceId = req.headers["x-workspace-id"];
+  const state = Buffer.from(
+    JSON.stringify({ workspaceId, userId: req.user._id, ts: Date.now() }),
+  ).toString("base64");
+
+  const base =
+    process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+  const callbackUrl = `${base}/api/instagram/connect/callback-botlify`;
+
+  try {
+    const { url } = await botlifyIg.createHostedAuthLink({
+      state,
+      callbackUrl,
+    });
+    res.json({ url });
+  } catch (err) {
+    logger.error("[BotlifyIG] hosted auth link failed", {
+      err: err.response?.data || err.message,
+    });
+    res.status(502).json({
+      message: "Could not start Instagram connect. Please try again shortly.",
+    });
+  }
+});
+
+// GET /api/instagram/connect/callback-botlify
+// Provider redirects user back here with ?accountId=xxx (or ?code=xxx) + state.
+exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
+  const { code, accountId, state, error, error_description } = req.query;
+  if (error) {
+    logger.warn("[BotlifyIG] connect cancelled", { error, error_description });
+    return res.redirect(`${process.env.CLIENT_URL}/dashboard?error=cancelled`);
+  }
+  let workspaceId;
+  try {
+    ({ workspaceId } = JSON.parse(Buffer.from(state, "base64").toString()));
+  } catch {
+    return res.redirect(
+      `${process.env.CLIENT_URL}/dashboard?error=invalid_state`,
+    );
+  }
+
+  try {
+    const { accountId: acc, info } = await botlifyIg.exchangeCallback({
+      code,
+      accountId,
+    });
+
+    // Subscribe the IG account to our webhook on the provider side.
+    let webhookSubscribed = false;
+    let webhookError = null;
+    try {
+      await botlifyIg.subscribeWebhook(acc);
+      webhookSubscribed = true;
+    } catch (e) {
+      webhookError = e.response?.data?.error || e.message;
+      logger.warn("[BotlifyIG] webhook subscribe failed", {
+        err: webhookError,
+      });
+    }
+
+    // We store the wrapped token "zer:<accountId>" — the dispatcher uses the
+    // prefix to route every subsequent call to botlifyIgService.
+    const wrappedToken = botlifyIg.wrapAccountId(acc);
+
+    await Workspace.findByIdAndUpdate(workspaceId, {
+      "instagram.status": "connected",
+      "instagram.connectionType": "botlify_oauth",
+      "instagram.igUserId": encrypt(String(info.user_id || acc)),
+      "instagram.accessToken": encrypt(wrappedToken),
+      "instagram.botlifyAccountId": encrypt(acc),
+      "instagram.username": info.username,
+      "instagram.displayName": info.name || info.username,
+      "instagram.profilePicture": info.profile_picture_url,
+      "instagram.followersCount": info.followers_count,
+      "instagram.connectedAt": new Date(),
+      "instagram.tokenExpiresAt": null, // hosted provider manages renewal
+      "instagram.webhookSubscribed": webhookSubscribed,
+      "instagram.webhookError": webhookError,
+      "settings.automationEnabled": true,
+      onboardingCompleted: true,
+    });
+
+    return res.redirect(
+      `${process.env.CLIENT_URL}/dashboard?connected=true${webhookSubscribed ? "" : "&webhook=failed"}`,
+    );
+  } catch (err) {
+    logger.error("[BotlifyIG] callback failed", {
+      err: err.response?.data || err.message,
+    });
+    return res.redirect(
+      `${process.env.CLIENT_URL}/dashboard?error=oauth_failed`,
+    );
+  }
+});
+
+// POST /api/instagram/webhook/botlify
+// The hosted provider POSTs IG events here. Payload shape differs from Meta's
+// raw webhook so we translate to our internal `handleWebhookEvent` format.
+// Signature: X-Botlify-Signature: sha256=<hex(hmac(secret, rawBody))>
+exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
+  const rawBody = req.body; // Buffer (express.raw applied in server.js)
+  const secret = process.env.BOTLIFY_IG_PROVIDER_WEBHOOK_SECRET;
+  const sig =
+    req.headers["x-botlify-signature"] || req.headers["x-zernio-signature"];
+
+  if (secret && sig) {
+    try {
+      const expected =
+        "sha256=" +
+        crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+      if (sig !== expected) {
+        logger.warn("[BotlifyIG webhook] signature mismatch — dropping");
+        return res.sendStatus(200);
+      }
+    } catch {
+      return res.sendStatus(200);
+    }
+  }
+
+  res.sendStatus(200); // ack fast
+
+  let body;
+  try {
+    body = JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    logger.warn("[BotlifyIG webhook] malformed JSON");
+    return;
+  }
+
+  // Normalize: provider may send a single event or an array.
+  const events = Array.isArray(body) ? body : body.events || [body];
+
+  for (const evt of events) {
+    const accountId = evt.accountId || evt.account_id;
+    if (!accountId) continue;
+
+    // Find the workspace by encrypted botlifyAccountId.
+    const all = await Workspace.find({
+      "instagram.status": "connected",
+      "instagram.connectionType": "botlify_oauth",
+    }).select("+instagram.botlifyAccountId");
+
+    let target = null;
+    for (const ws of all) {
+      try {
+        if (
+          ws.instagram?.botlifyAccountId &&
+          decrypt(ws.instagram.botlifyAccountId) === accountId
+        ) {
+          target = ws;
+          break;
+        }
+      } catch {}
+    }
+    if (!target) continue;
+
+    Workspace.updateOne(
+      { _id: target._id },
+      {
+        $set: {
+          "instagram.lastWebhookAt": new Date(),
+          "instagram.lastWebhookType": evt.type || "unknown",
+        },
+      },
+    ).catch(() => {});
+
+    // Account-level events (no senderId required)
+    if (evt.type === "account.disconnected") {
+      logger.warn(
+        `[BotlifyIG webhook] account disconnected for workspace ${target._id}`,
+      );
+      await Workspace.updateOne(
+        { _id: target._id },
+        {
+          $set: { "instagram.status": "disconnected" },
+          $unset: {
+            "instagram.accessToken": 1,
+            "instagram.botlifyAccountId": 1,
+          },
+        },
+      ).catch(() => {});
+      continue;
+    }
+    if (
+      evt.type === "account.connected" ||
+      evt.type === "account.ads.initial_sync_completed"
+    ) {
+      logger.info(`[BotlifyIG webhook] ${evt.type} acknowledged`);
+      continue;
+    }
+    // Outbound echo events — we don't act on these, just ack.
+    if (
+      evt.type === "message.sent" ||
+      evt.type === "message.delivered" ||
+      evt.type === "message.read" ||
+      evt.type === "message.failed" ||
+      evt.type === "message.edited" ||
+      evt.type === "message.deleted" ||
+      evt.type?.startsWith("post.") ||
+      evt.type?.startsWith("review.")
+    ) {
+      continue;
+    }
+
+    const senderId =
+      evt.sender?.id || evt.from?.id || evt.senderId || evt.userId || null;
+    if (!senderId) continue;
+
+    // Translate provider event → automation engine event shape.
+    switch (evt.type) {
+      case "message.received":
+      case "message":
+      case "dm":
+        await handleWebhookEvent(target._id, {
+          type: "direct_message",
+          senderId,
+          senderUsername: evt.sender?.username || null,
+          senderName: evt.sender?.name || null,
+          text: evt.message?.text || evt.text || "",
+        });
+        break;
+      case "comment.received":
+      case "comment":
+        await handleWebhookEvent(target._id, {
+          type: "post_comment",
+          senderId,
+          senderUsername: evt.sender?.username || null,
+          text: evt.comment?.text || evt.text || "",
+          postId: evt.post?.id || evt.postId || null,
+        });
+        break;
+      case "story.mention":
+      case "story_mention":
+        await handleWebhookEvent(target._id, {
+          type: "story_mention",
+          senderId,
+          senderUsername: evt.sender?.username || null,
+        });
+        break;
+      case "story.reply":
+      case "story_reply":
+        await handleWebhookEvent(target._id, {
+          type: "story_reply",
+          senderId,
+          text: evt.message?.text || evt.text || "",
+          storyId: evt.storyId || null,
+        });
+        break;
+      default:
+        logger.info(`[BotlifyIG webhook] unhandled type: ${evt.type}`);
+    }
+  }
 });

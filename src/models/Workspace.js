@@ -40,9 +40,12 @@ const instagramConnectionSchema = new mongoose.Schema(
     followersCount: Number,
     // Session-cookie fallback (encrypted)
     sessionCookie: { type: String, select: false },
+    // Botlify Cloud (white-label hosted IG provider) — encrypted account id
+    botlifyAccountId: { type: String, select: false },
+    botlifyProfileId: { type: String, select: false },
     connectionType: {
       type: String,
-      enum: ["meta_oauth", "session_cookie"],
+      enum: ["meta_oauth", "session_cookie", "botlify_oauth"],
       default: "meta_oauth",
     },
     connectedAt: Date,
@@ -66,7 +69,7 @@ const whatsappConnectionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["none", "meta", "ultramsg", "cloud"],
+      enum: ["none", "meta", "ultramsg", "cloud", "kapso"],
       default: "none",
     },
     // Meta Cloud API credentials (encrypted)
@@ -81,6 +84,18 @@ const whatsappConnectionSchema = new mongoose.Schema(
     cloudInstanceId: { type: String, select: false },
     cloudApiToken: { type: String, select: false },
     cloudWebhookToken: { type: String, select: false },
+    // Botlify Cloud Pro (Kapso — official Meta Cloud API, white-labeled)
+    // Customer & phone IDs are not secrets but we keep them select:false to
+    // avoid leaking via the standard sanitised response.
+    kapsoCustomerId: { type: String, select: false },
+    kapsoPhoneNumberId: { type: String, select: false },
+    kapsoWabaId: { type: String, select: false },
+    kapsoSetupLinkId: { type: String, select: false },
+    kapsoConnectionType: {
+      type: String,
+      enum: ["coexistence", "dedicated", null],
+      default: null,
+    },
     cloudState: {
       type: String,
       enum: [
