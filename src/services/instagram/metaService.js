@@ -74,21 +74,28 @@ const getIGAccountInfo = async (accessToken) => {
 
 /**
  * Look up a customer's IG profile by IGSID (the sender id from a webhook).
- * Returns { username, name, profile_pic } or null if the lookup fails.
- * Note: this only works for users who have messaged the IG business account.
+ * Returns { name, profile_pic } or null if the lookup fails.
+ * NOTE: Instagram Login API does NOT expose `username` for DM senders —
+ * only `name` and `profile_pic` are available. The `name` field will hold
+ * the user's display name (e.g. "Ahmed Khan") which we use as the contact
+ * display name. The IGSID itself remains as the unique identifier.
  */
 const getIgUserProfile = async (accessToken, igsid) => {
   if (!accessToken || !igsid) return null;
   try {
     const { data } = await axios.get(`${IG_GRAPH}/${igsid}`, {
       params: {
-        fields: "name,username,profile_pic",
+        fields: "name,profile_pic",
         access_token: accessToken,
       },
+      timeout: 8000,
     });
+    logger.info(
+      `[IG profile] resolved ${igsid} -> name="${data?.name || "(none)"}"`,
+    );
     return data || null;
   } catch (err) {
-    logger.debug(
+    logger.warn(
       `[IG profile] lookup failed for ${igsid}: ${err.response?.data?.error?.message || err.message}`,
     );
     return null;

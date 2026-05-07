@@ -92,7 +92,7 @@ const isWithinBusinessHours = (workspace) => {
 const upsertContact = async (
   workspaceId,
   senderId,
-  { username, name, source } = {},
+  { username, name, profilePic, source } = {},
 ) => {
   let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
   if (!contact) {
@@ -102,6 +102,7 @@ const upsertContact = async (
       igUsername: username || senderId,
       username: username || senderId,
       name: name || username || "Instagram User",
+      igProfilePic: profilePic || undefined,
       source: source || "instagram",
       tags: [],
     });
@@ -116,6 +117,10 @@ const upsertContact = async (
   }
   if (name && (!contact.name || contact.name === "Instagram User")) {
     contact.name = name;
+    dirty = true;
+  }
+  if (profilePic && !contact.igProfilePic) {
+    contact.igProfilePic = profilePic;
     dirty = true;
   }
   if (dirty) await contact.save();
@@ -649,7 +654,14 @@ const handleWebhookEvent = async (workspaceId, event) => {
       return;
     }
 
-    const { type, senderId, senderUsername, senderName, text } = event;
+    const {
+      type,
+      senderId,
+      senderUsername,
+      senderName,
+      senderProfilePic,
+      text,
+    } = event;
     if (!senderId) return;
     logger.info(
       `[IG flow] ws=${workspaceId} type=${type} sender=${senderId} text=${(text || "").slice(0, 60)}`,
@@ -781,6 +793,7 @@ const handleWebhookEvent = async (workspaceId, event) => {
       const contact = await upsertContact(workspace._id, senderId, {
         username: senderUsername,
         name: senderName,
+        profilePic: senderProfilePic,
         source: type,
       });
       const conv = await getOrCreateConversation(workspace, contact);

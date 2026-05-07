@@ -18,18 +18,22 @@ const REDIRECT_URI = process.env.IG_OAUTH_REDIRECT_URI;
 const WEBHOOK_VERIFY_TOKEN =
   process.env.IG_WEBHOOK_VERIFY_TOKEN || "botlify_webhook_2026";
 
-// Best-effort lookup of a customer's IG username by IGSID using the workspace's
-// stored access token. Returns null on any failure so the caller can fall back
-// to using the IGSID as a placeholder.
-const lookupIgUsername = async (ws, igsid) => {
+// Best-effort lookup of a customer's IG profile by IGSID using the workspace's
+// stored access token. Returns { name, profilePic } or empty object on failure.
+// Instagram Login API does NOT expose `username` for DM senders — only `name`
+// and `profile_pic`. We use the name as the contact display name.
+const lookupIgProfile = async (ws, igsid) => {
   try {
-    if (!ws?.instagram?.accessToken || !igsid) return null;
+    if (!ws?.instagram?.accessToken || !igsid) return {};
     const token = decrypt(ws.instagram.accessToken);
     const meta = require("../services/instagram/metaService");
     const profile = await meta.getIgUserProfile(token, igsid);
-    return profile?.username || null;
+    return {
+      name: profile?.name || null,
+      profilePic: profile?.profile_pic || null,
+    };
   } catch {
-    return null;
+    return {};
   }
 };
 
@@ -555,11 +559,13 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
           }
         }
 
+        const igProfile = await lookupIgProfile(ws, senderId);
         await handleWebhookEvent(ws._id, {
           type: "direct_message",
           senderId,
-          senderUsername: await lookupIgUsername(ws, senderId),
-          senderName: null,
+          senderUsername: null,
+          senderName: igProfile.name,
+          senderProfilePic: igProfile.profilePic,
           text: messageText,
         });
       }
@@ -687,13 +693,15 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
               });
               continue;
             }
+            const igProfile = await lookupIgProfile(
+              reprocessWorkspace,
+              senderId,
+            );
             await handleWebhookEvent(reprocessWorkspace._id, {
               type: "direct_message",
               senderId,
-              senderUsername: await lookupIgUsername(
-                reprocessWorkspace,
-                senderId,
-              ),
+              senderName: igProfile.name,
+              senderProfilePic: igProfile.profilePic,
               text: message.text,
             });
           }
