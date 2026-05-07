@@ -11,13 +11,19 @@ module.exports = (connection) => {
       if (workspaceId) {
         await Workspace.findByIdAndUpdate(workspaceId, {
           "usage.messagesThisMonth": 0,
+          "usage.waMarketingThisMonth": 0,
+          "usage.lastResetDate": new Date(),
         });
         logger.info(`[UsageReset] Reset usage for workspace ${workspaceId}`);
       } else {
         // Reset all active workspaces
         const result = await Workspace.updateMany(
           { "subscription.status": "active" },
-          { "usage.messagesThisMonth": 0 },
+          {
+            "usage.messagesThisMonth": 0,
+            "usage.waMarketingThisMonth": 0,
+            "usage.lastResetDate": new Date(),
+          },
         );
         logger.info(
           `[UsageReset] Reset usage for ${result.modifiedCount} workspaces`,

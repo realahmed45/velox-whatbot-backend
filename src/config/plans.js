@@ -87,6 +87,7 @@ const PLANS = {
       numbers: 0, // cannot connect a real WA number on free
       teamSeats: 1,
       aiRepliesPerDay: 25,
+      waMarketingLimit: 0, // free trial cannot run paid marketing convos
     },
     features: [
       FEATURES.POST_COMMENT_KEYWORD,
@@ -119,12 +120,9 @@ const PLANS = {
       flows: 5,
       teamSeats: 1,
       aiRepliesPerDay: 200,
+      waMarketingLimit: 0, // IG-only plan; no WhatsApp marketing convos
     },
-    features: [
-      ...baseIgFeatures,
-      FEATURES.AI_BOT,
-      FEATURES.BUSINESS_HOURS,
-    ],
+    features: [...baseIgFeatures, FEATURES.AI_BOT, FEATURES.BUSINESS_HOURS],
     highlights: [
       "1,000 conversations/month",
       "500 contacts",
@@ -148,6 +146,7 @@ const PLANS = {
       flows: -1,
       teamSeats: 3,
       aiRepliesPerDay: -1,
+      waMarketingLimit: 0, // IG-only plan; no WhatsApp marketing convos
     },
     features: [
       ...baseIgFeatures,
@@ -188,11 +187,9 @@ const PLANS = {
       numbers: 1,
       teamSeats: 1,
       aiRepliesPerDay: 200,
+      waMarketingLimit: 500, // ~$19 max upstream cost
     },
-    features: [
-      ...baseWaFeatures,
-      FEATURES.AI_BOT,
-    ],
+    features: [...baseWaFeatures, FEATURES.AI_BOT],
     highlights: [
       "1 WhatsApp number (Quick Connect)",
       "1,000 messages / month",
@@ -218,6 +215,7 @@ const PLANS = {
       numbers: 1,
       teamSeats: 3,
       aiRepliesPerDay: -1,
+      waMarketingLimit: 1500, // ~$57 max upstream cost
     },
     features: [
       ...baseWaFeatures,
@@ -261,6 +259,7 @@ const PLANS = {
       numbers: 1,
       teamSeats: 3,
       aiRepliesPerDay: -1,
+      waMarketingLimit: 1500, // ~$57 max upstream cost
     },
     features: [
       ...baseIgFeatures,
@@ -302,6 +301,7 @@ const PLANS = {
       numbers: 2,
       teamSeats: 10,
       aiRepliesPerDay: -1,
+      waMarketingLimit: 5000, // ~$190 max upstream cost
     },
     features: [
       ...baseIgFeatures,

@@ -1,8 +1,10 @@
 const asyncHandler = require("express-async-handler");
 const BroadcastCampaign = require("../models/BroadcastCampaign");
 const Contact = require("../models/Contact");
+const Workspace = require("../models/Workspace");
 const { sendMessage } = require("../services/whatsapp/dispatcher");
 const { getBroadcastQueue } = require("../jobs");
+const { getPlan } = require("../config/plans");
 
 // @GET /api/broadcasts — List campaigns
 const getCampaigns = asyncHandler(async (req, res) => {
@@ -74,9 +76,46 @@ const sendCampaign = asyncHandler(async (req, res) => {
     throw new Error("Campaign already sent or in progress");
   }
 
+  // ─── WhatsApp marketing quota guard ───────────────────────
+  // Protects margin: a customer cannot trigger more paid Meta marketing
+  // conversations than their plan allows. The check runs only when the
+  // workspace will actually use WhatsApp for the broadcast.
+  const usesWhatsApp =
+    req.workspace?.whatsapp?.status === "connected" &&
+    req.workspace?.whatsapp?.type &&
+    req.workspace.whatsapp.type !== "none";
+
+  if (usesWhatsApp) {
+    const plan = getPlan(req.workspace.subscription?.plan);
+    const limit = plan?.limits?.waMarketingLimit ?? 0;
+    const used = req.workspace.usage?.waMarketingThisMonth || 0;
+    const reach =
+      campaign.stats?.totalTargeted ||
+      (await countTargetContacts(req.workspace._id, campaign.targetSegment));
+    if (limit !== -1 && used + reach > limit) {
+      const remaining = Math.max(0, limit - used);
+      res.status(402);
+      throw new Error(
+        `Marketing limit reached. Your plan allows ${limit} marketing messages per month — ${remaining} remaining, but this broadcast targets ${reach} contacts. Upgrade your plan or reduce the audience.`,
+      );
+    }
+  }
+
   campaign.status = "sending";
   campaign.sentAt = new Date();
   await campaign.save();
+
+  // Optimistically increment the marketing counter so concurrent broadcasts
+  // can't both squeeze through the limit. The job decrements on failure.
+  if (usesWhatsApp) {
+    const reach = campaign.stats?.totalTargeted || 0;
+    if (reach > 0) {
+      await Workspace.updateOne(
+        { _id: req.workspace._id },
+        { $inc: { "usage.waMarketingThisMonth": reach } },
+      );
+    }
+  }
 
   // Queue the broadcast job
   const queue = getBroadcastQueue();

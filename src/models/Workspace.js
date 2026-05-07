@@ -274,6 +274,9 @@ const workspaceSchema = new mongoose.Schema(
     usage: {
       messagesThisMonth: { type: Number, default: 0 },
       messagesLimit: { type: Number, default: 500 }, // Starter: 500
+      // WhatsApp marketing-conversation counter — protects margin against
+      // a single customer blasting paid Meta conversations beyond their plan.
+      waMarketingThisMonth: { type: Number, default: 0 },
       lastResetDate: { type: Date, default: Date.now },
     },
 
