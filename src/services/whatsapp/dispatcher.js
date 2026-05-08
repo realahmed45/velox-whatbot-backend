@@ -6,6 +6,8 @@ const metaService = require("./metaService");
 const ultramsgService = require("./ultramsgService");
 const greenApiService = require("./greenApiService");
 const kapsoService = require("./kapsoService");
+const baileysService = require("./baileysService");
+const wasenderService = require("./wasenderService");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
 
@@ -54,6 +56,19 @@ const sendMessage = async (workspace, to, messagePayload) => {
   if (type === "kapso") {
     const phoneNumberId = decrypt(workspace.whatsapp.kapsoPhoneNumberId);
     return dispatchKapsoMessage({ phoneNumberId, to, messagePayload });
+  }
+
+  if (type === "baileys") {
+    return dispatchBaileysMessage({
+      workspaceId: workspace._id,
+      to,
+      messagePayload,
+    });
+  }
+
+  if (type === "wasender") {
+    const apiKey = decrypt(workspace.whatsapp.wasenderApiKey);
+    return dispatchWasenderMessage({ apiKey, to, messagePayload });
   }
 
   return { success: false, error: "WhatsApp provider not configured" };
@@ -270,6 +285,109 @@ const dispatchKapsoMessage = async ({ phoneNumberId, to, messagePayload }) => {
     default:
       return kapsoService.sendTextMessage({
         phoneNumberId,
+        to,
+        text: messagePayload.text || "[Unsupported message type]",
+      });
+  }
+};
+
+// ──────────────────────────────────────────────────────────
+// Baileys (QR-scan, free, self-hosted)
+// ──────────────────────────────────────────────────────────
+const dispatchBaileysMessage = async ({ workspaceId, to, messagePayload }) => {
+  switch (messagePayload.type) {
+    case "text":
+      return baileysService.sendTextMessage({
+        workspaceId,
+        to,
+        text: messagePayload.text,
+      });
+    case "image":
+      return baileysService.sendImageMessage({
+        workspaceId,
+        to,
+        imageUrl: messagePayload.imageUrl,
+        caption: messagePayload.caption,
+      });
+    case "document":
+      return baileysService.sendDocumentMessage({
+        workspaceId,
+        to,
+        fileUrl: messagePayload.fileUrl,
+        fileName: messagePayload.fileName,
+      });
+    case "buttons": {
+      // Baileys' button rendering was deprecated by WhatsApp — fall back to
+      // numbered text list (same as UltraMsg fallback).
+      const lines = (messagePayload.buttons || [])
+        .map((b, i) => `${i + 1}. ${b.label}`)
+        .join("\n");
+      return baileysService.sendTextMessage({
+        workspaceId,
+        to,
+        text: `${messagePayload.text || ""}\n\n${lines}`.trim(),
+      });
+    }
+    default:
+      return baileysService.sendTextMessage({
+        workspaceId,
+        to,
+        text: messagePayload.text || "[Unsupported message type]",
+      });
+  }
+};
+
+// ──────────────────────────────────────────────────────────
+// WasenderAPI (paid QR-scan, $6/mo)
+// ──────────────────────────────────────────────────────────
+const dispatchWasenderMessage = async ({ apiKey, to, messagePayload }) => {
+  switch (messagePayload.type) {
+    case "text":
+      return wasenderService.sendTextMessage({
+        apiKey,
+        to,
+        text: messagePayload.text,
+      });
+    case "image":
+      return wasenderService.sendImageMessage({
+        apiKey,
+        to,
+        imageUrl: messagePayload.imageUrl,
+        caption: messagePayload.caption,
+      });
+    case "document":
+      return wasenderService.sendDocumentMessage({
+        apiKey,
+        to,
+        fileUrl: messagePayload.fileUrl,
+        fileName: messagePayload.fileName,
+      });
+    case "video":
+      return wasenderService.sendVideoMessage({
+        apiKey,
+        to,
+        videoUrl: messagePayload.videoUrl,
+        caption: messagePayload.caption,
+      });
+    case "audio":
+      return wasenderService.sendAudioMessage({
+        apiKey,
+        to,
+        audioUrl: messagePayload.audioUrl,
+      });
+    case "buttons": {
+      const lines = (messagePayload.buttons || [])
+        .map((b, i) => `${i + 1}. ${b.label}`)
+        .join("\n");
+      return wasenderService.sendTextMessage({
+        apiKey,
+        to,
+        text: `${messagePayload.text || ""}\n\n${lines}`.trim(),
+      });
+    }
+    default:
+      return wasenderService.sendTextMessage({
+        apiKey,
         to,
         text: messagePayload.text || "[Unsupported message type]",
       });

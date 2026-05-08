@@ -22,11 +22,8 @@ const MESSAGE_LIMITS = Object.fromEntries(
 );
 
 const PUBLIC_PLAN_IDS = [
-  "free",
   "ig_starter",
-  "ig_pro",
   "wa_starter",
-  "wa_pro",
   "bundle_pro",
   "bundle_business",
 ];

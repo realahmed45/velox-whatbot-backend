@@ -16,6 +16,7 @@ const getContacts = asyncHandler(async (req, res) => {
   const filter = { workspaceId: req.workspace._id, isDeleted: false };
 
   if (tag) filter.tags = tag;
+  if (req.query.status) filter.status = req.query.status;
 
   // Channel scoping: WhatsApp contacts have a phone, Instagram contacts have
   // an igUserId. We use presence of those identifiers to scope the list to
@@ -70,7 +71,7 @@ const getContact = asyncHandler(async (req, res) => {
 
 // @PUT /api/contacts/:id — Update contact
 const updateContact = asyncHandler(async (req, res) => {
-  const { name, email, tags, notes, customFields } = req.body;
+  const { name, email, tags, notes, customFields, status } = req.body;
   const contact = await Contact.findOne({
     _id: req.params.id,
     workspaceId: req.workspace._id,
@@ -86,6 +87,12 @@ const updateContact = asyncHandler(async (req, res) => {
   if (tags !== undefined)
     contact.tags = tags.map((t) => t.toLowerCase().trim());
   if (customFields !== undefined) contact.customFields = customFields;
+  if (
+    status !== undefined &&
+    ["new", "active", "customer", "lost"].includes(status)
+  ) {
+    contact.status = status;
+  }
   if (notes) {
     contact.notes.push({ content: notes, addedBy: req.user._id });
   }

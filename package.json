@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@json2csv/plainjs": "^7.0.6",
+    "@whiskeysockets/baileys": "^7.0.0-rc10",
     "axios": "^1.6.5",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.1.1",
@@ -33,6 +34,7 @@
     "nodemailer": "^6.9.8",
     "openai": "^4.67.3",
     "pdfkit": "^0.14.0",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.6.2",
     "uuid": "^9.0.1",
     "winston": "^3.11.0"

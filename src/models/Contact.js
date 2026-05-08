@@ -35,6 +35,14 @@ const contactSchema = new mongoose.Schema(
     // VIP flag (set by VIP Comment Prioritizer or manually)
     isVip: { type: Boolean, default: false },
 
+    // Mini-CRM lifecycle status (replaces Kanban deals for v1)
+    status: {
+      type: String,
+      enum: ["new", "active", "customer", "lost"],
+      default: "new",
+      index: true,
+    },
+
     // Custom fields
     customFields: [customFieldValueSchema],
 

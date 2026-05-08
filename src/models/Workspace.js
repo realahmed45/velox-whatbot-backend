@@ -72,7 +72,15 @@ const whatsappConnectionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["none", "meta", "ultramsg", "cloud", "kapso"],
+      enum: [
+        "none",
+        "meta",
+        "ultramsg",
+        "cloud",
+        "kapso",
+        "baileys",
+        "wasender",
+      ],
       default: "none",
     },
     // Meta Cloud API credentials (encrypted)
@@ -94,6 +102,10 @@ const whatsappConnectionSchema = new mongoose.Schema(
     kapsoPhoneNumberId: { type: String, select: false },
     kapsoWabaId: { type: String, select: false },
     kapsoSetupLinkId: { type: String, select: false },
+    // WasenderAPI (paid QR-scan provider — encrypted)
+    wasenderApiKey: { type: String, select: false },
+    wasenderSessionId: { type: String, select: false },
+    wasenderWebhookSecret: { type: String, select: false },
     kapsoConnectionType: {
       type: String,
       enum: ["coexistence", "dedicated", null],
@@ -591,6 +603,22 @@ const workspaceSchema = new mongoose.Schema(
 
     onboardingCompleted: { type: Boolean, default: false },
     onboardingStep: { type: Number, default: 0 },
+
+    // Activation checklist — drives the "Get Started" card on dashboard
+    activation: {
+      welcomeSet: { type: Boolean, default: false },
+      keywordsSet: { type: Boolean, default: false },
+      contactsImported: { type: Boolean, default: false },
+      testSent: { type: Boolean, default: false },
+      dismissed: { type: Boolean, default: false },
+    },
+
+    // AI Knowledge Base — paste-in FAQ for "smart auto-reply"
+    aiKnowledge: {
+      enabled: { type: Boolean, default: false },
+      content: { type: String, default: "", maxlength: 8000 },
+      lastUpdatedAt: Date,
+    },
   },
   {
     timestamps: true,

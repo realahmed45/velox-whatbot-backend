@@ -497,11 +497,55 @@ const getAutomationConfig = asyncHandler(async (req, res) => {
   });
 });
 
+// @PATCH /api/workspaces/:workspaceId/activation — toggle activation step
+const updateActivation = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const ws = await Workspace.findById(req.workspace._id);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const allowed = [
+    "welcomeSet",
+    "keywordsSet",
+    "contactsImported",
+    "testSent",
+    "dismissed",
+  ];
+  ws.activation = ws.activation || {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) ws.activation[key] = !!req.body[key];
+  }
+  await ws.save();
+  res.json({ success: true, activation: ws.activation });
+});
+
+// @PUT /api/workspaces/:workspaceId/ai-knowledge — paste FAQ text
+const updateAiKnowledge = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const ws = await Workspace.findById(req.workspace._id);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const { content, enabled } = req.body || {};
+  ws.aiKnowledge = ws.aiKnowledge || {};
+  if (typeof content === "string") {
+    ws.aiKnowledge.content = content.slice(0, 8000);
+    ws.aiKnowledge.lastUpdatedAt = new Date();
+  }
+  if (typeof enabled === "boolean") ws.aiKnowledge.enabled = enabled;
+  await ws.save();
+  res.json({ success: true, aiKnowledge: ws.aiKnowledge });
+});
+
 module.exports = {
   createWorkspace,
   getWorkspaces,
   getWorkspace,
   updateWorkspace,
+  updateActivation,
+  updateAiKnowledge,
   connectUltramsg,
   getUltramsgQR,
   connectMeta,

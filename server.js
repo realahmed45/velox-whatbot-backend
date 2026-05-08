@@ -254,6 +254,19 @@ logger.info(
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   logger.info(`Flowgram API running on port ${PORT} [${process.env.NODE_ENV}]`);
+
+  // Bootstrap Baileys WhatsApp sessions for previously-connected workspaces.
+  // Delay a few seconds so DB connection is fully ready.
+  setTimeout(() => {
+    try {
+      const baileysService = require("./src/services/whatsapp/baileysService");
+      baileysService
+        .bootstrapSessions()
+        .catch((err) => logger.error("[baileys] bootstrap error", err));
+    } catch (err) {
+      logger.error("[baileys] failed to load service for bootstrap", err);
+    }
+  }, 5000);
 });
 
 // ─── Graceful Shutdown ─────────────────────────────────────

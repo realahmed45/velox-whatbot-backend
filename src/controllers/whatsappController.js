@@ -63,6 +63,10 @@ const sanitizeWaForResponse = (workspace) => {
   // these are infra identifiers, not customer-visible data.
   delete w.kapsoPhoneNumberId;
   delete w.kapsoWabaId;
+  // Strip Wasender secrets
+  delete w.wasenderApiKey;
+  delete w.wasenderSessionId;
+  delete w.wasenderWebhookSecret;
   return w;
 };
 
@@ -816,6 +820,240 @@ const updateAutomation = asyncHandler(async (req, res) => {
   res.json({ whatsapp: sanitizeWaForResponse(ws) });
 });
 
+// ──────────────────────────────────────────────────────────
+// BAILEYS (QR-scan, free) endpoints
+// ──────────────────────────────────────────────────────────
+const baileysService = require("../services/whatsapp/baileysService");
+
+// @POST /api/whatsapp/baileys/connect — start a session, returns immediately
+const baileysConnect = asyncHandler(async (req, res) => {
+  const ws = await findWorkspace(req);
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+  const { reset } = req.body || {};
+
+  // Mark workspace as pending baileys
+  ws.whatsapp.type = "baileys";
+  ws.whatsapp.status = "pending";
+  await ws.save();
+
+  baileysService
+    .startSession(ws._id, { reset: !!reset })
+    .catch((err) => logger.error("[baileys] startSession threw", err));
+
+  res.json({ success: true, status: "starting" });
+});
+
+// @GET /api/whatsapp/baileys/qr — frontend polls this for QR data URL + status
+const baileysQr = asyncHandler(async (req, res) => {
+  const ws = await findWorkspace(req);
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+  const state = baileysService.getSessionState(ws._id);
+  res.json({ success: true, ...state });
+});
+
+// @GET /api/whatsapp/baileys/status
+const baileysStatus = asyncHandler(async (req, res) => {
+  const ws = await findWorkspace(req);
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+  const state = baileysService.getSessionState(ws._id);
+  res.json({
+    success: true,
+    ...state,
+    workspaceStatus: ws.whatsapp?.status || "disconnected",
+    phoneNumber: state.phoneNumber || ws.whatsapp?.phoneNumber || null,
+  });
+});
+
+// @DELETE /api/whatsapp/baileys/disconnect
+const baileysDisconnect = asyncHandler(async (req, res) => {
+  const ws = await findWorkspace(req);
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+  await baileysService.logout(ws._id);
+  ws.whatsapp.type = "none";
+  ws.whatsapp.status = "disconnected";
+  ws.whatsapp.phoneNumber = undefined;
+  ws.whatsapp.displayName = undefined;
+  await ws.save();
+  res.json({ success: true });
+});
+
+// ──────────────────────────────────────────────────────────
+// WASENDER (paid QR-scan, $6/mo) endpoints
+// ──────────────────────────────────────────────────────────
+const wasenderService = require("../services/whatsapp/wasenderService");
+
+const buildWasenderWebhookUrl = (workspaceId) => {
+  const base = buildWebhookBaseUrl();
+  return `${base}/api/whatsapp/webhook/wasender/${workspaceId}`;
+};
+
+// @POST /api/whatsapp/wasender/connect
+// Creates a session if needed and returns immediately.
+const wasenderConnect = asyncHandler(async (req, res) => {
+  const id = getWorkspaceId(req);
+  if (!id) return res.status(400).json({ message: "No workspace" });
+  const ws = await Workspace.findById(id).select(
+    "+whatsapp.wasenderApiKey +whatsapp.wasenderSessionId +whatsapp.wasenderWebhookSecret",
+  );
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+
+  const reset = req.body?.reset === true;
+
+  // If we already have a session and not resetting, just return current state.
+  if (ws.whatsapp?.wasenderSessionId && !reset) {
+    return res.json({ success: true, status: ws.whatsapp.status || "pending" });
+  }
+
+  // Tear down existing session if resetting
+  if (reset && ws.whatsapp?.wasenderSessionId && ws.whatsapp?.wasenderApiKey) {
+    try {
+      await wasenderService.deleteSession({
+        sessionId: decrypt(ws.whatsapp.wasenderSessionId),
+        apiKey: decrypt(ws.whatsapp.wasenderApiKey),
+      });
+    } catch (err) {
+      logger.warn("[wasender] reset deleteSession failed", err.message);
+    }
+  }
+
+  try {
+    const { sessionId, apiKey, webhookSecret } =
+      await wasenderService.createSession({
+        workspaceId: String(ws._id),
+        webhookUrl: buildWasenderWebhookUrl(ws._id),
+      });
+    ws.whatsapp = ws.whatsapp || {};
+    ws.whatsapp.type = "wasender";
+    ws.whatsapp.status = "pending";
+    ws.whatsapp.wasenderSessionId = encrypt(sessionId);
+    ws.whatsapp.wasenderApiKey = encrypt(apiKey);
+    ws.whatsapp.wasenderWebhookSecret = encrypt(webhookSecret);
+    await ws.save();
+    res.json({ success: true, status: "pending" });
+  } catch (err) {
+    logger.error("[wasender] connect failed", err.message);
+    res.status(500).json({ message: err.message || "Could not start session" });
+  }
+});
+
+// @GET /api/whatsapp/wasender/qr — frontend polls this
+const wasenderQr = asyncHandler(async (req, res) => {
+  const id = getWorkspaceId(req);
+  if (!id) return res.status(400).json({ message: "No workspace" });
+  const ws = await Workspace.findById(id).select(
+    "+whatsapp.wasenderApiKey +whatsapp.wasenderSessionId",
+  );
+  if (!ws?.whatsapp?.wasenderSessionId) {
+    return res.json({ success: true, status: "not_started" });
+  }
+  const apiKey = decrypt(ws.whatsapp.wasenderApiKey);
+  const sessionId = decrypt(ws.whatsapp.wasenderSessionId);
+  const state = await wasenderService.getQR({ sessionId, apiKey });
+
+  // Persist phone/status when fully connected
+  if (state.status === "connected" && ws.whatsapp.status !== "connected") {
+    ws.whatsapp.status = "connected";
+    ws.whatsapp.phoneNumber = state.phoneNumber || ws.whatsapp.phoneNumber;
+    ws.whatsapp.displayName = state.displayName || ws.whatsapp.displayName;
+    ws.whatsapp.connectedAt = new Date();
+    await ws.save();
+  }
+
+  res.json({ success: true, ...state });
+});
+
+// @GET /api/whatsapp/wasender/status — lightweight status
+const wasenderStatus = asyncHandler(async (req, res) => {
+  const id = getWorkspaceId(req);
+  if (!id) return res.status(400).json({ message: "No workspace" });
+  const ws = await Workspace.findById(id).select(
+    "+whatsapp.wasenderApiKey +whatsapp.wasenderSessionId",
+  );
+  if (!ws?.whatsapp?.wasenderSessionId) {
+    return res.json({ success: true, status: "not_started" });
+  }
+  const apiKey = decrypt(ws.whatsapp.wasenderApiKey);
+  const sessionId = decrypt(ws.whatsapp.wasenderSessionId);
+  const state = await wasenderService.getStatus({ sessionId, apiKey });
+  res.json({ success: true, ...state, workspaceStatus: ws.whatsapp.status });
+});
+
+// @DELETE /api/whatsapp/wasender/disconnect
+const wasenderDisconnect = asyncHandler(async (req, res) => {
+  const id = getWorkspaceId(req);
+  if (!id) return res.status(400).json({ message: "No workspace" });
+  const ws = await Workspace.findById(id).select(
+    "+whatsapp.wasenderApiKey +whatsapp.wasenderSessionId",
+  );
+  if (!ws) return res.status(404).json({ message: "Workspace not found" });
+
+  if (ws.whatsapp?.wasenderSessionId && ws.whatsapp?.wasenderApiKey) {
+    try {
+      await wasenderService.deleteSession({
+        sessionId: decrypt(ws.whatsapp.wasenderSessionId),
+        apiKey: decrypt(ws.whatsapp.wasenderApiKey),
+      });
+    } catch (err) {
+      logger.warn("[wasender] deleteSession failed", err.message);
+    }
+  }
+
+  ws.whatsapp.type = "none";
+  ws.whatsapp.status = "disconnected";
+  ws.whatsapp.wasenderApiKey = undefined;
+  ws.whatsapp.wasenderSessionId = undefined;
+  ws.whatsapp.wasenderWebhookSecret = undefined;
+  ws.whatsapp.phoneNumber = undefined;
+  ws.whatsapp.displayName = undefined;
+  await ws.save();
+  res.json({ success: true });
+});
+
+// @POST /api/whatsapp/webhook/wasender/:workspaceId — public webhook
+const handleWasenderWebhook = asyncHandler(async (req, res) => {
+  const { workspaceId } = req.params;
+  const ws = await Workspace.findById(workspaceId).select(
+    "+whatsapp.wasenderWebhookSecret",
+  );
+  if (!ws) return res.status(404).json({ error: "Unknown workspace" });
+
+  // Acknowledge fast
+  res.status(200).json({ ok: true });
+
+  // Verify signature (best-effort — Wasender may or may not include it)
+  const secret = ws.whatsapp?.wasenderWebhookSecret
+    ? decrypt(ws.whatsapp.wasenderWebhookSecret)
+    : null;
+  const sig = req.headers["x-wasender-signature"] || req.headers["x-signature"];
+  if (secret && sig) {
+    const valid = wasenderService.verifyWebhookSignature({
+      rawBody: req.rawBody || JSON.stringify(req.body),
+      signatureHeader: sig,
+      secret,
+    });
+    if (!valid) {
+      logger.warn("[wasender] webhook signature mismatch", { workspaceId });
+      return;
+    }
+  }
+
+  const parsed = wasenderService.parseIncomingWebhook(req.body);
+  if (!parsed || parsed.skip) return;
+
+  try {
+    await processIncomingMessage({
+      workspace: ws,
+      phone: parsed.phone,
+      messageBody: parsed.text,
+      messageType: parsed.messageType,
+      mediaUrl: parsed.mediaUrl,
+      senderName: parsed.senderName,
+    });
+  } catch (err) {
+    logger.error("[wasender] processIncomingMessage failed", err.message);
+  }
+});
+
 module.exports = {
   // Webhooks
   verifyMetaWebhook,
@@ -834,4 +1072,15 @@ module.exports = {
   toggleBot,
   disconnect,
   updateAutomation,
+  // Baileys
+  baileysConnect,
+  baileysQr,
+  baileysStatus,
+  baileysDisconnect,
+  // Wasender
+  wasenderConnect,
+  wasenderQr,
+  wasenderStatus,
+  wasenderDisconnect,
+  handleWasenderWebhook,
 };

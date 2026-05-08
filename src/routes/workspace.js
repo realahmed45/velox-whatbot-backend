@@ -18,6 +18,10 @@ router.use("/:workspaceId", requireWorkspace);
 router.get("/:workspaceId", c.getWorkspace);
 router.put("/:workspaceId", requireOwner, c.updateWorkspace);
 
+// Activation checklist + AI knowledge
+router.patch("/:workspaceId/activation", c.updateActivation);
+router.put("/:workspaceId/ai-knowledge", requireOwner, c.updateAiKnowledge);
+
 // WhatsApp
 router.post("/:workspaceId/connect/ultramsg", requireOwner, c.connectUltramsg);
 router.get("/:workspaceId/connect/ultramsg/qr", requireOwner, c.getUltramsgQR);

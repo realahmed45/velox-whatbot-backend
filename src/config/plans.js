@@ -107,27 +107,27 @@ const PLANS = {
   // ─── Instagram plans ────────────────────────────────────
   ig_starter: {
     id: "ig_starter",
-    name: "Instagram Starter",
-    tagline: "Comment-to-DM + AI replies",
+    name: "Basic — Instagram",
+    tagline: "Instagram only · automate DMs and comments",
     channel: "instagram",
-    priceMonthly: 2499,
-    priceAnnual: 2499 * 10, // 2 months free
+    priceMonthly: 2240, // ≈ $8 @ 280 PKR/USD
+    priceAnnual: 2240 * 10, // 2 months free
     currency: "PKR",
-    usd: 9,
+    usd: 8,
     limits: {
       messages: 1000,
-      contacts: 500,
+      contacts: 1000,
       flows: 5,
       teamSeats: 1,
       aiRepliesPerDay: 200,
-      waMarketingLimit: 0, // IG-only plan; no WhatsApp marketing convos
+      waMarketingLimit: 0,
     },
     features: [...baseIgFeatures, FEATURES.AI_BOT, FEATURES.BUSINESS_HOURS],
     highlights: [
+      "1 Instagram account",
       "1,000 conversations/month",
-      "500 contacts",
       "Comment → DM, story replies, ice breakers",
-      "Standard AI replies (200/day)",
+      "AI smart replies (200/day)",
       "Basic analytics",
     ],
   },
@@ -173,13 +173,13 @@ const PLANS = {
   // ─── WhatsApp plans ─────────────────────────────────────
   wa_starter: {
     id: "wa_starter",
-    name: "WhatsApp Starter",
-    tagline: "Your WhatsApp on autopilot",
+    name: "Basic — WhatsApp",
+    tagline: "WhatsApp only · your number on autopilot",
     channel: "whatsapp",
-    priceMonthly: 4499,
-    priceAnnual: 4499 * 10,
+    priceMonthly: 2240, // ≈ $8 @ 280 PKR/USD
+    priceAnnual: 2240 * 10,
     currency: "PKR",
-    usd: 17,
+    usd: 8,
     limits: {
       messages: 1000,
       contacts: 1000,
@@ -187,16 +187,16 @@ const PLANS = {
       numbers: 1,
       teamSeats: 1,
       aiRepliesPerDay: 200,
-      waMarketingLimit: 500, // ~$19 max upstream cost
+      waMarketingLimit: 500,
     },
     features: [...baseWaFeatures, FEATURES.AI_BOT],
     highlights: [
-      "1 WhatsApp number (Quick Connect)",
+      "1 WhatsApp number",
       "1,000 messages / month",
-      "1,000 contacts",
-      "AI auto-replies (200/day)",
-      "Welcome message, keyword triggers",
+      "AI smart replies (200/day)",
+      "Welcome message + keyword triggers",
       "Out-of-hours auto-reply",
+      "Basic analytics",
     ],
   },
   wa_pro: {
@@ -245,13 +245,13 @@ const PLANS = {
   // ─── Bundle (push hardest — best margin) ────────────────
   bundle_pro: {
     id: "bundle_pro",
-    name: "Both Channels Pro",
-    tagline: "Instagram + WhatsApp · best value",
+    name: "Pro — Both Channels",
+    tagline: "Instagram + WhatsApp · unlimited conversations",
     channel: "both",
-    priceMonthly: 7999,
-    priceAnnual: 7999 * 10,
+    priceMonthly: 4200, // ≈ $15 @ 280 PKR/USD
+    priceAnnual: 4200 * 10,
     currency: "PKR",
-    usd: 29,
+    usd: 15,
     limits: {
       messages: -1,
       contacts: -1,
@@ -287,21 +287,21 @@ const PLANS = {
   },
   bundle_business: {
     id: "bundle_business",
-    name: "Both Channels Business",
-    tagline: "For growing teams · 2 numbers, 10 seats",
+    name: "Business",
+    tagline: "3 WhatsApp numbers + Instagram · for growing teams",
     channel: "both",
-    priceMonthly: 13999,
-    priceAnnual: 13999 * 10,
+    priceMonthly: 10920, // ≈ $39 @ 280 PKR/USD
+    priceAnnual: 10920 * 10,
     currency: "PKR",
-    usd: 49,
+    usd: 39,
     limits: {
       messages: -1,
       contacts: -1,
       flows: -1,
-      numbers: 2,
+      numbers: 3,
       teamSeats: 10,
       aiRepliesPerDay: -1,
-      waMarketingLimit: 5000, // ~$190 max upstream cost
+      waMarketingLimit: 5000,
     },
     features: [
       ...baseIgFeatures,
@@ -319,10 +319,10 @@ const PLANS = {
       FEATURES.CUSTOM_DOMAIN,
     ],
     highlights: [
-      "Everything in Both Channels Pro",
-      "2 WhatsApp numbers",
+      "Everything in Pro \u2014 Both Channels",
+      "3 WhatsApp numbers",
       "Team inbox (10 seats)",
-      "Custom domain / white-label option",
+      "Custom domain / white-label",
       "Priority support",
     ],
     premium: true,

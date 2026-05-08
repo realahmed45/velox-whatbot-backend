@@ -83,6 +83,16 @@ const buildSystemPrompt = (workspace, contact, channel) => {
     lines.push("", "Business context:", ai.businessContext);
   }
 
+  // User-provided business knowledge (Settings → AI Knowledge tab)
+  const knowledge = workspace.aiKnowledge;
+  if (knowledge?.enabled && knowledge?.content?.trim()) {
+    lines.push(
+      "",
+      "Business knowledge (use these facts when answering questions; do NOT invent details outside this):",
+      knowledge.content.trim(),
+    );
+  }
+
   if (Array.isArray(ai.faqs) && ai.faqs.length) {
     lines.push("", "Known FAQs (use these if the user asks):");
     ai.faqs

@@ -19,6 +19,17 @@ const {
   toggleBot,
   disconnect,
   updateAutomation,
+  // Baileys
+  baileysConnect,
+  baileysQr,
+  baileysStatus,
+  baileysDisconnect,
+  // Wasender
+  wasenderConnect,
+  wasenderQr,
+  wasenderStatus,
+  wasenderDisconnect,
+  handleWasenderWebhook,
 } = require("../controllers/whatsappController");
 
 // ─── Public webhooks ───────────────────────────────────────
@@ -30,6 +41,8 @@ router.post("/webhook/cloud/:token", handleCloudWebhook);
 router.post("/webhook/cloud", handleCloudWebhook);
 // Botlify Cloud Pro (Kapso) project webhook — HMAC verified
 router.post("/webhook/kapso", handleKapsoWebhook);
+// Wasender webhook (per-workspace)
+router.post("/webhook/wasender/:workspaceId", handleWasenderWebhook);
 
 // ─── Authenticated onboarding + management ─────────────────
 router.post("/onboard", protect, onboardChannel);
@@ -46,5 +59,17 @@ router.put("/automation", protect, updateAutomation);
 // Botlify Cloud QR / state polling (legacy QR-scan flow)
 router.get("/cloud/qr", protect, getCloudQr);
 router.get("/cloud/state", protect, getCloudState);
+
+// ─── Baileys (QR-scan, free, self-hosted) ──────────────────
+router.post("/baileys/connect", protect, baileysConnect);
+router.get("/baileys/qr", protect, baileysQr);
+router.get("/baileys/status", protect, baileysStatus);
+router.delete("/baileys/disconnect", protect, baileysDisconnect);
+
+// ─── WasenderAPI (paid managed QR-scan, $6/mo) ─────────────
+router.post("/wasender/connect", protect, wasenderConnect);
+router.get("/wasender/qr", protect, wasenderQr);
+router.get("/wasender/status", protect, wasenderStatus);
+router.delete("/wasender/disconnect", protect, wasenderDisconnect);
 
 module.exports = router;
