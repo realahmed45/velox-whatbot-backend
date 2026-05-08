@@ -136,30 +136,57 @@ async function connectSession({ sessionId }) {
  * Get the current QR code and connection status.
  * Wasender response shape: { success, data: { qrCode } } — status comes from /status.
  */
-async function getQR({ sessionId }) {
+async function getQR({ sessionId, _retried = false }) {
+  // Helper: looks for "needs initialize" / "does not need scanning" / similar.
+  const needsInit = (msg = "") =>
+    /initiali[sz]e|not\s*initiali[sz]ed|does\s*not\s*need\s*scanning|need[s]?\s*to\s*be\s*connect/i.test(
+      msg,
+    );
+
   try {
     const { data } = await client().get(
       `/whatsapp-sessions/${sessionId}/qrcode`,
     );
+
+    // Wasender sometimes returns HTTP 200 with success:false for non-fatal
+    // states (e.g. "Session does not need scanning. Please initialize…").
+    if (data && data.success === false) {
+      const msg = data.message || "";
+      if (needsInit(msg) && !_retried) {
+        logger.info(
+          `[wasender] getQR 200/success:false '${msg}' — calling /connect and retrying`,
+        );
+        await connectSession({ sessionId });
+        return getQR({ sessionId, _retried: true });
+      }
+      return { status: "error", qr: null, lastError: msg };
+    }
+
     const payload = data?.data || data || {};
+    const qr = payload.qrCode || payload.qr_code || null;
+    // If the API returned an empty qr field, treat as "needs init" once.
+    if (!qr && !_retried) {
+      logger.info(
+        `[wasender] getQR returned no qr — calling /connect and retrying`,
+      );
+      await connectSession({ sessionId });
+      return getQR({ sessionId, _retried: true });
+    }
     return {
-      status: payload.status || "qr",
-      qr: payload.qrCode || payload.qr_code || null,
+      status: payload.status || (qr ? "qr" : "connecting"),
+      qr,
       phoneNumber: payload.phone_number || null,
       displayName: payload.name || null,
     };
   } catch (err) {
     const upstream = err.response?.data;
     const upstreamMsg = upstream?.message || "";
-    // "Session Not initialized" → kick off connect and try once more
-    if (
-      /not\s*initialized|not\s*initialised|no\s*subscription/i.test(upstreamMsg)
-    ) {
+    if (needsInit(upstreamMsg) && !_retried) {
       logger.info(
-        `[wasender] getQR upstream said '${upstreamMsg}' — calling /connect`,
+        `[wasender] getQR upstream said '${upstreamMsg}' — calling /connect and retrying`,
       );
-      const { qr, status } = await connectSession({ sessionId });
-      return { status, qr };
+      await connectSession({ sessionId });
+      return getQR({ sessionId, _retried: true });
     }
     logger.error("[wasender] getQR failed", upstream || err.message);
     return { status: "error", qr: null, lastError: upstreamMsg || err.message };
