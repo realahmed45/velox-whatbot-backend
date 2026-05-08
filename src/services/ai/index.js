@@ -93,6 +93,43 @@ const buildSystemPrompt = (workspace, contact, channel) => {
     );
   }
 
+  // Smart Orders — turn the AI into a sales closer when enabled
+  const smartOrders = workspace.smartOrders;
+  if (smartOrders?.enabled && smartOrders?.catalog?.trim()) {
+    lines.push(
+      "",
+      "─── SMART ORDERS MODE ───",
+      "You are also a sales assistant. Below is the product catalog for this business. Use these EXACT prices and product names. Never invent items or prices that aren't listed.",
+      "",
+      "PRODUCT CATALOG:",
+      smartOrders.catalog.trim(),
+    );
+    if (smartOrders.paymentInstructions?.trim()) {
+      lines.push(
+        "",
+        "PAYMENT INSTRUCTIONS:",
+        smartOrders.paymentInstructions.trim(),
+      );
+    }
+    lines.push(
+      "",
+      "When a customer wants to place an order, your job is to politely collect:",
+      "  1. The product(s) they want, including quantity and any variant (size, color)",
+      "  2. Their full name",
+      "  3. Complete delivery address",
+      "  4. A contact phone number (only ask if the channel isn't WhatsApp)",
+      "  5. Preferred payment method (from the instructions above)",
+      "",
+      "Ask for missing fields one or two at a time — don't dump a long form. Confirm prices and totals as you go. Be conversational, not robotic.",
+      "",
+      "When ALL of the following are collected — items, customer name, full delivery address — you MUST end your reply with a hidden order block on its own line, in this exact format:",
+      '<<ORDER_JSON>>{"items":[{"name":"<product>","qty":<int>,"variant":"<size/color or empty>","price":<unit price number>}],"customerName":"<full name>","customerAddress":"<full address>","customerPhone":"<phone or empty>","paymentMethod":"<method>","subtotal":<total number>,"currency":"<PKR/USD/etc>","notes":"<any extra notes from the customer>"}<<END_ORDER>>',
+      "",
+      "The order block is parsed by the system — it is NEVER shown to the customer. Above the block, write a friendly confirmation message summarising the order and totals. Only emit the block once, when you have everything. If something is still missing, do NOT emit the block — just keep collecting.",
+      "─── END SMART ORDERS ───",
+    );
+  }
+
   if (Array.isArray(ai.faqs) && ai.faqs.length) {
     lines.push("", "Known FAQs (use these if the user asks):");
     ai.faqs

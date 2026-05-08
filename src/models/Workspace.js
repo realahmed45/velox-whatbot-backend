@@ -619,6 +619,18 @@ const workspaceSchema = new mongoose.Schema(
       content: { type: String, default: "", maxlength: 8000 },
       lastUpdatedAt: Date,
     },
+
+    // Smart Orders — AI captures orders from chat, no payments
+    smartOrders: {
+      enabled: { type: Boolean, default: false },
+      catalog: { type: String, default: "", maxlength: 5000 },
+      paymentInstructions: { type: String, default: "", maxlength: 1000 },
+      // Optional WhatsApp number to ping the merchant on new orders + daily digest
+      notifyPhone: { type: String, default: "" },
+      monthlyOrderCount: { type: Number, default: 0 },
+      monthlyResetAt: Date,
+      lastUpdatedAt: Date,
+    },
   },
   {
     timestamps: true,

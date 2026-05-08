@@ -21,6 +21,7 @@ router.put("/:workspaceId", requireOwner, c.updateWorkspace);
 // Activation checklist + AI knowledge
 router.patch("/:workspaceId/activation", c.updateActivation);
 router.put("/:workspaceId/ai-knowledge", requireOwner, c.updateAiKnowledge);
+router.put("/:workspaceId/smart-orders", requireOwner, c.updateSmartOrders);
 
 // WhatsApp
 router.post("/:workspaceId/connect/ultramsg", requireOwner, c.connectUltramsg);

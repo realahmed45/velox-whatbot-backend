@@ -19,6 +19,7 @@ const workspaceRoutes = require("./src/routes/workspace");
 const flowRoutes = require("./src/routes/flows");
 const inboxRoutes = require("./src/routes/inbox");
 const contactRoutes = require("./src/routes/contacts");
+const orderRoutes = require("./src/routes/orders");
 const analyticsRoutes = require("./src/routes/analytics");
 const billingRoutes = require("./src/routes/billing");
 const instagramRoutes = require("./src/routes/instagram");
@@ -168,6 +169,7 @@ app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/flows", flowRoutes);
 app.use("/api/inbox", inboxRoutes);
 app.use("/api/contacts", contactRoutes);
+app.use("/api/orders", orderRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/billing", billingRoutes);
 app.use("/api/instagram", instagramRoutes);
@@ -199,6 +201,13 @@ initSocket(server);
 
 // ─── Background Jobs ───────────────────────────────────────
 initQueues();
+
+// ─── Smart Orders Cron Jobs ────────────────────────────────
+try {
+  require("./src/jobs/smartOrdersCron").startCrons();
+} catch (err) {
+  console.warn(`[smartOrders] cron init failed: ${err.message}`);
+}
 
 // ─── Instagram Cron Jobs ───────────────────────────────────
 // Note: Instagram Graph API does NOT expose follow events or a followers list,

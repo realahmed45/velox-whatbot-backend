@@ -42,6 +42,8 @@ const FEATURES = {
   TEAM_INBOX: "team_inbox",
   REMOVE_BRANDING: "remove_branding",
   CUSTOM_DOMAIN: "custom_domain",
+  // Ecommerce
+  SMART_ORDERS: "smart_orders",
 };
 
 // PKR ↔ USD reference (display only)
@@ -88,6 +90,7 @@ const PLANS = {
       teamSeats: 1,
       aiRepliesPerDay: 25,
       waMarketingLimit: 0, // free trial cannot run paid marketing convos
+      smartOrdersPerMonth: 5,
     },
     features: [
       FEATURES.POST_COMMENT_KEYWORD,
@@ -122,8 +125,14 @@ const PLANS = {
       teamSeats: 1,
       aiRepliesPerDay: 200,
       waMarketingLimit: 0,
+      smartOrdersPerMonth: 20,
     },
-    features: [...baseIgFeatures, FEATURES.AI_BOT, FEATURES.BUSINESS_HOURS],
+    features: [
+      ...baseIgFeatures,
+      FEATURES.AI_BOT,
+      FEATURES.BUSINESS_HOURS,
+      FEATURES.SMART_ORDERS,
+    ],
     highlights: [
       "1 Instagram account",
       "1,000 conversations/month",
@@ -148,6 +157,7 @@ const PLANS = {
       teamSeats: 3,
       aiRepliesPerDay: -1,
       waMarketingLimit: 0, // IG-only plan; no WhatsApp marketing convos
+      smartOrdersPerMonth: 200,
     },
     features: [
       ...baseIgFeatures,
@@ -159,6 +169,7 @@ const PLANS = {
       FEATURES.ANALYTICS_ADVANCED,
       FEATURES.TEAM_INBOX,
       FEATURES.REMOVE_BRANDING,
+      FEATURES.SMART_ORDERS,
     ],
     highlights: [
       "Unlimited conversations",
@@ -190,8 +201,9 @@ const PLANS = {
       teamSeats: 1,
       aiRepliesPerDay: 200,
       waMarketingLimit: 500,
+      smartOrdersPerMonth: 20,
     },
-    features: [...baseWaFeatures, FEATURES.AI_BOT],
+    features: [...baseWaFeatures, FEATURES.AI_BOT, FEATURES.SMART_ORDERS],
     highlights: [
       "1 WhatsApp number",
       "1,000 messages / month",
@@ -218,6 +230,7 @@ const PLANS = {
       teamSeats: 3,
       aiRepliesPerDay: -1,
       waMarketingLimit: 1500, // ~$57 max upstream cost
+      smartOrdersPerMonth: 200,
     },
     features: [
       ...baseWaFeatures,
@@ -231,6 +244,7 @@ const PLANS = {
       FEATURES.ANALYTICS_ADVANCED,
       FEATURES.TEAM_INBOX,
       FEATURES.REMOVE_BRANDING,
+      FEATURES.SMART_ORDERS,
     ],
     highlights: [
       "1 WhatsApp number",
@@ -263,6 +277,7 @@ const PLANS = {
       teamSeats: 3,
       aiRepliesPerDay: -1,
       waMarketingLimit: 1500, // ~$57 max upstream cost
+      smartOrdersPerMonth: 200,
     },
     features: [
       ...baseIgFeatures,
@@ -276,6 +291,7 @@ const PLANS = {
       FEATURES.ANALYTICS_ADVANCED,
       FEATURES.TEAM_INBOX,
       FEATURES.REMOVE_BRANDING,
+      FEATURES.SMART_ORDERS,
     ],
     highlights: [
       "Everything in IG Pro + WA Pro",
@@ -306,6 +322,7 @@ const PLANS = {
       teamSeats: 10,
       aiRepliesPerDay: -1,
       waMarketingLimit: 5000,
+      smartOrdersPerMonth: -1,
     },
     features: [
       ...baseIgFeatures,
@@ -321,6 +338,7 @@ const PLANS = {
       FEATURES.TEAM_INBOX,
       FEATURES.REMOVE_BRANDING,
       FEATURES.CUSTOM_DOMAIN,
+      FEATURES.SMART_ORDERS,
     ],
     highlights: [
       "Everything in Pro \u2014 Both Channels",

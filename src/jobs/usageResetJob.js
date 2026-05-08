@@ -13,6 +13,8 @@ module.exports = (connection) => {
           "usage.messagesThisMonth": 0,
           "usage.waMarketingThisMonth": 0,
           "usage.lastResetDate": new Date(),
+          "smartOrders.monthlyOrderCount": 0,
+          "smartOrders.monthlyResetAt": new Date(),
         });
         logger.info(`[UsageReset] Reset usage for workspace ${workspaceId}`);
       } else {
@@ -23,6 +25,8 @@ module.exports = (connection) => {
             "usage.messagesThisMonth": 0,
             "usage.waMarketingThisMonth": 0,
             "usage.lastResetDate": new Date(),
+            "smartOrders.monthlyOrderCount": 0,
+            "smartOrders.monthlyResetAt": new Date(),
           },
         );
         logger.info(

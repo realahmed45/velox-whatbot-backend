@@ -281,9 +281,32 @@ const runAiFallback = async ({
 
   if (!reply) return;
 
+  // Smart Orders — strip the hidden order block before sending to the customer
+  let outboundText = reply;
+  let capturedOrder = null;
+  try {
+    const smartOrders = require("./smartOrders");
+    const parsed = smartOrders.parseAiOrderBlock(reply);
+    outboundText = parsed.cleanReply || reply;
+    if (parsed.orderData) {
+      capturedOrder = await smartOrders.persistOrder({
+        workspace,
+        contact,
+        conversation,
+        channel: "whatsapp",
+        orderData: parsed.orderData,
+      });
+    }
+  } catch (err) {
+    /* never block the reply on order parsing */
+  }
+
   // Send via dispatcher (WhatsApp). For Instagram, the IG controller handles AI on its own path.
   if (workspace.whatsapp?.type && workspace.whatsapp.type !== "none") {
-    await sendMessage(workspace, contact.phone, { type: "text", text: reply });
+    await sendMessage(workspace, contact.phone, {
+      type: "text",
+      text: outboundText,
+    });
   }
 
   // Store outgoing message
@@ -294,9 +317,13 @@ const runAiFallback = async ({
     direction: "outbound",
     type: "text",
     sender: "ai",
-    text: reply,
+    text: outboundText,
     status: "sent",
-    meta: { provider, tokens },
+    meta: {
+      provider,
+      tokens,
+      orderId: capturedOrder?._id || undefined,
+    },
   });
 
   // Track usage

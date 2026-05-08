@@ -539,6 +539,31 @@ const updateAiKnowledge = asyncHandler(async (req, res) => {
   res.json({ success: true, aiKnowledge: ws.aiKnowledge });
 });
 
+// @PUT /api/workspaces/:workspaceId/smart-orders — catalog + payment instructions
+const updateSmartOrders = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const ws = await Workspace.findById(req.workspace._id);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const { enabled, catalog, paymentInstructions, notifyPhone } = req.body || {};
+  ws.smartOrders = ws.smartOrders || {};
+  if (typeof enabled === "boolean") ws.smartOrders.enabled = enabled;
+  if (typeof catalog === "string") {
+    ws.smartOrders.catalog = catalog.slice(0, 5000);
+  }
+  if (typeof paymentInstructions === "string") {
+    ws.smartOrders.paymentInstructions = paymentInstructions.slice(0, 1000);
+  }
+  if (typeof notifyPhone === "string") {
+    ws.smartOrders.notifyPhone = notifyPhone.trim().slice(0, 32);
+  }
+  ws.smartOrders.lastUpdatedAt = new Date();
+  await ws.save();
+  res.json({ success: true, smartOrders: ws.smartOrders });
+});
+
 module.exports = {
   createWorkspace,
   getWorkspaces,
@@ -546,6 +571,7 @@ module.exports = {
   updateWorkspace,
   updateActivation,
   updateAiKnowledge,
+  updateSmartOrders,
   connectUltramsg,
   getUltramsgQR,
   connectMeta,

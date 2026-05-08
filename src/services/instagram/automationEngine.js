@@ -512,11 +512,30 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     await conv.save();
   }
 
+  // Smart Orders — strip the hidden order block before sending
+  let outboundText = reply;
+  try {
+    const smartOrders = require("../smartOrders");
+    const parsed = smartOrders.parseAiOrderBlock(reply);
+    outboundText = parsed.cleanReply || reply;
+    if (parsed.orderData) {
+      await smartOrders.persistOrder({
+        workspace,
+        contact,
+        conversation: conv,
+        channel: "instagram",
+        orderData: parsed.orderData,
+      });
+    }
+  } catch (_) {
+    /* never block reply on order parsing */
+  }
+
   await sendAndLog({
     workspace,
     contact,
     conversation: conv,
-    text: reply,
+    text: outboundText,
     triggerType: TRIGGERS.AI_REPLY,
   });
   return true;
