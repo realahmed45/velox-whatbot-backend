@@ -915,11 +915,10 @@ const wasenderConnect = asyncHandler(async (req, res) => {
   }
 
   // Tear down existing session if resetting
-  if (reset && ws.whatsapp?.wasenderSessionId && ws.whatsapp?.wasenderApiKey) {
+  if (reset && ws.whatsapp?.wasenderSessionId) {
     try {
       await wasenderService.deleteSession({
         sessionId: decrypt(ws.whatsapp.wasenderSessionId),
-        apiKey: decrypt(ws.whatsapp.wasenderApiKey),
       });
     } catch (err) {
       logger.warn("[wasender] reset deleteSession failed", err.message);
@@ -933,6 +932,13 @@ const wasenderConnect = asyncHandler(async (req, res) => {
         webhookUrl: buildWasenderWebhookUrl(ws._id),
         phoneNumber,
       });
+    // Kick off the WA connection so a QR code is generated. We don't fail the
+    // request if /connect itself errors — the polling QR endpoint will retry.
+    try {
+      await wasenderService.connectSession({ sessionId });
+    } catch (e) {
+      logger.warn(`[wasender] initial connect failed: ${e.message}`);
+    }
     ws.whatsapp = ws.whatsapp || {};
     ws.whatsapp.type = "wasender";
     ws.whatsapp.status = "pending";
@@ -964,9 +970,8 @@ const wasenderQr = asyncHandler(async (req, res) => {
   if (!ws?.whatsapp?.wasenderSessionId) {
     return res.json({ success: true, status: "not_started" });
   }
-  const apiKey = decrypt(ws.whatsapp.wasenderApiKey);
   const sessionId = decrypt(ws.whatsapp.wasenderSessionId);
-  const state = await wasenderService.getQR({ sessionId, apiKey });
+  const state = await wasenderService.getQR({ sessionId });
 
   // Persist phone/status when fully connected
   if (state.status === "connected" && ws.whatsapp.status !== "connected") {
@@ -990,9 +995,8 @@ const wasenderStatus = asyncHandler(async (req, res) => {
   if (!ws?.whatsapp?.wasenderSessionId) {
     return res.json({ success: true, status: "not_started" });
   }
-  const apiKey = decrypt(ws.whatsapp.wasenderApiKey);
   const sessionId = decrypt(ws.whatsapp.wasenderSessionId);
-  const state = await wasenderService.getStatus({ sessionId, apiKey });
+  const state = await wasenderService.getStatus({ sessionId });
   res.json({ success: true, ...state, workspaceStatus: ws.whatsapp.status });
 });
 
@@ -1005,11 +1009,10 @@ const wasenderDisconnect = asyncHandler(async (req, res) => {
   );
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
 
-  if (ws.whatsapp?.wasenderSessionId && ws.whatsapp?.wasenderApiKey) {
+  if (ws.whatsapp?.wasenderSessionId) {
     try {
       await wasenderService.deleteSession({
         sessionId: decrypt(ws.whatsapp.wasenderSessionId),
-        apiKey: decrypt(ws.whatsapp.wasenderApiKey),
       });
     } catch (err) {
       logger.warn("[wasender] deleteSession failed", err.message);

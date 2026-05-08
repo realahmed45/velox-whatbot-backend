@@ -21,19 +21,31 @@ const axios = require("axios");
 const crypto = require("crypto");
 const logger = require("../../utils/logger");
 
-const BASE_URL = process.env.WASENDER_BASE_URL || "https://wasenderapi.com/api";
-// Account-level "personal access token" used to provision new sessions.
-// Per-session API keys are returned by the create-session endpoint.
+// Wasender's API host requires the `www.` subdomain. The non-www host issues a
+// 301 redirect, and axios/Node strip the Authorization header on cross-host
+// redirects → upstream returns 401. We force `www.` regardless of env.
+const RAW_BASE =
+  process.env.WASENDER_BASE_URL || "https://www.wasenderapi.com/api";
+const BASE_URL = RAW_BASE.replace(
+  /^https?:\/\/wasenderapi\.com/i,
+  "https://www.wasenderapi.com",
+);
+// Account-level "personal access token" — used for ALL session-management
+// endpoints (create / connect / qrcode / status / delete). Per-session
+// `api_key` is only used for messaging endpoints (/send-message etc).
 const ACCOUNT_TOKEN = process.env.WASENDER_ACCOUNT_TOKEN || "";
 
+// Default = PAT (account-level). Pass an apiKey for messaging endpoints.
 const client = (apiKey) =>
   axios.create({
     baseURL: BASE_URL,
     headers: {
       Authorization: `Bearer ${apiKey || ACCOUNT_TOKEN}`,
       "Content-Type": "application/json",
+      Accept: "application/json",
     },
     timeout: 25000,
+    maxRedirects: 0, // any redirect = misconfigured base URL; fail loud
   });
 
 // ──────────────────────────────────────────────────────────
@@ -58,10 +70,15 @@ async function createSession({ workspaceId, webhookUrl, phoneNumber }) {
       phone_number: phoneNumber,
       account_protection: true,
       log_messages: true,
+      read_incoming_messages: false,
       webhook_url: webhookUrl,
       webhook_enabled: true,
       webhook_secret: webhookSecret,
-      webhook_events: ["messages.upsert", "session.status"],
+      webhook_events: [
+        "messages.received",
+        "session.status",
+        "messages.update",
+      ],
     });
     const session = data?.data || data;
     return {
@@ -71,49 +88,90 @@ async function createSession({ workspaceId, webhookUrl, phoneNumber }) {
     };
   } catch (err) {
     const payload = err.response?.data;
-    logger.error("[wasender] createSession failed", payload || err.message);
+    const status = err.response?.status;
+    logger.error(
+      `[wasender] createSession failed (HTTP ${status})`,
+      payload || err.message,
+    );
     // Bubble up validation errors with field details so the UI can show them
     let msg = payload?.message || "Could not create WasenderAPI session";
     if (payload?.errors && typeof payload.errors === "object") {
       const flat = Object.values(payload.errors).flat().filter(Boolean);
       if (flat.length) msg = flat.join(" ");
     }
+    if (status === 401) {
+      msg =
+        "Wasender rejected our access token (HTTP 401). Verify WASENDER_ACCOUNT_TOKEN on the server is the Personal Access Token from wasenderapi.com → Settings → Tokens, and that your subscription is active.";
+    }
     const e = new Error(msg);
-    e.status = err.response?.status;
+    e.status = status;
     throw e;
   }
 }
 
 /**
- * Get the current QR code (base64 data URL) and connection status.
- * Status values: connecting | qr | connected | disconnected | failed
+ * Initiate the connection process for a session and return the first QR.
+ * Per docs, /qrcode requires this to be called at least once.
  */
-async function getQR({ sessionId, apiKey }) {
+async function connectSession({ sessionId }) {
   try {
-    const { data } = await client(apiKey).get(
+    const { data } = await client().post(
+      `/whatsapp-sessions/${sessionId}/connect`,
+    );
+    const p = data?.data || data || {};
+    return {
+      status: p.status || "connecting",
+      qr: p.qrCode || p.qr_code || null,
+    };
+  } catch (err) {
+    logger.warn(
+      "[wasender] connectSession failed",
+      err.response?.data || err.message,
+    );
+    return { status: "error", qr: null, lastError: err.message };
+  }
+}
+
+/**
+ * Get the current QR code and connection status.
+ * Wasender response shape: { success, data: { qrCode } } — status comes from /status.
+ */
+async function getQR({ sessionId }) {
+  try {
+    const { data } = await client().get(
       `/whatsapp-sessions/${sessionId}/qrcode`,
     );
     const payload = data?.data || data || {};
     return {
-      status: payload.status || "connecting",
-      qr: payload.qr_code || payload.qrCode || null, // data URL
+      status: payload.status || "qr",
+      qr: payload.qrCode || payload.qr_code || null,
       phoneNumber: payload.phone_number || null,
       displayName: payload.name || null,
     };
   } catch (err) {
-    logger.error("[wasender] getQR failed", err.response?.data || err.message);
-    return { status: "error", qr: null, lastError: err.message };
+    const upstream = err.response?.data;
+    const upstreamMsg = upstream?.message || "";
+    // "Session Not initialized" → kick off connect and try once more
+    if (
+      /not\s*initialized|not\s*initialised|no\s*subscription/i.test(upstreamMsg)
+    ) {
+      logger.info(
+        `[wasender] getQR upstream said '${upstreamMsg}' — calling /connect`,
+      );
+      const { qr, status } = await connectSession({ sessionId });
+      return { status, qr };
+    }
+    logger.error("[wasender] getQR failed", upstream || err.message);
+    return { status: "error", qr: null, lastError: upstreamMsg || err.message };
   }
 }
 
 /**
  * Get session status (without forcing QR fetch).
  */
-async function getStatus({ sessionId, apiKey }) {
+async function getStatus({ sessionId }) {
   try {
-    const { data } = await client(apiKey).get(
-      `/whatsapp-sessions/${sessionId}/status`,
-    );
+    const { data } = await client().get(`/whatsapp-sessions/${sessionId}`);
     const p = data?.data || data || {};
     return {
       status: p.status || "unknown",
@@ -125,9 +183,9 @@ async function getStatus({ sessionId, apiKey }) {
   }
 }
 
-async function deleteSession({ sessionId, apiKey }) {
+async function deleteSession({ sessionId }) {
   try {
-    await client(apiKey).delete(`/whatsapp-sessions/${sessionId}`);
+    await client().delete(`/whatsapp-sessions/${sessionId}`);
     return { success: true };
   } catch (err) {
     logger.warn(
@@ -335,6 +393,7 @@ function parseIncomingWebhook(payload) {
 
 module.exports = {
   createSession,
+  connectSession,
   getQR,
   getStatus,
   deleteSession,
