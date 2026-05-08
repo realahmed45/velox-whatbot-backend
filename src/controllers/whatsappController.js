@@ -932,7 +932,13 @@ const wasenderConnect = asyncHandler(async (req, res) => {
     res.json({ success: true, status: "pending" });
   } catch (err) {
     logger.error("[wasender] connect failed", err.message);
-    res.status(500).json({ message: err.message || "Could not start session" });
+    const isConfig = /WASENDER_ACCOUNT_TOKEN/i.test(err.message || "");
+    res.status(isConfig ? 503 : 500).json({
+      message: isConfig
+        ? "WhatsApp gateway is not configured yet. Please contact support."
+        : err.message || "Could not start session",
+      code: isConfig ? "WASENDER_NOT_CONFIGURED" : "WASENDER_CONNECT_FAILED",
+    });
   }
 });
 
