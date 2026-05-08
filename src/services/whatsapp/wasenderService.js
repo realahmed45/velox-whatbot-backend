@@ -44,18 +44,23 @@ const client = (apiKey) =>
  * Create a new WhatsApp session for a workspace.
  * Returns { sessionId, apiKey, webhookSecret }.
  */
-async function createSession({ workspaceId, webhookUrl }) {
+async function createSession({ workspaceId, webhookUrl, phoneNumber }) {
   if (!ACCOUNT_TOKEN) {
     throw new Error("WASENDER_ACCOUNT_TOKEN not configured");
+  }
+  if (!phoneNumber) {
+    throw new Error("phone_number is required to create a Wasender session");
   }
   const webhookSecret = crypto.randomBytes(24).toString("hex");
   try {
     const { data } = await client().post("/whatsapp-sessions", {
       name: `botlify-${workspaceId}`,
-      phone_number: undefined, // user picks during QR scan
+      phone_number: phoneNumber,
+      account_protection: true,
+      log_messages: true,
       webhook_url: webhookUrl,
+      webhook_enabled: true,
       webhook_secret: webhookSecret,
-      // Subscribe to message events only by default
       webhook_events: ["messages.upsert", "session.status"],
     });
     const session = data?.data || data;
@@ -65,13 +70,17 @@ async function createSession({ workspaceId, webhookUrl }) {
       webhookSecret,
     };
   } catch (err) {
-    logger.error(
-      "[wasender] createSession failed",
-      err.response?.data || err.message,
-    );
-    throw new Error(
-      err.response?.data?.message || "Could not create WasenderAPI session",
-    );
+    const payload = err.response?.data;
+    logger.error("[wasender] createSession failed", payload || err.message);
+    // Bubble up validation errors with field details so the UI can show them
+    let msg = payload?.message || "Could not create WasenderAPI session";
+    if (payload?.errors && typeof payload.errors === "object") {
+      const flat = Object.values(payload.errors).flat().filter(Boolean);
+      if (flat.length) msg = flat.join(" ");
+    }
+    const e = new Error(msg);
+    e.status = err.response?.status;
+    throw e;
   }
 }
 

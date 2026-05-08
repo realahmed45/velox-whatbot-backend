@@ -898,10 +898,20 @@ const wasenderConnect = asyncHandler(async (req, res) => {
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
 
   const reset = req.body?.reset === true;
+  const rawPhone = String(req.body?.phoneNumber || "").trim();
+  // Normalize to E.164 digits-only with leading + (Wasender expects e.g. +923001234567)
+  const phoneNumber = rawPhone ? "+" + rawPhone.replace(/[^\d]/g, "") : "";
 
   // If we already have a session and not resetting, just return current state.
   if (ws.whatsapp?.wasenderSessionId && !reset) {
     return res.json({ success: true, status: ws.whatsapp.status || "pending" });
+  }
+
+  if (!phoneNumber || phoneNumber.length < 8) {
+    return res.status(400).json({
+      message: "Please enter your WhatsApp phone number with country code.",
+      code: "PHONE_REQUIRED",
+    });
   }
 
   // Tear down existing session if resetting
@@ -921,10 +931,12 @@ const wasenderConnect = asyncHandler(async (req, res) => {
       await wasenderService.createSession({
         workspaceId: String(ws._id),
         webhookUrl: buildWasenderWebhookUrl(ws._id),
+        phoneNumber,
       });
     ws.whatsapp = ws.whatsapp || {};
     ws.whatsapp.type = "wasender";
     ws.whatsapp.status = "pending";
+    ws.whatsapp.phoneNumber = phoneNumber;
     ws.whatsapp.wasenderSessionId = encrypt(sessionId);
     ws.whatsapp.wasenderApiKey = encrypt(apiKey);
     ws.whatsapp.wasenderWebhookSecret = encrypt(webhookSecret);
