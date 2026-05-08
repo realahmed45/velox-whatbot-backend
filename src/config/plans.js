@@ -73,13 +73,13 @@ const PLANS = {
   free: {
     id: "free",
     name: "Free trial",
-    tagline: "7 days free — no card required",
+    tagline: "3 days free — then pick a plan",
     channel: "both",
     priceMonthly: 0,
     priceAnnual: 0,
     currency: "PKR",
     usd: 0,
-    trialDays: 7,
+    trialDays: 3,
     limits: {
       messages: 100,
       contacts: 50,
@@ -114,6 +114,7 @@ const PLANS = {
     priceAnnual: 2240 * 10, // 2 months free
     currency: "PKR",
     usd: 8,
+    trialDays: 3,
     limits: {
       messages: 1000,
       contacts: 1000,
@@ -180,6 +181,7 @@ const PLANS = {
     priceAnnual: 2240 * 10,
     currency: "PKR",
     usd: 8,
+    trialDays: 3,
     limits: {
       messages: 1000,
       contacts: 1000,
@@ -252,6 +254,7 @@ const PLANS = {
     priceAnnual: 4200 * 10,
     currency: "PKR",
     usd: 15,
+    trialDays: 3,
     limits: {
       messages: -1,
       contacts: -1,
@@ -294,6 +297,7 @@ const PLANS = {
     priceAnnual: 10920 * 10,
     currency: "PKR",
     usd: 39,
+    trialDays: 3,
     limits: {
       messages: -1,
       contacts: -1,
