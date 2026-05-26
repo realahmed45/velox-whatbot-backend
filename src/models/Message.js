@@ -78,11 +78,11 @@ const messageSchema = new mongoose.Schema(
 
     failureReason: String,
 
-    // Channel (whatsapp / instagram) — for multi-channel inbox
+    // Channel — for inbox
     channelType: {
       type: String,
-      enum: ["whatsapp", "instagram"],
-      default: "whatsapp",
+      enum: ["instagram", "messenger"],
+      default: "instagram",
     },
 
     // Free-form metadata (trigger type, keyword, provider ids, etc.)

@@ -11,7 +11,6 @@ module.exports = (connection) => {
       if (workspaceId) {
         await Workspace.findByIdAndUpdate(workspaceId, {
           "usage.messagesThisMonth": 0,
-          "usage.waMarketingThisMonth": 0,
           "usage.lastResetDate": new Date(),
           "smartOrders.monthlyOrderCount": 0,
           "smartOrders.monthlyResetAt": new Date(),
@@ -23,7 +22,6 @@ module.exports = (connection) => {
           { "subscription.status": "active" },
           {
             "usage.messagesThisMonth": 0,
-            "usage.waMarketingThisMonth": 0,
             "usage.lastResetDate": new Date(),
             "smartOrders.monthlyOrderCount": 0,
             "smartOrders.monthlyResetAt": new Date(),

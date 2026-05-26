@@ -91,7 +91,7 @@ const persistOrder = async ({
       workspaceId: workspace._id,
       contactId: contact?._id,
       conversationId: conversation?._id,
-      channel: channel || "whatsapp",
+      channel: channel || "instagram",
       items,
       itemsText,
       subtotal: Number(orderData.subtotal) || 0,
@@ -130,13 +130,6 @@ const persistOrder = async ({
     sendMerchantOrderEmail(workspace, order).catch((err) =>
       logger.warn(`[smartOrders] email failed: ${err.message}`),
     );
-
-    // Optional WhatsApp ping to the merchant's notifyPhone
-    if (workspace.smartOrders.notifyPhone) {
-      sendMerchantWaPing(workspace, order).catch((err) =>
-        logger.warn(`[smartOrders] merchant WA ping failed: ${err.message}`),
-      );
-    }
 
     logger.info(
       `[smartOrders] order ${order._id} captured (workspace ${workspace._id}, ${items.length} items, total ${order.subtotal})`,
@@ -217,7 +210,7 @@ const sendMerchantOrderEmail = async (workspace, order) => {
 };
 
 const sendMerchantWaPing = async (workspace, order) => {
-  const dispatcher = require("./whatsapp/dispatcher");
+  // WA pings removed — Instagram-only build
   const phone = workspace.smartOrders.notifyPhone;
   if (!phone) return;
   const summary = order.items
@@ -233,7 +226,7 @@ const sendMerchantWaPing = async (workspace, order) => {
     `*Items:*\n${summary}\n` +
     (order.subtotal ? `\n*Total:* ${order.subtotal} ${order.currency}\n` : "") +
     `\nView in dashboard: ${process.env.FRONTEND_URL || "https://botlify.site"}/dashboard/orders`;
-  await dispatcher.sendMessage(workspace, phone, { type: "text", text });
+  // WA send removed — Instagram-only build
 };
 
 const escapeHtml = (s) =>

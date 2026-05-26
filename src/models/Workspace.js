@@ -62,110 +62,6 @@ const instagramConnectionSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// WhatsApp connection (Meta Cloud API or UltraMsg)
-const whatsappConnectionSchema = new mongoose.Schema(
-  {
-    status: {
-      type: String,
-      enum: ["connected", "disconnected", "pending", "error"],
-      default: "disconnected",
-    },
-    type: {
-      type: String,
-      enum: [
-        "none",
-        "meta",
-        "ultramsg",
-        "cloud",
-        "kapso",
-        "baileys",
-        "wasender",
-      ],
-      default: "none",
-    },
-    // Meta Cloud API credentials (encrypted)
-    metaPhoneNumberId: { type: String, select: false },
-    metaAccessToken: { type: String, select: false },
-    metaWabaId: { type: String, select: false },
-    metaAppId: { type: String, select: false },
-    // UltraMsg (encrypted)
-    ultralmsgInstanceId: { type: String, select: false },
-    ultramsgToken: { type: String, select: false },
-    // Botlify Cloud (encrypted) — white-labeled QR-scan provider
-    cloudInstanceId: { type: String, select: false },
-    cloudApiToken: { type: String, select: false },
-    cloudWebhookToken: { type: String, select: false },
-    // Botlify Cloud Pro (Kapso — official Meta Cloud API, white-labeled)
-    // Customer & phone IDs are not secrets but we keep them select:false to
-    // avoid leaking via the standard sanitised response.
-    kapsoCustomerId: { type: String, select: false },
-    kapsoPhoneNumberId: { type: String, select: false },
-    kapsoWabaId: { type: String, select: false },
-    kapsoSetupLinkId: { type: String, select: false },
-    // WasenderAPI (paid QR-scan provider — encrypted)
-    wasenderApiKey: { type: String, select: false },
-    wasenderSessionId: { type: String, select: false },
-    wasenderWebhookSecret: { type: String, select: false },
-    kapsoConnectionType: {
-      type: String,
-      enum: ["coexistence", "dedicated", null],
-      default: null,
-    },
-    cloudState: {
-      type: String,
-      enum: [
-        "notAuthorized",
-        "authorized",
-        "blocked",
-        "sleepMode",
-        "starting",
-        "yellowCard",
-        "unknown",
-        null,
-      ],
-      default: null,
-    },
-    // Display
-    displayName: String,
-    phoneNumber: String, // E.164 format, e.g. +923001234567
-    profilePicture: String,
-    botActive: { type: Boolean, default: true },
-    connectedAt: Date,
-    lastMessageAt: Date,
-    webhookSubscribed: { type: Boolean, default: false },
-    lastWebhookAt: { type: Date, default: null },
-    // WhatsApp-specific automation
-    welcomeMessage: {
-      enabled: { type: Boolean, default: true },
-      message: {
-        type: String,
-        default:
-          "Hey {name}! 👋 Thanks for reaching out. How can I help you today?",
-      },
-    },
-    awayMessage: {
-      enabled: { type: Boolean, default: false },
-      message: {
-        type: String,
-        default:
-          "Thanks for your message {name}! 🌙 We're away right now but will get back to you soon.",
-      },
-    },
-    keywordTriggers: [
-      {
-        keyword: { type: String, required: true, trim: true },
-        replyMessage: { type: String, required: true },
-        enabled: { type: Boolean, default: true },
-        matchType: {
-          type: String,
-          enum: ["contains", "exact"],
-          default: "contains",
-        },
-      },
-    ],
-  },
-  { _id: false },
-);
 
 const workspaceSchema = new mongoose.Schema(
   {
@@ -212,17 +108,7 @@ const workspaceSchema = new mongoose.Schema(
     // Instagram connection
     instagram: instagramConnectionSchema,
 
-    // WhatsApp connection
-    whatsapp: whatsappConnectionSchema,
-
-    // Channel preference (which automation surface customer chose)
-    activeChannel: {
-      type: String,
-      enum: ["whatsapp", "instagram", "both"],
-      default: "instagram",
-    },
-
-    // AI provider settings — Instagram-scoped (legacy field shared with IG)
+    // AI provider settings
     aiSettings: {
       provider: {
         type: String,
@@ -251,35 +137,6 @@ const workspaceSchema = new mongoose.Schema(
       },
     },
 
-    // AI provider settings — WhatsApp-scoped (separate persona/FAQs/etc.)
-    aiSettingsWa: {
-      provider: {
-        type: String,
-        enum: ["groq", "openai", "gemini", "none"],
-        default: "groq",
-      },
-      model: { type: String, default: "llama-3.3-70b-versatile" },
-      systemPrompt: {
-        type: String,
-        default:
-          "You are a friendly, professional WhatsApp support agent. Keep replies short, warm, and helpful.",
-      },
-      businessContext: { type: String, default: "" },
-      faqs: [
-        {
-          question: String,
-          answer: String,
-        },
-      ],
-      temperature: { type: Number, default: 0.4 },
-      maxTokens: { type: Number, default: 240 },
-      enabled: { type: Boolean, default: true },
-      handoffKeywords: {
-        type: [String],
-        default: ["human", "agent", "support"],
-      },
-    },
-
     // Subscription
     subscription: {
       plan: {
@@ -288,10 +145,6 @@ const workspaceSchema = new mongoose.Schema(
           "free",
           "ig_starter",
           "ig_pro",
-          "wa_starter",
-          "wa_pro",
-          "bundle_pro",
-          "bundle_business",
           // legacy
           "starter",
           "growth",
@@ -317,10 +170,7 @@ const workspaceSchema = new mongoose.Schema(
     // Usage tracking (resets monthly)
     usage: {
       messagesThisMonth: { type: Number, default: 0 },
-      messagesLimit: { type: Number, default: 500 }, // Starter: 500
-      // WhatsApp marketing-conversation counter — protects margin against
-      // a single customer blasting paid Meta conversations beyond their plan.
-      waMarketingThisMonth: { type: Number, default: 0 },
+      messagesLimit: { type: Number, default: 500 },
       lastResetDate: { type: Date, default: Date.now },
     },
 

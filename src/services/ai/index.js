@@ -45,35 +45,20 @@ const fallbackReply = (contact) => {
   return `Hey ${first}! Thanks for your message — a teammate will get back to you very soon. 💙`;
 };
 
-/**
- * Pick the right AI config bag for the current channel.
- * - WhatsApp → aiSettingsWa (falls back to aiSettings if WA-specific not set)
- * - Instagram (or anything else) → aiSettings (falls back to legacy aiBot)
- */
-const pickAiCfg = (workspace, channel) => {
-  const ch = (channel || workspace.activeChannel || "instagram").toLowerCase();
-  if (ch === "whatsapp") {
-    return workspace.aiSettingsWa || workspace.aiSettings || {};
-  }
-  return workspace.aiSettings || workspace.aiBot || {};
-};
+const pickAiCfg = (workspace) => workspace.aiSettings || workspace.aiBot || {};
 
 /**
  * Build the system prompt from workspace.aiSettings (or legacy aiBot).
  */
-const buildSystemPrompt = (workspace, contact, channel) => {
-  const v2 = pickAiCfg(workspace, channel);
+const buildSystemPrompt = (workspace, contact) => {
+  const v2 = pickAiCfg(workspace);
   const legacy = workspace.aiBot || {};
   const ai = {
     systemPrompt: v2.systemPrompt || legacy.personality,
     businessContext: v2.businessContext || legacy.businessInfo,
     faqs: v2.faqs && v2.faqs.length ? v2.faqs : legacy.faqs,
   };
-  const channelEffective = (
-    channel ||
-    workspace.activeChannel ||
-    "instagram"
-  ).toLowerCase();
+  const channelEffective = "instagram";
   const lines = [
     ai.systemPrompt ||
       "You are a friendly, professional assistant. Keep replies short, warm, and helpful.",
@@ -117,7 +102,7 @@ const buildSystemPrompt = (workspace, contact, channel) => {
       "  1. The product(s) they want, including quantity and any variant (size, color)",
       "  2. Their full name",
       "  3. Complete delivery address",
-      "  4. A contact phone number (only ask if the channel isn't WhatsApp)",
+      "  4. A contact phone number",
       "  5. Preferred payment method (from the instructions above)",
       "",
       "Ask for missing fields one or two at a time — don't dump a long form. Confirm prices and totals as you go. Be conversational, not robotic.",
@@ -143,9 +128,7 @@ const buildSystemPrompt = (workspace, contact, channel) => {
   const handle =
     contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `The customer's identifier is: ${handle}.`);
-  lines.push(
-    `You are replying via ${channelEffective === "whatsapp" ? "WhatsApp" : channelEffective === "instagram" ? "Instagram DM" : "messaging"}.`,
-  );
+  lines.push("You are replying via Instagram DM.");
   lines.push(
     "Keep replies 1-3 sentences, natural, and warm. Never invent prices, links, addresses, or policies that you weren't told.",
   );
@@ -172,11 +155,10 @@ const generateReply = async ({
   history = [],
   userMessage,
   contact,
-  channel,
 }) => {
   const ai = {
     ...(workspace.aiBot || {}),
-    ...pickAiCfg(workspace, channel),
+    ...pickAiCfg(workspace),
   };
   // Map legacy field names
   if (!ai.handoffKeywords && workspace.aiBot?.escalateOnKeywords)
@@ -239,7 +221,7 @@ const generateReply = async ({
     };
   }
 
-  const systemPrompt = buildSystemPrompt(workspace, contact, channel);
+  const systemPrompt = buildSystemPrompt(workspace, contact);
 
   try {
     const response = await client.chat.completions.create({

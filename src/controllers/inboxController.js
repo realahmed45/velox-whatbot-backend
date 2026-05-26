@@ -3,7 +3,8 @@ const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const Contact = require("../models/Contact");
 const QuickReply = require("../models/QuickReply");
-const { sendMessage } = require("../services/whatsapp/dispatcher");
+const ig = require("../services/instagram");
+const { decrypt } = require("../utils/encryption");
 const { getIO } = require("../socket");
 
 // @GET /api/inbox — List conversations
@@ -11,8 +12,8 @@ const getConversations = asyncHandler(async (req, res) => {
   const { status, search, channel, page = 1, limit = 30 } = req.query;
   const filter = { workspaceId: req.workspace._id };
   if (status && status !== "all") filter.status = status;
-  if (channel && ["instagram", "whatsapp"].includes(channel)) {
-    filter.channelType = channel;
+  if (channel === "instagram") {
+    filter.channelType = "instagram";
   }
 
   let query = Conversation.find(filter)
@@ -153,26 +154,33 @@ const sendAgentMessage = asyncHandler(async (req, res) => {
   }
 
   const workspace = req.workspace;
-  const phone = conversation.phone;
 
-  // Send via WhatsApp
-  const payload = mediaUrl
-    ? { type: mediaType || "image", imageUrl: mediaUrl }
-    : { type: "text", text };
-
-  const result = await sendMessage(workspace, phone, payload);
+  // Send via Instagram DM
+  let result = { success: false, error: "No Instagram token" };
+  try {
+    const wsWithToken = await require("../models/Workspace").findById(workspace._id).select("+instagram.accessToken");
+    if (wsWithToken?.instagram?.accessToken) {
+      const token = decrypt(wsWithToken.instagram.accessToken);
+      const contact = await require("../models/Contact").findById(conversation.contactId).select("igUserId");
+      if (contact?.igUserId) {
+        result = await ig.sendDM(token, contact.igUserId, text || "");
+      }
+    }
+  } catch (e) {
+    result = { success: false, error: e.message };
+  }
 
   const message = await Message.create({
     workspaceId: workspace._id,
     conversationId: conversation._id,
     contactId: conversation.contactId,
     direction: "outbound",
-    type: payload.type,
+    type: mediaUrl ? (mediaType || "image") : "text",
     sender: "agent",
     text,
     mediaUrl,
+    channelType: "instagram",
     status: result.success ? "sent" : "failed",
-    whatsappMessageId: result.messageId,
     sentBy: req.user._id,
     failureReason: result.success ? undefined : result.error,
   });

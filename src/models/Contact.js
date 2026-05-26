@@ -71,7 +71,21 @@ const contactSchema = new mongoose.Schema(
 
     // Last automation trigger that touched this contact
     lastTriggerType: String,
-    source: { type: String, default: "instagram" },
+
+    // Which channel this contact was first seen on.
+    // Extend this enum when adding a new platform — no index change needed.
+    source: {
+      type: String,
+      enum: ["instagram", "messenger", "telegram", "manual", "import"],
+      default: "instagram",
+      index: true,
+    },
+
+    // Per-channel identity fields.
+    // Instagram: igUserId (IGSID), igUsername.
+    // WhatsApp: phone (E.164) — already top-level, doubles as WA identity.
+    // Future platforms: add messengerPsid, telegramChatId, etc. here.
+    // (A full channelIdentities map is the long-term refactor target.)
 
     // Free-form display name fallback
     username: { type: String, trim: true },

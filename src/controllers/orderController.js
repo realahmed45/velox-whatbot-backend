@@ -6,18 +6,18 @@ const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const logger = require("../utils/logger");
 
-// Try to send a confirmation/status message to the customer over the right channel
+// Try to send a confirmation/status message to the customer via Instagram DM
 const sendCustomerMessage = async (workspace, order, text) => {
   try {
-    const channel = order.channel;
-    if (channel === "whatsapp") {
-      const dispatcher = require("../services/whatsapp/dispatcher");
-      if (!order.customerPhone) return;
-      await dispatcher.sendMessage(workspace, order.customerPhone, {
-        type: "text",
-        text,
-      });
-      // Persist outgoing message in conversation if we have one
+    if (!order.contactId) return;
+    const ig = require("../services/instagram");
+    const { decrypt } = require("../utils/encryption");
+    const wsWithToken = await Workspace.findById(workspace._id).select("+instagram.accessToken");
+    if (!wsWithToken?.instagram?.accessToken) return;
+    const token = decrypt(wsWithToken.instagram.accessToken);
+    const contact = await Contact.findById(order.contactId).select("igUserId");
+    if (contact?.igUserId) {
+      await ig.sendDM(token, contact.igUserId, text);
       if (order.conversationId) {
         await Message.create({
           workspaceId: workspace._id,
@@ -26,20 +26,10 @@ const sendCustomerMessage = async (workspace, order, text) => {
           direction: "outbound",
           type: "text",
           sender: "system",
+          channelType: "instagram",
           text,
           status: "sent",
-          meta: { orderId: order._id },
         });
-      }
-    } else if (channel === "instagram") {
-      const ig = require("../services/instagram/metaService");
-      if (order.contactId) {
-        const contact = await Contact.findById(order.contactId).select(
-          "igUserId",
-        );
-        if (contact?.igUserId && ig?.sendMessage) {
-          await ig.sendMessage(workspace, contact.igUserId, { text });
-        }
       }
     }
   } catch (err) {
@@ -145,9 +135,7 @@ const updateOrder = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Order not found");
   }
-  const ws = await Workspace.findById(req.workspace._id).select(
-    "+whatsapp.metaAccessToken +whatsapp.metaPhoneNumberId +whatsapp.ultramsgToken +whatsapp.ultralmsgInstanceId +whatsapp.cloudApiToken +whatsapp.cloudInstanceId +whatsapp.wasenderApiKey",
-  );
+  const ws = req.workspace;
 
   const allowed = [
     "customerName",
@@ -227,10 +215,7 @@ const sendOrderMessage = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Order not found");
   }
-  const ws = await Workspace.findById(req.workspace._id).select(
-    "+whatsapp.metaAccessToken +whatsapp.metaPhoneNumberId +whatsapp.ultramsgToken +whatsapp.ultralmsgInstanceId +whatsapp.cloudApiToken +whatsapp.cloudInstanceId +whatsapp.wasenderApiKey",
-  );
-  await sendCustomerMessage(ws, order, text.trim());
+  await sendCustomerMessage(req.workspace, order, text.trim());
   res.json({ success: true });
 });
 

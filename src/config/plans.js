@@ -1,21 +1,11 @@
 /**
  * Botlify — Plan catalog (source of truth)
  *
- * Dual-channel pricing model:
- *   • Instagram-only plans   (zero infra COGS once Meta-approved)
- *   • WhatsApp-only plans    (Botlify Cloud per-number cost)
- *   • Bundle plans           (best margin — push these)
- *
- * Pricing in PKR (primary) with USD reference. 7-day free trial on every paid plan.
- *
- * Channel codes used elsewhere in the app:
- *   - "instagram"   → IG features
- *   - "whatsapp"    → WA features
- *   - "both"        → bundle
+ * Instagram-only pricing model.
+ * Pricing in PKR (primary) with USD reference. 3-day free trial on every paid plan.
  */
 
 const FEATURES = {
-  // IG / shared
   POST_COMMENT_KEYWORD: "post_comment_keyword",
   DM_KEYWORD: "dm_keyword",
   WELCOME_DM: "welcome_dm",
@@ -27,22 +17,14 @@ const FEATURES = {
   CONVERSATION_STARTERS: "conversation_starters",
   FALLBACK_AUTO_REPLY: "fallback_auto_reply",
   BUSINESS_HOURS: "business_hours",
-  // AI
   AI_BOT: "ai_bot",
   AI_PREMIUM: "ai_premium",
-  // WA
-  WA_QUICK_CONNECT: "wa_quick_connect",
-  WA_OFFICIAL_API: "wa_official_api",
-  WA_BROADCASTS: "wa_broadcasts",
-  WA_DRIP: "wa_drip",
-  // Engagement
   BROADCAST: "broadcast",
   DRIP_CAMPAIGNS: "drip_campaigns",
   ANALYTICS_ADVANCED: "analytics_advanced",
   TEAM_INBOX: "team_inbox",
   REMOVE_BRANDING: "remove_branding",
   CUSTOM_DOMAIN: "custom_domain",
-  // Ecommerce
   SMART_ORDERS: "smart_orders",
 };
 
@@ -62,14 +44,6 @@ const baseIgFeatures = [
   FEATURES.FALLBACK_AUTO_REPLY,
 ];
 
-const baseWaFeatures = [
-  FEATURES.WA_QUICK_CONNECT,
-  FEATURES.DM_KEYWORD,
-  FEATURES.WELCOME_DM,
-  FEATURES.FALLBACK_AUTO_REPLY,
-  FEATURES.BUSINESS_HOURS,
-];
-
 const PLANS = {
   // ─── Free trial / fallback ──────────────────────────────
   free: {
@@ -86,10 +60,8 @@ const PLANS = {
       messages: 100,
       contacts: 50,
       flows: 1,
-      numbers: 0, // cannot connect a real WA number on free
       teamSeats: 1,
       aiRepliesPerDay: 25,
-      waMarketingLimit: 0, // free trial cannot run paid marketing convos
       smartOrdersPerMonth: 5,
     },
     features: [
@@ -99,9 +71,8 @@ const PLANS = {
       FEATURES.AI_BOT,
     ],
     highlights: [
-      "Try every feature free for 7 days",
+      "Try every feature free for 3 days",
       "Connect Instagram (full access)",
-      "WhatsApp demo mode (no live number)",
       "AI replies — 25/day",
       "Botlify branding",
     ],
@@ -124,7 +95,6 @@ const PLANS = {
       flows: 5,
       teamSeats: 1,
       aiRepliesPerDay: 200,
-      waMarketingLimit: 0,
       smartOrdersPerMonth: 20,
     },
     features: [
@@ -156,7 +126,6 @@ const PLANS = {
       flows: -1,
       teamSeats: 3,
       aiRepliesPerDay: -1,
-      waMarketingLimit: 0, // IG-only plan; no WhatsApp marketing convos
       smartOrdersPerMonth: 200,
     },
     features: [
@@ -182,173 +151,6 @@ const PLANS = {
     ],
   },
 
-  // ─── WhatsApp plans ─────────────────────────────────────
-  wa_starter: {
-    id: "wa_starter",
-    name: "Basic — WhatsApp",
-    tagline: "WhatsApp only · your number on autopilot",
-    channel: "whatsapp",
-    priceMonthly: 2240, // ≈ $8 @ 280 PKR/USD
-    priceAnnual: 2240 * 10,
-    currency: "PKR",
-    usd: 8,
-    trialDays: 3,
-    limits: {
-      messages: 1000,
-      contacts: 1000,
-      flows: 5,
-      numbers: 1,
-      teamSeats: 1,
-      aiRepliesPerDay: 200,
-      waMarketingLimit: 500,
-      smartOrdersPerMonth: 20,
-    },
-    features: [...baseWaFeatures, FEATURES.AI_BOT, FEATURES.SMART_ORDERS],
-    highlights: [
-      "1 WhatsApp number",
-      "1,000 messages / month",
-      "AI smart replies (200/day)",
-      "Welcome message + keyword triggers",
-      "Out-of-hours auto-reply",
-      "Basic analytics",
-    ],
-  },
-  wa_pro: {
-    id: "wa_pro",
-    name: "WhatsApp Pro",
-    tagline: "Unlimited messaging + broadcasts",
-    channel: "whatsapp",
-    priceMonthly: 5499,
-    priceAnnual: 5499 * 10,
-    currency: "PKR",
-    usd: 19,
-    limits: {
-      messages: -1,
-      contacts: -1,
-      flows: -1,
-      numbers: 1,
-      teamSeats: 3,
-      aiRepliesPerDay: -1,
-      waMarketingLimit: 1500, // ~$57 max upstream cost
-      smartOrdersPerMonth: 200,
-    },
-    features: [
-      ...baseWaFeatures,
-      FEATURES.WA_OFFICIAL_API,
-      FEATURES.AI_BOT,
-      FEATURES.AI_PREMIUM,
-      FEATURES.WA_BROADCASTS,
-      FEATURES.WA_DRIP,
-      FEATURES.BROADCAST,
-      FEATURES.DRIP_CAMPAIGNS,
-      FEATURES.ANALYTICS_ADVANCED,
-      FEATURES.TEAM_INBOX,
-      FEATURES.REMOVE_BRANDING,
-      FEATURES.SMART_ORDERS,
-    ],
-    highlights: [
-      "1 WhatsApp number",
-      "Unlimited messages & contacts",
-      "Premium AI · context-aware",
-      "Broadcast campaigns",
-      "Drip / scheduled flows",
-      "Team inbox (3 seats)",
-      "Advanced analytics",
-      "Remove Botlify branding",
-    ],
-  },
-
-  // ─── Bundle (push hardest — best margin) ────────────────
-  bundle_pro: {
-    id: "bundle_pro",
-    name: "Pro — Both Channels",
-    tagline: "Instagram + WhatsApp · unlimited conversations",
-    channel: "both",
-    priceMonthly: 4200, // ≈ $15 @ 280 PKR/USD
-    priceAnnual: 4200 * 10,
-    currency: "PKR",
-    usd: 15,
-    trialDays: 3,
-    limits: {
-      messages: -1,
-      contacts: -1,
-      flows: -1,
-      numbers: 1,
-      teamSeats: 3,
-      aiRepliesPerDay: -1,
-      waMarketingLimit: 1500, // ~$57 max upstream cost
-      smartOrdersPerMonth: 200,
-    },
-    features: [
-      ...baseIgFeatures,
-      ...baseWaFeatures,
-      FEATURES.AI_BOT,
-      FEATURES.AI_PREMIUM,
-      FEATURES.WA_BROADCASTS,
-      FEATURES.WA_DRIP,
-      FEATURES.BROADCAST,
-      FEATURES.DRIP_CAMPAIGNS,
-      FEATURES.ANALYTICS_ADVANCED,
-      FEATURES.TEAM_INBOX,
-      FEATURES.REMOVE_BRANDING,
-      FEATURES.SMART_ORDERS,
-    ],
-    highlights: [
-      "Everything in IG Pro + WA Pro",
-      "1 WhatsApp number",
-      "Unlimited messages on both channels",
-      "Premium AI on both channels",
-      "Broadcasts + drip on both",
-      "Team inbox (3 seats)",
-      "Save vs buying separately",
-    ],
-    recommended: true,
-  },
-  bundle_business: {
-    id: "bundle_business",
-    name: "Business",
-    tagline: "3 WhatsApp numbers + Instagram · for growing teams",
-    channel: "both",
-    priceMonthly: 10920, // ≈ $39 @ 280 PKR/USD
-    priceAnnual: 10920 * 10,
-    currency: "PKR",
-    usd: 39,
-    trialDays: 3,
-    limits: {
-      messages: -1,
-      contacts: -1,
-      flows: -1,
-      numbers: 3,
-      teamSeats: 10,
-      aiRepliesPerDay: -1,
-      waMarketingLimit: 5000,
-      smartOrdersPerMonth: -1,
-    },
-    features: [
-      ...baseIgFeatures,
-      ...baseWaFeatures,
-      FEATURES.AI_BOT,
-      FEATURES.AI_PREMIUM,
-      FEATURES.WA_BROADCASTS,
-      FEATURES.WA_DRIP,
-      FEATURES.WA_OFFICIAL_API,
-      FEATURES.BROADCAST,
-      FEATURES.DRIP_CAMPAIGNS,
-      FEATURES.ANALYTICS_ADVANCED,
-      FEATURES.TEAM_INBOX,
-      FEATURES.REMOVE_BRANDING,
-      FEATURES.CUSTOM_DOMAIN,
-      FEATURES.SMART_ORDERS,
-    ],
-    highlights: [
-      "Everything in Pro \u2014 Both Channels",
-      "3 WhatsApp numbers",
-      "Team inbox (10 seats)",
-      "Custom domain / white-label",
-      "Priority support",
-    ],
-    premium: true,
-  },
 };
 
 // ─── Legacy plan key aliases (back-compat for older subscriptions) ──
@@ -356,8 +158,8 @@ const LEGACY_ALIASES = {
   starter: "free",
   growth: "ig_starter",
   scale: "ig_pro",
-  business: "bundle_pro",
-  agency: "bundle_business",
+  business: "ig_pro",
+  agency: "ig_pro",
 };
 
 const resolvePlanId = (planId) => {
@@ -374,27 +176,12 @@ const planHasFeature = (planId, feature) => {
   return !!p && p.features.includes(feature);
 };
 
-const planSupportsChannel = (planId, channel) => {
-  const p = getPlan(planId);
-  if (!p) return false;
-  if (p.channel === "both") return true;
-  return p.channel === channel;
-};
-
-const planAllowsWhatsAppLiveNumber = (planId) => {
-  const p = getPlan(planId);
-  if (!p) return false;
-  return (p.limits?.numbers || 0) > 0 && planSupportsChannel(p.id, "whatsapp");
-};
+const planSupportsChannel = (_planId, channel) => channel === "instagram";
 
 const PLAN_KEYS_FOR_ENUM = [
   "free",
   "ig_starter",
   "ig_pro",
-  "wa_starter",
-  "wa_pro",
-  "bundle_pro",
-  "bundle_business",
   // legacy
   "starter",
   "growth",
@@ -421,5 +208,4 @@ module.exports = {
   getPlan,
   planHasFeature,
   planSupportsChannel,
-  planAllowsWhatsAppLiveNumber,
 };

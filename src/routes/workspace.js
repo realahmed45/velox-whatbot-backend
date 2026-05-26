@@ -23,18 +23,6 @@ router.patch("/:workspaceId/activation", c.updateActivation);
 router.put("/:workspaceId/ai-knowledge", requireOwner, c.updateAiKnowledge);
 router.put("/:workspaceId/smart-orders", requireOwner, c.updateSmartOrders);
 
-// WhatsApp
-router.post("/:workspaceId/connect/ultramsg", requireOwner, c.connectUltramsg);
-router.get("/:workspaceId/connect/ultramsg/qr", requireOwner, c.getUltramsgQR);
-router.post("/:workspaceId/connect/meta", requireOwner, c.connectMeta);
-router.post("/:workspaceId/connect-ultramsg", requireOwner, c.connectUltramsg);
-router.post("/:workspaceId/connect-meta", requireOwner, c.connectMeta);
-router.post(
-  "/:workspaceId/disconnect-whatsapp",
-  requireOwner,
-  c.disconnectWhatsApp,
-);
-
 // Team / onboarding
 router.post("/:workspaceId/members/invite", requireOwner, c.inviteMember);
 router.delete("/:workspaceId/members/:userId", requireOwner, c.removeMember);

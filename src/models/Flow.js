@@ -129,6 +129,16 @@ const flowSchema = new mongoose.Schema(
     },
     name: { type: String, required: true, trim: true },
     description: String,
+
+    // Which platform this flow runs on. "all" = channel-agnostic (legacy default).
+    // When adding platform #3 just extend this enum — no other change needed.
+    channel: {
+      type: String,
+      enum: ["all", "instagram", "messenger", "telegram"],
+      default: "instagram",
+      index: true,
+    },
+
     status: {
       type: String,
       enum: ["draft", "active", "archived"],

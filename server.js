@@ -35,7 +35,6 @@ const integrationRoutes = require("./src/routes/integrations");
 const linkInBioRoutes = require("./src/routes/linkInBio");
 const publicRoutes = require("./src/routes/publicRoutes");
 const referralRoutes = require("./src/routes/referral");
-const whatsappRoutes = require("./src/routes/whatsapp");
 
 const app = express();
 const server = http.createServer(app);
@@ -96,10 +95,8 @@ app.use(
 );
 
 // ─── Body Parsing ──────────────────────────────────────────
-// Instagram webhook needs raw body for Meta signature verification
+// Instagram webhook needs raw body for signature verification
 app.use("/api/instagram/webhook", express.raw({ type: "application/json" }));
-// WhatsApp Cloud API webhook also needs raw body for signature verification
-app.use("/api/whatsapp/webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -186,7 +183,6 @@ app.use("/api/integrations", integrationRoutes);
 app.use("/api/bio", linkInBioRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/referral", referralRoutes);
-app.use("/api/whatsapp", whatsappRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
@@ -262,20 +258,7 @@ logger.info(
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  logger.info(`Flowgram API running on port ${PORT} [${process.env.NODE_ENV}]`);
-
-  // Bootstrap Baileys WhatsApp sessions for previously-connected workspaces.
-  // Delay a few seconds so DB connection is fully ready.
-  setTimeout(() => {
-    try {
-      const baileysService = require("./src/services/whatsapp/baileysService");
-      baileysService
-        .bootstrapSessions()
-        .catch((err) => logger.error("[baileys] bootstrap error", err));
-    } catch (err) {
-      logger.error("[baileys] failed to load service for bootstrap", err);
-    }
-  }, 5000);
+  logger.info(`Botlify API running on port ${PORT} [${process.env.NODE_ENV}]`);
 });
 
 // ─── Graceful Shutdown ─────────────────────────────────────

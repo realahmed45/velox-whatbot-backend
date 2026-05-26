@@ -4,7 +4,9 @@ const asyncHandler = require("express-async-handler");
 const { protect, requireWorkspace } = require("../middleware/auth");
 const BroadcastCampaign = require("../models/BroadcastCampaign");
 const Contact = require("../models/Contact");
-const { sendMessage } = require("../services/whatsapp/dispatcher");
+const ig = require("../services/instagram");
+const { decrypt } = require("../utils/encryption");
+const Workspace = require("../models/Workspace");
 
 router.use(protect);
 router.use(requireWorkspace);
@@ -79,7 +81,7 @@ router.post(
     if (seg.type === "date_range")
       filter[seg.dateField] = { $gte: seg.dateFrom, $lte: seg.dateTo };
 
-    const contacts = await Contact.find(filter).select("phone");
+    const contacts = await Contact.find(filter).select("phone igUserId");
     campaign.stats.totalTargeted = contacts.length;
     campaign.status = "sending";
     campaign.sentAt = new Date();
@@ -91,19 +93,23 @@ router.post(
       campaign,
     });
 
-    // Send in background
+    // Send via Instagram DM in background
     setImmediate(async () => {
       let sentCount = 0;
-      for (const contact of contacts) {
-        try {
-          const result = await sendMessage(req.workspace, contact.phone, {
-            type: "text",
-            text: campaign.message,
-          });
-          if (result.success) sentCount++;
-          await new Promise((r) => setTimeout(r, 200)); // rate limiting: 5/sec
-        } catch {}
-      }
+      try {
+        const wsWithToken = await Workspace.findById(req.workspace._id).select("+instagram.accessToken");
+        const token = wsWithToken?.instagram?.accessToken ? decrypt(wsWithToken.instagram.accessToken) : null;
+        if (token) {
+          for (const contact of contacts) {
+            if (!contact.igUserId) continue;
+            try {
+              const result = await ig.sendDM(token, contact.igUserId, campaign.message);
+              if (result.success) sentCount++;
+              await new Promise((r) => setTimeout(r, 300)); // rate limiting
+            } catch {}
+          }
+        }
+      } catch {}
       campaign.status = "sent";
       campaign.stats.sent = sentCount;
       await campaign.save();

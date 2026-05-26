@@ -18,24 +18,9 @@ const REDIRECT_URI = process.env.IG_OAUTH_REDIRECT_URI;
 const WEBHOOK_VERIFY_TOKEN =
   process.env.IG_WEBHOOK_VERIFY_TOKEN || "botlify_webhook_2026";
 
-// Best-effort lookup of a customer's IG profile by IGSID using the workspace's
-// stored access token. Returns { name, profilePic } or empty object on failure.
-// Instagram Login API does NOT expose `username` for DM senders — only `name`
-// and `profile_pic`. We use the name as the contact display name.
-const lookupIgProfile = async (ws, igsid) => {
-  try {
-    if (!ws?.instagram?.accessToken || !igsid) return {};
-    const token = decrypt(ws.instagram.accessToken);
-    const meta = require("../services/instagram/metaService");
-    const profile = await meta.getIgUserProfile(token, igsid);
-    return {
-      name: profile?.name || null,
-      profilePic: profile?.profile_pic || null,
-    };
-  } catch {
-    return {};
-  }
-};
+// Profile lookup is not available via Zernio — return empty object.
+// Sender name is provided directly in the webhook event payload.
+const lookupIgProfile = async (_ws, _igsid) => ({});
 
 // ── GET /api/instagram/connect/oauth-url ─────────────────────────────────────
 // If a hosted provider is configured (BOTLIFY_IG_PROVIDER_API_KEY) we return

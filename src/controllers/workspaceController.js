@@ -2,7 +2,6 @@ const asyncHandler = require("express-async-handler");
 const Workspace = require("../models/Workspace");
 const User = require("../models/User");
 const { encrypt, decrypt } = require("../utils/encryption");
-const ultramsgService = require("../services/whatsapp/ultramsgService");
 const { sendTeamInviteEmail } = require("../services/emailService");
 const { generateToken } = require("../utils/crypto");
 
@@ -59,23 +58,13 @@ const createWorkspace = asyncHandler(async (req, res) => {
 const getWorkspaces = asyncHandler(async (req, res) => {
   const workspaces = await Workspace.find({
     $or: [{ owner: req.user._id }, { "members.user": req.user._id }],
-  }).select("-whatsapp.metaAccessToken -whatsapp.ultramsgToken");
-
+  });
   res.json({ success: true, workspaces });
 });
 
 // @GET /api/workspaces/:workspaceId — Get single workspace
 const getWorkspace = asyncHandler(async (req, res) => {
-  const workspace = req.workspace;
-  const safeWorkspace = workspace.toObject();
-  // Strip encrypted credentials from response
-  if (safeWorkspace.whatsapp) {
-    delete safeWorkspace.whatsapp.metaAccessToken;
-    delete safeWorkspace.whatsapp.ultramsgToken;
-    delete safeWorkspace.whatsapp.ultralmsgInstanceId;
-    delete safeWorkspace.whatsapp.metaPhoneNumberId;
-  }
-  res.json({ success: true, workspace: safeWorkspace });
+  res.json({ success: true, workspace: req.workspace });
 });
 
 // @PUT /api/workspaces/:workspaceId — Update workspace settings
@@ -89,9 +78,7 @@ const updateWorkspace = asyncHandler(async (req, res) => {
     "industry",
     "language",
     "branding",
-    "activeChannel",
     "aiSettings",
-    "aiSettingsWa",
   ];
   const updates = {};
   allowed.forEach((field) => {
@@ -106,100 +93,6 @@ const updateWorkspace = asyncHandler(async (req, res) => {
   res.json({ success: true, workspace });
 });
 
-// @POST /api/workspaces/:workspaceId/connect/ultramsg — Connect UltraMsg (Free tier)
-const connectUltramsg = asyncHandler(async (req, res) => {
-  const { instanceId, token } = req.body;
-  if (!instanceId || !token) {
-    res.status(400);
-    throw new Error("UltraMsg instance ID and token required");
-  }
-  if (req.workspace.subscription.plan !== "starter") {
-    res.status(400);
-    throw new Error("UltraMsg connection is only for the Starter plan");
-  }
-
-  // Test the connection
-  const status = await ultramsgService.getInstanceStatus({ instanceId, token });
-
-  const workspace = await Workspace.findByIdAndUpdate(
-    req.workspace._id,
-    {
-      "whatsapp.type": "ultramsg",
-      "whatsapp.status": status.connected ? "connected" : "disconnected",
-      "whatsapp.ultralmsgInstanceId": encrypt(instanceId),
-      "whatsapp.ultramsgToken": encrypt(token),
-      "whatsapp.connectedAt": status.connected ? new Date() : undefined,
-    },
-    { new: true },
-  );
-
-  res.json({
-    success: true,
-    connected: status.connected,
-    status: status.accountStatus,
-    message: status.connected
-      ? "WhatsApp connected successfully!"
-      : "Connection saved. Waiting for QR scan.",
-  });
-});
-
-// @GET /api/workspaces/:workspaceId/connect/ultramsg/qr — Get QR code
-const getUltramsgQR = asyncHandler(async (req, res) => {
-  const ws = await Workspace.findById(req.workspace._id).select(
-    "+whatsapp.ultralmsgInstanceId +whatsapp.ultramsgToken",
-  );
-  if (!ws.whatsapp?.ultralmsgInstanceId) {
-    res.status(400);
-    throw new Error("UltraMsg not configured");
-  }
-
-  const instanceId = decrypt(ws.whatsapp.ultralmsgInstanceId);
-  const token = decrypt(ws.whatsapp.ultramsgToken);
-  const result = await ultramsgService.getQRCodeImage({ instanceId, token });
-
-  res.json({ success: true, ...result });
-});
-
-// @POST /api/workspaces/:workspaceId/connect/meta — Connect Meta Cloud API
-const connectMeta = asyncHandler(async (req, res) => {
-  const { phoneNumberId, wabaId, accessToken } = req.body;
-  if (!phoneNumberId || !accessToken) {
-    res.status(400);
-    throw new Error("Phone Number ID and Access Token required");
-  }
-
-  // Test the connection by calling Meta API
-  try {
-    const axios = require("axios");
-    const testResponse = await axios.get(
-      `https://graph.facebook.com/${process.env.META_API_VERSION || "v19.0"}/${phoneNumberId}`,
-      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 10000 },
-    );
-    const displayPhone = testResponse.data?.display_phone_number;
-
-    await Workspace.findByIdAndUpdate(req.workspace._id, {
-      "whatsapp.type": "meta",
-      "whatsapp.status": "connected",
-      "whatsapp.phoneNumber": displayPhone || "",
-      "whatsapp.displayName": testResponse.data?.verified_name || "",
-      "whatsapp.metaPhoneNumberId": encrypt(phoneNumberId),
-      "whatsapp.metaWabaId": encrypt(wabaId || ""),
-      "whatsapp.metaAccessToken": encrypt(accessToken),
-      "whatsapp.connectedAt": new Date(),
-    });
-
-    res.json({
-      success: true,
-      message: "Meta WhatsApp API connected!",
-      phoneNumber: displayPhone,
-    });
-  } catch (err) {
-    res.status(400);
-    throw new Error(
-      "Failed to verify Meta credentials. Please check your Phone Number ID and Access Token.",
-    );
-  }
-});
 
 // @POST /api/workspaces/:workspaceId/members/invite — Invite team member
 const inviteMember = asyncHandler(async (req, res) => {
@@ -276,12 +169,6 @@ const updateOnboardingStep = asyncHandler(async (req, res) => {
   res.json({ success: true, step });
 });
 
-// Disconnect WhatsApp
-const disconnectWhatsApp = asyncHandler(async (req, res) => {
-  req.workspace.whatsapp = { type: null, status: "disconnected" };
-  await req.workspace.save();
-  res.json({ success: true, message: "WhatsApp disconnected" });
-});
 
 // @PUT /api/workspaces/:workspaceId/dm-messages — Save DM automation messages
 const saveDmMessages = asyncHandler(async (req, res) => {
@@ -572,10 +459,6 @@ module.exports = {
   updateActivation,
   updateAiKnowledge,
   updateSmartOrders,
-  connectUltramsg,
-  getUltramsgQR,
-  connectMeta,
-  disconnectWhatsApp,
   saveDmMessages,
   saveAutomationSettings,
   getKeywordTriggers,

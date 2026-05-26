@@ -40,8 +40,8 @@ const orderSchema = new mongoose.Schema(
     },
     channel: {
       type: String,
-      enum: ["whatsapp", "instagram", "messenger", "manual"],
-      default: "whatsapp",
+      enum: ["instagram", "messenger", "manual"],
+      default: "instagram",
     },
 
     // Items + totals
