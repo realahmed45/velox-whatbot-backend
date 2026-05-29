@@ -276,9 +276,55 @@ const addNote = asyncHandler(async (req, res) => {
   res.json({ success: true, contact });
 });
 
+// @POST /api/contacts — Manually add a contact
+const createContact = asyncHandler(async (req, res) => {
+  const { name, username, email, phone, tags, source } = req.body;
+  if (!username && !phone) {
+    res.status(400);
+    throw new Error("An Instagram username or phone number is required");
+  }
+
+  const igUsername = username
+    ? String(username).trim().replace(/^@/, "")
+    : undefined;
+
+  // Avoid duplicates within the workspace.
+  if (igUsername) {
+    const existing = await Contact.findOne({
+      workspaceId: req.workspace._id,
+      igUsername,
+      isDeleted: false,
+    });
+    if (existing) {
+      res.status(409);
+      throw new Error("A contact with that username already exists");
+    }
+  }
+
+  const contact = await Contact.create({
+    workspaceId: req.workspace._id,
+    name: name || igUsername || "New Contact",
+    igUsername,
+    username: igUsername,
+    // Manual contacts have no real IG user id yet — namespace a placeholder so
+    // the unique igUserId lookups in the engine never collide.
+    igUserId: igUsername ? `manual:${igUsername}` : undefined,
+    email: email || undefined,
+    phone: phone || undefined,
+    tags: Array.isArray(tags)
+      ? tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean)
+      : [],
+    source: source || "manual",
+    status: "new",
+  });
+
+  res.status(201).json({ success: true, contact });
+});
+
 module.exports = {
   getContacts,
   getContact,
+  createContact,
   updateContact,
   deleteContact,
   exportContacts,

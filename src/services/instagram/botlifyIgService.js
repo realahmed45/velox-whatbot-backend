@@ -239,7 +239,12 @@ const subscribeWebhook = async (accountIdOrToken, webhookUrl) => {
   const { data } = await client().post("/webhooks/settings", {
     accountId,
     url: webhookUrl,
-    events: ["message.received", "comment.received", "story.mention"],
+    events: [
+      "message.received",
+      "comment.received",
+      "story.mention",
+      "story.reply",
+    ],
   });
   return data;
 };

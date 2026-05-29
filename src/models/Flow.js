@@ -51,7 +51,16 @@ const nodeDataSchema = new mongoose.Schema(
     conditionVariable: String,
     conditionOperator: {
       type: String,
-      enum: ["contains", "equals", "starts_with", "ends_with", "not_contains"],
+      enum: [
+        "contains",
+        "equals",
+        "not_equals",
+        "starts_with",
+        "ends_with",
+        "not_contains",
+        "greater_than",
+        "less_than",
+      ],
     },
     conditionValue: String,
   },
@@ -64,7 +73,7 @@ const flowNodeSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: ["trigger", "action", "condition"],
-      required: true,
+      default: "action",
     },
     nodeType: {
       type: String,
@@ -82,6 +91,9 @@ const flowNodeSchema = new mongoose.Schema(
         "time_condition",
         "no_reply",
         "button_click",
+        // Triggers — builder-friendly aliases
+        "keyword_trigger",
+        "any_message_trigger",
         // Actions
         "send_text",
         "send_image",

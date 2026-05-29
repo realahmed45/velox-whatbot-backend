@@ -1286,15 +1286,37 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     switch (evt.type) {
       case "message.received":
       case "message":
-      case "dm":
+      case "dm": {
+        const msg = evt.message || {};
+        // Zernio delivers story-replies and shared-posts inside message.received.
+        // Detect the sub-type so the right automation handler runs.
+        const attachments = msg.attachments || evt.attachments || [];
+        const attachType = Array.isArray(attachments)
+          ? attachments[0]?.type
+          : attachments?.type;
+        const isStoryReply =
+          !!(msg.reply_to?.story || msg.replyTo?.story || msg.story) ||
+          attachType === "story_reply" ||
+          attachType === "story_mention";
+        const isShare =
+          attachType === "share" ||
+          attachType === "story" ||
+          attachType === "template" ||
+          !!msg.shared_post;
+
+        let innerType = "direct_message";
+        if (isStoryReply) innerType = "story_reply";
+        else if (isShare) innerType = "share_to_story";
+
         await handleWebhookEvent(target._id, {
-          type: "direct_message",
+          type: innerType,
           senderId,
           senderUsername: evt.sender?.username || null,
           senderName: evt.sender?.name || null,
-          text: evt.message?.text || evt.text || "",
+          text: msg.text || evt.text || "",
         });
         break;
+      }
       case "comment.received":
       case "comment":
         await handleWebhookEvent(target._id, {

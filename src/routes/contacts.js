@@ -4,6 +4,7 @@ const { protect, requireWorkspace } = require("../middleware/auth");
 const {
   getContacts,
   getContact,
+  createContact,
   updateContact,
   deleteContact,
   exportContacts,
@@ -20,7 +21,7 @@ router.use(requireWorkspace);
 
 router.get("/export", exportContacts);
 router.post("/import", importContacts);
-router.route("/").get(getContacts);
+router.route("/").get(getContacts).post(createContact);
 router.route("/:id").get(getContact).put(updateContact).delete(deleteContact);
 router.post("/:id/tags", addTag);
 router.delete("/:id/tags/:tag", removeTag);

@@ -20,6 +20,7 @@ const Conversation = require("../../models/Conversation");
 const Message = require("../../models/Message");
 const { DripCampaign, DripEnrollment } = require("../../models/DripCampaign");
 const Giveaway = require("../../models/Giveaway");
+const Flow = require("../../models/Flow");
 const { sendDM } = require(".");
 const { decrypt } = require("../../utils/encryption");
 const logger = require("../../utils/logger");
@@ -63,13 +64,57 @@ const matchKeyword = (text, kw, matchType = "contains") => {
   if (!text || !kw) return false;
   const a = text.toLowerCase().trim();
   const b = kw.toLowerCase().trim();
-  return matchType === "exact" ? a === b : a.includes(b);
+  switch (matchType) {
+    case "exact":
+      return a === b;
+    case "starts_with":
+      return a.startsWith(b);
+    case "ends_with":
+      return a.endsWith(b);
+    default:
+      return a.includes(b);
+  }
+};
+
+// Normalize a stored business-hours row to a canonical shape. We tolerate both
+// the model shape ({ day:"monday", isOpen, openTime, closeTime }) and the older
+// UI shape ({ day:"mon", enabled, start, end }) so saved schedules always work.
+const DAY_ALIASES = {
+  sun: "sunday",
+  mon: "monday",
+  tue: "tuesday",
+  wed: "wednesday",
+  thu: "thursday",
+  fri: "friday",
+  sat: "saturday",
+};
+const normalizeHoursRow = (row = {}) => {
+  const rawDay = String(row.day || "").toLowerCase();
+  const day = DAY_ALIASES[rawDay] || rawDay;
+  const isOpen = row.isOpen ?? row.enabled ?? false;
+  const openTime = row.openTime || row.start || "09:00";
+  const closeTime = row.closeTime || row.end || "17:00";
+  return { day, isOpen, openTime, closeTime };
 };
 
 const isWithinBusinessHours = (workspace) => {
-  const hours = workspace.businessHours || [];
+  // If the merchant hasn't switched on business hours, treat as always-open so
+  // the away reply never fires unexpectedly.
+  if (!workspace.settings?.businessHoursEnabled) return true;
+  const hours = (workspace.businessHours || []).map(normalizeHoursRow);
   if (!hours.length) return true;
-  const now = new Date();
+
+  // Evaluate "now" in the workspace timezone when one is configured.
+  const tz = workspace.timezone || workspace.settings?.timezone;
+  let now = new Date();
+  if (tz) {
+    try {
+      now = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+    } catch {
+      /* invalid tz — fall back to server time */
+    }
+  }
+
   const days = [
     "sunday",
     "monday",
@@ -495,7 +540,7 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     .reverse()
     .map((m) => ({
       role: m.direction === "outbound" ? "assistant" : "user",
-      content: m.content?.text || "",
+      content: m.text || m.content?.text || "",
     }))
     .filter((m) => m.content);
 
@@ -651,6 +696,343 @@ const enrichMessageSentiment = async (workspace, messageDoc, text) => {
   } catch (err) {
     logger.debug(`[sentiment] ${err.message}`);
   }
+};
+
+// ── Visual Flow execution engine ─────────────────────────────────────────────
+// Runs flows built in the drag-and-drop Flow Builder against inbound DMs. A flow
+// is a graph of nodes connected by edges. We find a matching trigger node, then
+// walk the graph executing action nodes (send text/image, tag, delay, ask a
+// question, branch on a condition). Multi-step flows that wait for the user's
+// reply persist their resume point on the conversation (`metadata.activeFlow`).
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const renderVars = (tpl, variables = {}) =>
+  (tpl || "").replace(/\{\{?\s*(\w+)\s*\}?\}/g, (m, k) =>
+    variables[k] !== undefined ? variables[k] : m,
+  );
+
+const flowNodeById = (flow, id) => flow.nodes.find((n) => n.id === id);
+
+const flowNextNode = (flow, nodeId, handle) => {
+  const edges = flow.edges.filter((e) => e.source === nodeId);
+  // When a handle (e.g. condition true/false) is given, prefer the matching edge
+  const edge =
+    (handle != null &&
+      edges.find((e) => (e.sourceHandle || e.label) === handle)) ||
+    edges[0];
+  return edge ? flowNodeById(flow, edge.target) : null;
+};
+
+const TRIGGER_NODE_TYPES = new Set([
+  "keyword_trigger",
+  "any_message_trigger",
+  "keyword_match",
+  "keyword_dm",
+  "any_message",
+  "first_message",
+  "direct_message",
+  "story_mention",
+  "post_comment",
+  "story_reply",
+  "button_click",
+]);
+
+const isFlowTriggerNode = (n) =>
+  n.type === "trigger" || TRIGGER_NODE_TYPES.has(n.nodeType);
+
+const flowTriggerMatches = (node, { text, isFirstMessage }) => {
+  const nt = node.nodeType;
+  if (nt === "first_message") return !!isFirstMessage;
+  if (
+    nt === "any_message" ||
+    nt === "any_message_trigger" ||
+    nt === "direct_message"
+  )
+    return true;
+  if (nt === "keyword_trigger" || nt === "keyword_match" || nt === "keyword_dm") {
+    const kws = node.data?.keywords || [];
+    const mt = node.data?.matchType || "contains";
+    if (!kws.length) return false;
+    return kws.some((k) => matchKeyword(text, k, mt));
+  }
+  return false;
+};
+
+const parseFlowOptions = (data = {}) => {
+  if (Array.isArray(data.buttons) && data.buttons.length) {
+    return data.buttons.map((b, i) => ({
+      label: b.label || b.title || `Option ${i + 1}`,
+      nextNodeId: b.nextNodeId,
+    }));
+  }
+  if (Array.isArray(data.listSections) && data.listSections.length) {
+    return data.listSections
+      .flatMap((s) => s.rows || [])
+      .map((r) => ({ label: r.title, nextNodeId: r.nextNodeId }));
+  }
+  const raw = data.buttonsJson || data.itemsJson;
+  if (raw) {
+    return String(raw)
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((label) => ({ label }));
+  }
+  return [];
+};
+
+const evalCondition = (left, op, right) => {
+  const a = String(left ?? "").toLowerCase();
+  const b = String(right ?? "").toLowerCase();
+  const na = parseFloat(left),
+    nb = parseFloat(right);
+  switch (op) {
+    case "equals":
+      return a === b;
+    case "not_equals":
+    case "not_contains":
+      return op === "not_equals" ? a !== b : !a.includes(b);
+    case "contains":
+      return a.includes(b);
+    case "starts_with":
+      return a.startsWith(b);
+    case "ends_with":
+      return a.endsWith(b);
+    case "greater_than":
+      return !isNaN(na) && !isNaN(nb) && na > nb;
+    case "less_than":
+      return !isNaN(na) && !isNaN(nb) && na < nb;
+    default:
+      return false;
+  }
+};
+
+const executeFlowNode = async (flow, node, ctx) => {
+  const { workspace, contact, conv, variables } = ctx;
+  const d = node.data || {};
+  const send = (text) =>
+    sendAndLog({
+      workspace,
+      contact,
+      conversation: conv,
+      text,
+      triggerType: "flow",
+      keyword: String(flow._id),
+    });
+
+  switch (node.nodeType) {
+    case "send_text": {
+      const msg = renderVars(d.message || d.content || d.text, variables);
+      if (msg) await send(msg);
+      return { next: true };
+    }
+    case "send_image": {
+      const url = d.imageUrl || d.url;
+      const caption = renderVars(d.caption || d.content || "", variables);
+      const text = [caption, url].filter(Boolean).join("\n");
+      if (text) await send(text);
+      return { next: true };
+    }
+    case "send_file": {
+      const url = d.fileUrl || d.url;
+      const text = [renderVars(d.content || "", variables), url]
+        .filter(Boolean)
+        .join("\n");
+      if (text) await send(text);
+      return { next: true };
+    }
+    case "tag_contact": {
+      const tag = d.tagName || d.tag;
+      if (tag) {
+        contact.tags = Array.from(new Set([...(contact.tags || []), tag]));
+        await contact.save();
+      }
+      return { next: true };
+    }
+    case "assign_agent": {
+      conv.status = "awaiting_human";
+      conv.botEnabled = false;
+      await conv.save();
+      const note = renderVars(d.agentNote || "", variables);
+      if (note) {
+        conv.metadata = { ...(conv.metadata || {}), agentNote: note };
+        conv.markModified("metadata");
+        await conv.save();
+      }
+      return { next: true };
+    }
+    case "delay": {
+      // Inline delays are capped so we never hold the webhook open too long.
+      const secs = Math.min(Math.max(Number(d.delaySeconds) || 0, 0), 8);
+      if (secs > 0) await sleep(secs * 1000);
+      return { next: true };
+    }
+    case "ask_question": {
+      const q = renderVars(d.questionText || d.content || d.message, variables);
+      if (q) await send(q);
+      return {
+        await: {
+          kind: "question",
+          variableName: d.variableName || "answer",
+          nodeId: node.id,
+        },
+      };
+    }
+    case "button_menu":
+    case "list_menu": {
+      const body = renderVars(d.content || d.message || "", variables);
+      const options = parseFlowOptions(d);
+      const menu = [
+        body,
+        ...options.map((o, i) => `${i + 1}. ${o.label}`),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      if (menu) await send(menu);
+      return { await: { kind: "choice", nodeId: node.id } };
+    }
+    case "condition": {
+      const left =
+        variables[d.conditionVariable || d.variable] ?? "";
+      const op = d.conditionOperator || d.operator || "equals";
+      const right = d.conditionValue ?? d.value ?? "";
+      const ok = evalCondition(left, op, right);
+      return { next: true, handle: ok ? "true" : "false" };
+    }
+    case "end_flow":
+      return { stop: true };
+    default:
+      return { next: true };
+  }
+};
+
+const executeFlow = async (flow, startNode, ctx) => {
+  const { conv, variables } = ctx;
+  let current = startNode;
+  let guard = 0;
+  while (current && guard++ < 60) {
+    let res;
+    try {
+      res = await executeFlowNode(flow, current, ctx);
+    } catch (e) {
+      logger.warn(`[flow] node ${current.id} error: ${e.message}`);
+      res = { next: true };
+    }
+    if (res.stop) break;
+    if (res.await) {
+      conv.metadata = {
+        ...(conv.metadata || {}),
+        variables,
+        activeFlow: {
+          flowId: String(flow._id),
+          awaiting: res.await.kind,
+          variableName: res.await.variableName,
+          nodeId: res.await.nodeId,
+        },
+      };
+      conv.markModified("metadata");
+      await conv.save();
+      return; // wait for the user's reply
+    }
+    current = flowNextNode(flow, current.id, res.handle);
+  }
+  // Flow finished — clear resume state and bump completions.
+  conv.metadata = {
+    ...(conv.metadata || {}),
+    variables,
+    activeFlow: null,
+  };
+  conv.markModified("metadata");
+  await conv.save();
+  await Flow.updateOne(
+    { _id: flow._id },
+    { $inc: { "stats.completions": 1 } },
+  ).catch(() => {});
+};
+
+// Resume a multi-step flow that was waiting for the contact's reply.
+const resumePendingFlow = async (workspace, contact, conv, text) => {
+  const af = conv.metadata?.activeFlow;
+  if (!af?.awaiting) return false;
+
+  const flow = await Flow.findOne({
+    _id: af.flowId,
+    workspaceId: workspace._id,
+  });
+  if (!flow || flow.status !== "active") {
+    conv.metadata = { ...(conv.metadata || {}), activeFlow: null };
+    conv.markModified("metadata");
+    await conv.save();
+    return false;
+  }
+
+  const variables = { ...(conv.metadata?.variables || {}) };
+  const waitingNode = flowNodeById(flow, af.nodeId);
+  let nextNode = null;
+
+  if (af.awaiting === "question") {
+    variables[af.variableName || "answer"] = text;
+    nextNode = flowNextNode(flow, af.nodeId);
+  } else if (af.awaiting === "choice") {
+    const options = parseFlowOptions(waitingNode?.data || {});
+    const idx = parseInt(text, 10);
+    let chosen;
+    if (!isNaN(idx) && idx >= 1 && idx <= options.length)
+      chosen = options[idx - 1];
+    else chosen = options.find((o) => matchKeyword(text, o.label, "contains"));
+    if (chosen?.nextNodeId) nextNode = flowNodeById(flow, chosen.nextNodeId);
+    else nextNode = flowNextNode(flow, af.nodeId);
+  }
+
+  conv.metadata = { ...(conv.metadata || {}), activeFlow: null, variables };
+  conv.markModified("metadata");
+  await conv.save();
+
+  if (nextNode) await executeFlow(flow, nextNode, { workspace, contact, conv, variables });
+  return true;
+};
+
+// Match an inbound message against active flows; execute the first that fires.
+const runActiveFlows = async (workspace, contact, conv, { text }) => {
+  const flows = await Flow.find({
+    workspaceId: workspace._id,
+    status: "active",
+    channel: { $in: ["instagram", "all"] },
+  }).sort({ priority: -1, updatedAt: -1 });
+  if (!flows.length) return false;
+
+  const isFirstMessage = (conv.botReplyCount || 0) === 0;
+
+  for (const flow of flows) {
+    const triggers = (flow.nodes || []).filter(isFlowTriggerNode);
+    const matched = triggers.find((t) =>
+      flowTriggerMatches(t, { text, isFirstMessage }),
+    );
+    if (!matched) continue;
+
+    const startNode = flowNextNode(flow, matched.id);
+    if (!startNode) continue; // trigger with no action wired
+
+    await Flow.updateOne(
+      { _id: flow._id },
+      {
+        $inc: { "stats.totalTriggers": 1 },
+        $set: { "stats.lastTriggeredAt": new Date() },
+      },
+    ).catch(() => {});
+
+    const variables = {
+      name: (contact.name || contact.igUsername || "there")
+        .toString()
+        .split(" ")[0],
+      username: contact.igUsername || contact.username || "",
+      ...(conv.metadata?.variables || {}),
+    };
+    await executeFlow(flow, startNode, { workspace, contact, conv, variables });
+    return true;
+  }
+  return false;
 };
 
 // ── MAIN ENTRY ───────────────────────────────────────────────────────────────
@@ -863,6 +1245,14 @@ const handleWebhookEvent = async (workspaceId, event) => {
         `[IG flow] ws=${workspace._id} entering trigger chain (botReplyCount=${conv.botReplyCount || 0})`,
       );
 
+      // 0. Resume a multi-step visual flow that's waiting on this reply.
+      if (text && conv.metadata?.activeFlow?.awaiting) {
+        if (await resumePendingFlow(workspace, contact, conv, text)) {
+          logger.info(`[IG flow] handled by FLOW (resume)`);
+          return;
+        }
+      }
+
       if (type === TRIGGERS.POSTBACK) {
         if (await handlePostback(workspace, contact, conv, event.payload)) {
           logger.info(`[IG flow] handled by POSTBACK`);
@@ -881,6 +1271,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
           return;
         }
       }
+
+      // 1. Active visual flows take priority over the default automations.
+      if (await runActiveFlows(workspace, contact, conv, { text })) {
+        logger.info(`[IG flow] handled by FLOW (trigger)`);
+        return;
+      }
+
       if (await handleAwayReply(workspace, contact, conv)) {
         logger.info(`[IG flow] handled by AWAY_REPLY`);
         return;
@@ -889,16 +1286,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
         logger.info(`[IG flow] handled by DM_KEYWORD`);
         return;
       }
-      if (text && (await handleAIReply(workspace, contact, conv, text))) {
-        logger.info(`[IG flow] handled by AI_REPLY`);
-        return;
-      }
-      const aiCfg = workspace.aiSettings || workspace.aiBot || {};
-      logger.info(
-        `[IG flow] AI did not handle (plan=${workspace.subscription?.plan} aiEnabled=${!!aiCfg.enabled} hasText=${!!text})`,
-      );
+      // Welcome greeting fires on the very first message, before AI takes over.
       if (await handleWelcome(workspace, contact, conv)) {
         logger.info(`[IG flow] handled by WELCOME`);
+        return;
+      }
+      if (text && (await handleAIReply(workspace, contact, conv, text))) {
+        logger.info(`[IG flow] handled by AI_REPLY`);
         return;
       }
       await handleFallback(workspace, contact, conv);
