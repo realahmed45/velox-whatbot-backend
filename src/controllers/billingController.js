@@ -21,12 +21,7 @@ const MESSAGE_LIMITS = Object.fromEntries(
   ]),
 );
 
-const PUBLIC_PLAN_IDS = [
-  "ig_starter",
-  "wa_starter",
-  "bundle_pro",
-  "bundle_business",
-];
+const PUBLIC_PLAN_IDS = ["ig_starter", "ig_pro"];
 
 // @GET /api/billing/plans — Get available plans (channel-grouped)
 const getPlans = asyncHandler(async (req, res) => {
