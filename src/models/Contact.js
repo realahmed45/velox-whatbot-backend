@@ -72,6 +72,11 @@ const contactSchema = new mongoose.Schema(
     // Last automation trigger that touched this contact
     lastTriggerType: String,
 
+    // The specific automation/event that first acquired this contact
+    // (e.g. "post_comment", "story_mention", "ref_SUMMER"). Free-form so we
+    // can track acquisition granularly without bloating the `source` enum.
+    acquisitionTrigger: String,
+
     // Which channel this contact was first seen on.
     // Extend this enum when adding a new platform — no index change needed.
     source: {

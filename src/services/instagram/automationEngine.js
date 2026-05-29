@@ -134,11 +134,30 @@ const isWithinBusinessHours = (workspace) => {
   return current >= toMin(today.openTime) && current <= toMin(today.closeTime);
 };
 
+// Contact.source is a strict channel enum. Callers pass granular trigger
+// origins (e.g. "post_comment", "story_mention", "ref_SUMMER") which are NOT
+// valid enum values — passing them straight through threw a ValidationError
+// and silently killed every automation. Normalize to the channel and stash the
+// granular origin in `acquisitionTrigger`.
+const VALID_CONTACT_SOURCES = new Set([
+  "instagram",
+  "messenger",
+  "telegram",
+  "manual",
+  "import",
+]);
+
 const upsertContact = async (
   workspaceId,
   senderId,
   { username, name, profilePic, source } = {},
 ) => {
+  const channelSource = VALID_CONTACT_SOURCES.has(source)
+    ? source
+    : "instagram";
+  const acquisitionTrigger =
+    source && !VALID_CONTACT_SOURCES.has(source) ? source : undefined;
+
   let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
   if (!contact) {
     contact = await Contact.create({
@@ -148,7 +167,8 @@ const upsertContact = async (
       username: username || senderId,
       name: name || username || "Instagram User",
       igProfilePic: profilePic || undefined,
-      source: source || "instagram",
+      source: channelSource,
+      acquisitionTrigger,
       tags: [],
     });
     return contact;

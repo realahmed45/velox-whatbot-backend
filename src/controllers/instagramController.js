@@ -1227,9 +1227,32 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
   // Normalize: provider may send a single event or an array.
   const events = Array.isArray(body) ? body : body.events || [body];
 
+  // Diagnostic: log the raw shape so we can see exactly what Zernio sends.
+  logger.info(
+    `[BotlifyIG webhook] received ${events.length} event(s): ${JSON.stringify(
+      body,
+    ).slice(0, 1500)}`,
+  );
+
   for (const evt of events) {
-    const accountId = evt.accountId || evt.account_id;
-    if (!accountId) continue;
+    const accountId =
+      evt.accountId ||
+      evt.account_id ||
+      evt.account?.id ||
+      evt.recipient?.id ||
+      evt.igAccountId ||
+      evt.instagramAccountId ||
+      evt.profileId ||
+      evt.data?.accountId ||
+      null;
+    if (!accountId) {
+      logger.warn(
+        `[BotlifyIG webhook] no accountId on event type=${evt.type} keys=${Object.keys(
+          evt,
+        ).join(",")}`,
+      );
+      continue;
+    }
 
     // Find the workspace by encrypted botlifyAccountId.
     const all = await Workspace.find({
@@ -1238,18 +1261,27 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     }).select("+instagram.botlifyAccountId");
 
     let target = null;
+    const candidates = [];
     for (const ws of all) {
       try {
-        if (
-          ws.instagram?.botlifyAccountId &&
-          decrypt(ws.instagram.botlifyAccountId) === accountId
-        ) {
-          target = ws;
-          break;
+        if (ws.instagram?.botlifyAccountId) {
+          const decoded = decrypt(ws.instagram.botlifyAccountId);
+          candidates.push(decoded);
+          if (decoded === accountId || decoded === String(accountId)) {
+            target = ws;
+            break;
+          }
         }
       } catch {}
     }
-    if (!target) continue;
+    if (!target) {
+      logger.warn(
+        `[BotlifyIG webhook] no workspace matched accountId=${accountId}. Known botlifyAccountIds=[${candidates.join(
+          ", ",
+        )}]`,
+      );
+      continue;
+    }
 
     Workspace.updateOne(
       { _id: target._id },
@@ -1300,8 +1332,28 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     }
 
     const senderId =
-      evt.sender?.id || evt.from?.id || evt.senderId || evt.userId || null;
-    if (!senderId) continue;
+      evt.sender?.id ||
+      evt.from?.id ||
+      evt.senderId ||
+      evt.sender_id ||
+      evt.userId ||
+      evt.user?.id ||
+      evt.message?.from?.id ||
+      evt.data?.sender?.id ||
+      evt.contact?.id ||
+      null;
+    if (!senderId) {
+      logger.warn(
+        `[BotlifyIG webhook] no senderId on event type=${evt.type} keys=${Object.keys(
+          evt,
+        ).join(",")}`,
+      );
+      continue;
+    }
+
+    logger.info(
+      `[BotlifyIG webhook] dispatching type=${evt.type} sender=${senderId} ws=${target._id}`,
+    );
 
     // Translate provider event → automation engine event shape.
     switch (evt.type) {
