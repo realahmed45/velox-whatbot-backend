@@ -27,7 +27,8 @@ const DEFAULT_PROFILE_ID = process.env.BOTLIFY_IG_PROVIDER_PROFILE_ID || null;
 
 const TOKEN_PREFIX = "zer:";
 
-const isConfigured = () => !!KEY;
+const isConfigured = () =>
+  !!KEY && KEY !== "your_zernio_api_key" && !KEY.startsWith("your_");
 
 const client = () =>
   axios.create({

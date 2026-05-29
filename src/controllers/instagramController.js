@@ -27,10 +27,11 @@ const lookupIgProfile = async (_ws, _igsid) => ({});
 // its hosted-auth URL so the customer skips Meta App Review entirely. Otherwise
 // fall back to direct Instagram Business Login.
 exports.getOAuthUrl = asyncHandler(async (req, res) => {
-  // Hosted provider takes priority when configured.
   const botlifyIgEarly = require("../services/instagram/botlifyIgService");
+  const workspaceId = req.headers["x-workspace-id"];
+
+  // ── Path 1: Zernio hosted provider ───────────────────────────────────────
   if (botlifyIgEarly.isConfigured()) {
-    const workspaceId = req.headers["x-workspace-id"];
     const state = Buffer.from(
       JSON.stringify({ workspaceId, userId: req.user._id, ts: Date.now() }),
     ).toString("base64");
@@ -44,17 +45,24 @@ exports.getOAuthUrl = asyncHandler(async (req, res) => {
       });
       return res.json({ url });
     } catch (err) {
-      logger.error(
-        "[IG connect] hosted provider failed, falling back to Meta",
-        {
-          err: err.response?.data || err.message,
-        },
-      );
-      // fall through to Meta OAuth below
+      logger.error("[IG connect] Zernio hosted provider error", {
+        err: err.response?.data || err.message,
+      });
+      return res.status(502).json({
+        message:
+          "Instagram connection service is unavailable. Please check your Zernio API key or contact support.",
+      });
     }
   }
 
-  const workspaceId = req.headers["x-workspace-id"];
+  // ── Path 2: Direct Meta Instagram Business Login ──────────────────────────
+  if (!IG_APP_ID || !REDIRECT_URI) {
+    return res.status(503).json({
+      message:
+        "Instagram is not configured on this server. Set BOTLIFY_IG_PROVIDER_API_KEY (Zernio) or IG_APP_ID + IG_OAUTH_REDIRECT_URI (Meta) in your environment.",
+    });
+  }
+
   const state = Buffer.from(
     JSON.stringify({ workspaceId, userId: req.user._id }),
   ).toString("base64");
