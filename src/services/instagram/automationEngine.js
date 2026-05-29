@@ -220,14 +220,20 @@ const sendAndLog = async ({
   triggerType,
   keyword = null,
 }) => {
-  const limit = workspace.usage?.messagesLimit ?? 500;
-  const used = workspace.usage?.messagesThisMonth ?? 0;
-  if (limit > 0 && used >= limit && limit < 999999999) {
-    logger.warn(`[Plan] ${workspace._id} hit DM limit ${used}/${limit}`);
-    return { success: false, reason: "plan_limit" };
+  // Simulate mode (Bot Tester): compute the reply but never hit the IG API or
+  // touch usage quota. We still collect the reply text into __outbox so the
+  // tester UI can show it inline.
+  const simulate = !!workspace.__simulate;
+
+  if (!simulate) {
+    const limit = workspace.usage?.messagesLimit ?? 500;
+    const used = workspace.usage?.messagesThisMonth ?? 0;
+    if (limit > 0 && used >= limit && limit < 999999999) {
+      logger.warn(`[Plan] ${workspace._id} hit DM limit ${used}/${limit}`);
+      return { success: false, reason: "plan_limit" };
+    }
   }
 
-  const accessToken = decrypt(workspace.instagram.accessToken);
   const finalText = personalize(text, contact);
 
   const brand =
@@ -239,7 +245,14 @@ const sendAndLog = async ({
       ? "\n\n—\nSent via Botlify.app"
       : "";
 
-  const result = await sendDM(accessToken, contact.igUserId, finalText + brand);
+  let result;
+  if (simulate) {
+    result = { success: true, messageId: "simulated" };
+    if (Array.isArray(workspace.__outbox)) workspace.__outbox.push(finalText);
+  } else {
+    const accessToken = decrypt(workspace.instagram.accessToken);
+    result = await sendDM(accessToken, contact.igUserId, finalText + brand);
+  }
 
   await Message.create({
     workspaceId: workspace._id,
@@ -266,10 +279,12 @@ const sendAndLog = async ({
   conversation.markModified("metadata");
   await conversation.save();
 
-  await Workspace.updateOne(
-    { _id: workspace._id },
-    { $inc: { "usage.messagesThisMonth": 1 } },
-  );
+  if (!simulate) {
+    await Workspace.updateOne(
+      { _id: workspace._id },
+      { $inc: { "usage.messagesThisMonth": 1 } },
+    );
+  }
 
   contact.messageCount = (contact.messageCount || 0) + 1;
   contact.lastSeenAt = new Date();
@@ -283,6 +298,9 @@ const sendAndLog = async ({
 };
 
 const guardSend = (workspace, contact, conversation) => {
+  // In simulate mode (Bot Tester) we bypass workspace-level toggles so the
+  // creator can preview replies even before automation is switched on.
+  if (workspace.__simulate) return null;
   if (!workspace.settings?.automationEnabled) return "automation_disabled";
   if (workspace.instagram?.status !== "connected") return "ig_disconnected";
   if (contact?.optedOut) return "contact_opted_out";
@@ -1045,15 +1063,27 @@ const handleWebhookEvent = async (workspaceId, event) => {
       logger.info(`[IG flow] no workspace for id=${workspaceId}`);
       return;
     }
-    if (workspace.instagram?.status !== "connected") {
-      logger.info(
-        `[IG flow] ws=${workspaceId} not connected (status=${workspace.instagram?.status})`,
-      );
-      return;
+
+    // Bot Tester: run the full engine but skip real sends / toggles. The
+    // collected replies are pushed into event.__outbox (shared by reference).
+    if (event.simulate) {
+      workspace.__simulate = true;
+      workspace.__outbox = Array.isArray(event.__outbox) ? event.__outbox : [];
     }
-    if (!workspace.settings?.automationEnabled) {
-      logger.info(`[IG flow] ws=${workspaceId} automationEnabled=false — drop`);
-      return;
+
+    if (!workspace.__simulate) {
+      if (workspace.instagram?.status !== "connected") {
+        logger.info(
+          `[IG flow] ws=${workspaceId} not connected (status=${workspace.instagram?.status})`,
+        );
+        return;
+      }
+      if (!workspace.settings?.automationEnabled) {
+        logger.info(
+          `[IG flow] ws=${workspaceId} automationEnabled=false — drop`,
+        );
+        return;
+      }
     }
 
     const {

@@ -768,6 +768,7 @@ exports.testTrigger = asyncHandler(async (req, res) => {
     text = "hi",
     username = "demo_user",
     igUserId,
+    dryRun = false,
   } = req.body;
 
   // Synthesize a fake-but-stable IG sender id per workspace so repeated
@@ -776,16 +777,36 @@ exports.testTrigger = asyncHandler(async (req, res) => {
     igUserId ||
     `demo_${crypto.createHash("md5").update(String(workspaceId)).digest("hex").slice(0, 12)}`;
 
+  // In dryRun (Bot Tester) we collect the bot's replies without sending real
+  // DMs or burning quota. __outbox is filled by the engine via reference.
+  const outbox = [];
   const event = {
     type: triggerType,
     senderId: fakeSenderId,
     senderUsername: username,
     senderName: username,
     text,
+    simulate: !!dryRun,
+    __outbox: outbox,
   };
 
-  logger.info(`[Simulate] ${triggerType} text="${text}" ws=${workspaceId}`);
+  logger.info(
+    `[Simulate${dryRun ? ":dry" : ""}] ${triggerType} text="${text}" ws=${workspaceId}`,
+  );
   await handleWebhookEvent(workspaceId, event);
+
+  if (dryRun) {
+    return res.json({
+      success: true,
+      replies: outbox,
+      reply: outbox.join("\n\n"),
+      handled: outbox.length > 0,
+      message: outbox.length
+        ? "Bot replied."
+        : "No automation matched this message.",
+    });
+  }
+
   res.json({
     success: true,
     message:
