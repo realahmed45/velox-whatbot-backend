@@ -80,7 +80,11 @@ exports.getOAuthUrl = asyncHandler(async (req, res) => {
     ).toString("base64");
     const base =
       process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
-    const callbackUrl = `${base}/api/instagram/connect/callback-botlify`;
+    // Embed the workspace id in the callback — Zernio generates its own state
+    // and won't carry ours, so we identify the workspace via this query param.
+    const callbackUrl =
+      `${base}/api/instagram/connect/callback-botlify` +
+      `?ws=${encodeURIComponent(workspaceId)}`;
     try {
       const { url } = await botlifyIgEarly.createHostedAuthLink({
         state,
@@ -1048,7 +1052,9 @@ exports.getBotlifyOAuthUrl = asyncHandler(async (req, res) => {
 
   const base =
     process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
-  const callbackUrl = `${base}/api/instagram/connect/callback-botlify`;
+  const callbackUrl =
+    `${base}/api/instagram/connect/callback-botlify` +
+    `?ws=${encodeURIComponent(workspaceId)}`;
 
   try {
     const { url } = await botlifyIg.createHostedAuthLink({
@@ -1069,24 +1075,50 @@ exports.getBotlifyOAuthUrl = asyncHandler(async (req, res) => {
 // GET /api/instagram/connect/callback-botlify
 // Provider redirects user back here with ?accountId=xxx (or ?code=xxx) + state.
 exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
-  const { code, accountId, state, error, error_description } = req.query;
+  const { ws, accountId, state, error, error_description } = req.query;
   if (error) {
     logger.warn("[BotlifyIG] connect cancelled", { error, error_description });
     return res.redirect(`${process.env.CLIENT_URL}/dashboard?error=cancelled`);
   }
-  let workspaceId;
-  try {
-    ({ workspaceId } = JSON.parse(Buffer.from(state, "base64").toString()));
-  } catch {
+
+  // We embed the workspace id in the callback (?ws=). Fall back to our own
+  // base64 state if present for backwards compatibility.
+  let workspaceId = ws;
+  if (!workspaceId && state) {
+    try {
+      ({ workspaceId } = JSON.parse(Buffer.from(state, "base64").toString()));
+    } catch {
+      /* ignore — handled below */
+    }
+  }
+  if (!workspaceId) {
+    logger.warn("[BotlifyIG] callback missing workspace id", {
+      query: req.query,
+    });
     return res.redirect(
       `${process.env.CLIENT_URL}/dashboard?error=invalid_state`,
     );
   }
 
   try {
+    // Collect account ids already claimed by other workspaces so we attach the
+    // newly-connected one (single shared Zernio profile in MVP).
+    const claimed = await Workspace.find({
+      "instagram.connectionType": "botlify_oauth",
+      _id: { $ne: workspaceId },
+    }).select("+instagram.botlifyAccountId");
+    const excludeAccountIds = [];
+    for (const w of claimed) {
+      try {
+        if (w.instagram?.botlifyAccountId) {
+          excludeAccountIds.push(decrypt(w.instagram.botlifyAccountId));
+        }
+      } catch {}
+    }
+
     const { accountId: acc, info } = await botlifyIg.exchangeCallback({
-      code,
       accountId,
+      excludeAccountIds,
     });
 
     // Subscribe the IG account to our webhook on the provider side.

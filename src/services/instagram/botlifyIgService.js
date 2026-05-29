@@ -47,6 +47,48 @@ const stripPrefix = (token) =>
 
 const wrapAccountId = (accountId) => `${TOKEN_PREFIX}${accountId}`;
 
+// ── Profiles ─────────────────────────────────────────────────────────────────
+
+let _cachedProfileId = null;
+
+/**
+ * Resolve a Zernio profile id to connect accounts under. Uses the configured
+ * env id when present, otherwise fetches the account's default profile.
+ */
+const getDefaultProfileId = async () => {
+  if (DEFAULT_PROFILE_ID) return DEFAULT_PROFILE_ID;
+  if (_cachedProfileId) return _cachedProfileId;
+  const { data } = await client().get("/profiles");
+  const profiles = Array.isArray(data) ? data : data?.profiles || [];
+  const def = profiles.find((p) => p.isDefault) || profiles[0];
+  if (!def?._id) throw new Error("No Zernio profile available");
+  _cachedProfileId = def._id;
+  return _cachedProfileId;
+};
+
+/**
+ * List Instagram accounts connected to the Zernio workspace, normalized to the
+ * shape the rest of the app expects.
+ */
+const listInstagramAccounts = async () => {
+  const { data } = await client().get("/accounts");
+  const accounts = Array.isArray(data) ? data : data?.accounts || [];
+  return accounts
+    .filter((a) => (a.platform || "").toLowerCase() === "instagram")
+    .map((a) => ({
+      accountId: a._id || a.id,
+      profileId: a.profileId,
+      user_id: a.platformAccountId || a.platform_id || a._id,
+      username: a.username || a.handle,
+      name: a.displayName || a.name || a.username,
+      profile_picture_url:
+        a.profilePictureUrl || a.avatar || a.profilePicture || null,
+      followers_count: a.followers || a.followersCount || 0,
+      account_type: a.accountType || "BUSINESS",
+      createdAt: a.createdAt,
+    }));
+};
+
 // ── Hosted-auth flow ─────────────────────────────────────────────────────────
 
 /**
@@ -62,13 +104,15 @@ const createHostedAuthLink = async ({ state, callbackUrl }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  // Zernio uses GET /connect/instagram?profileId=... (not POST with body)
-  const params = {};
-  if (DEFAULT_PROFILE_ID) params.profileId = DEFAULT_PROFILE_ID;
-  // Some Zernio plans accept a redirectUrl / successUrl query param
+  // Zernio uses GET /connect/instagram?profileId=...&redirectUrl=... (not POST)
+  const profileId = await getDefaultProfileId();
+  const params = { profileId };
+  // After the user authorizes, Zernio redirects the browser here. We embed our
+  // workspace id in the callbackUrl query so the callback knows which workspace
+  // to attach the freshly-connected account to.
   if (callbackUrl) params.redirectUrl = callbackUrl;
 
-  logger.info("[Zernio] creating auth link", { params });
+  logger.info("[Zernio] creating auth link", { profileId, callbackUrl });
   const { data } = await client().get("/connect/instagram", { params });
   logger.info("[Zernio] auth link response", { keys: Object.keys(data || {}) });
 
@@ -87,41 +131,61 @@ const createHostedAuthLink = async ({ state, callbackUrl }) => {
  * Exchange the provider's callback `code` (or `accountId` directly) for an
  * account record we persist on the workspace.
  */
-const exchangeCallback = async ({ code, accountId }) => {
+const exchangeCallback = async ({ accountId, excludeAccountIds = [] }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  // If Zernio fires account.connected webhook with accountId directly, use it.
-  if (accountId) {
-    const info = await getAccountInfo(accountId);
-    return { accountId, info };
+  // If we already know the accountId (e.g. from webhook), look it up directly.
+  const accounts = await listInstagramAccounts();
+  if (!accounts.length) {
+    throw new Error("No Instagram account found after OAuth");
   }
-  // Fallback: exchange code via accounts list (Zernio doesn't have a /exchange endpoint)
-  // The account should already be connected; look it up by listing accounts.
-  const { data } = await client().get("/accounts", {
-    params: { platform: "instagram" },
-  });
-  const accounts = Array.isArray(data) ? data : data?.accounts || [];
-  const acc = accounts[0];
-  if (!acc?._id) throw new Error("No Instagram account found after OAuth");
-  const info = await getAccountInfo(acc._id);
-  return { accountId: acc._id, info };
+
+  let acc;
+  if (accountId) {
+    acc = accounts.find((a) => a.accountId === stripPrefix(accountId));
+  }
+  // Otherwise pick the IG account not already claimed by another workspace.
+  if (!acc) {
+    const exclude = new Set(excludeAccountIds);
+    const unclaimed = accounts.filter((a) => !exclude.has(a.accountId));
+    const pool = unclaimed.length ? unclaimed : accounts;
+    // newest first
+    pool.sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
+    );
+    acc = pool[0];
+  }
+
+  if (!acc?.accountId) throw new Error("No Instagram account found after OAuth");
+  return {
+    accountId: acc.accountId,
+    info: acc,
+  };
 };
 
 // ── Account lookup ───────────────────────────────────────────────────────────
 
 const getAccountInfo = async (accountIdOrToken) => {
   const accountId = stripPrefix(accountIdOrToken);
-  const { data } = await client().get(`/accounts/${accountId}`);
-  // Normalize to the shape the rest of the app expects (mirrors metaService.getIGAccountInfo)
-  return {
-    user_id: data.platformAccountId || data.platform_id || accountId,
-    username: data.username || data.handle,
-    name: data.displayName || data.name || data.username,
-    profile_picture_url: data.avatar || data.profilePicture || null,
-    followers_count: data.followers || data.followersCount || 0,
-    account_type: data.accountType || "BUSINESS",
-  };
+  try {
+    const { data } = await client().get(`/accounts/${accountId}`);
+    return {
+      user_id: data.platformAccountId || data.platform_id || accountId,
+      username: data.username || data.handle,
+      name: data.displayName || data.name || data.username,
+      profile_picture_url:
+        data.profilePictureUrl || data.avatar || data.profilePicture || null,
+      followers_count: data.followers || data.followersCount || 0,
+      account_type: data.accountType || "BUSINESS",
+    };
+  } catch (err) {
+    // Zernio may not expose a single-account GET — fall back to the list.
+    const accounts = await listInstagramAccounts();
+    const acc = accounts.find((a) => a.accountId === accountId);
+    if (acc) return acc;
+    throw err;
+  }
 };
 
 // ── Messaging ────────────────────────────────────────────────────────────────
@@ -310,6 +374,8 @@ module.exports = {
   // hosted-auth flow
   createHostedAuthLink,
   exchangeCallback,
+  getDefaultProfileId,
+  listInstagramAccounts,
   // dispatcher-compatible API (matches metaService shape)
   exchangeCodeForToken,
   getLongLivedToken,
