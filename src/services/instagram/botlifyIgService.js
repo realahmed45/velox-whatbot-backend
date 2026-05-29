@@ -62,14 +62,20 @@ const createHostedAuthLink = async ({ state, callbackUrl }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  const { data } = await client().post("/connect/instagram", {
-    profileId: DEFAULT_PROFILE_ID,
+  logger.info("[Zernio] creating auth link", { callbackUrl });
+  const payload = {
     redirectUrl: callbackUrl,
     state,
-  });
-  // Provider returns: { url: "https://..." } or { authUrl: "..." }
-  const url = data.url || data.authUrl || data.connectUrl;
-  if (!url) throw new Error("Provider did not return an auth URL");
+    ...(DEFAULT_PROFILE_ID && { profileId: DEFAULT_PROFILE_ID }),
+  };
+  const { data } = await client().post("/connect/instagram", payload);
+  logger.info("[Zernio] auth link response", { keys: Object.keys(data || {}) });
+  // Provider returns: { url: "https://..." } or { authUrl: "..." } or { connectUrl: "..." }
+  const url = data.url || data.authUrl || data.connectUrl || data.link;
+  if (!url) {
+    logger.error("[Zernio] unexpected response shape", { data });
+    throw new Error(`Provider did not return an auth URL. Keys: ${Object.keys(data).join(", ")}`);
+  }
   return { url };
 };
 
