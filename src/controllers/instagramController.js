@@ -1410,6 +1410,8 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           senderId,
           senderUsername,
           senderName,
+          providerConversationId:
+            evt.conversation?.id || msg.conversationId || null,
           text: msg.text || evt.text || "",
         });
         break;
@@ -1438,6 +1440,8 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           type: "story_reply",
           senderId,
           senderUsername,
+          providerConversationId:
+            evt.conversation?.id || msg.conversationId || null,
           text: msg.text || evt.text || "",
           storyId: evt.storyId || null,
         });

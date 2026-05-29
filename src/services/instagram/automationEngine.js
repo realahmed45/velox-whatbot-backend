@@ -271,7 +271,9 @@ const sendAndLog = async ({
     if (Array.isArray(workspace.__outbox)) workspace.__outbox.push(finalText);
   } else {
     const accessToken = decrypt(workspace.instagram.accessToken);
-    result = await sendDM(accessToken, contact.igUserId, finalText + brand);
+    result = await sendDM(accessToken, contact.igUserId, finalText + brand, {
+      conversationId: conversation.metadata?.providerConversationId,
+    });
   }
 
   await Message.create({
@@ -1112,6 +1114,7 @@ const handleWebhookEvent = async (workspaceId, event) => {
       senderUsername,
       senderName,
       senderProfilePic,
+      providerConversationId,
       text,
     } = event;
     if (!senderId) return;
@@ -1249,6 +1252,20 @@ const handleWebhookEvent = async (workspaceId, event) => {
         source: type,
       });
       const conv = await getOrCreateConversation(workspace, contact);
+
+      // Persist Zernio's conversation id so the bot can reply into this thread.
+      if (
+        providerConversationId &&
+        conv.metadata?.providerConversationId !== providerConversationId
+      ) {
+        conv.metadata = {
+          ...(conv.metadata || {}),
+          providerConversationId,
+        };
+        conv.markModified("metadata");
+        await conv.save();
+      }
+
       const blocked = guardSend(workspace, contact, conv);
       if (blocked) return;
 

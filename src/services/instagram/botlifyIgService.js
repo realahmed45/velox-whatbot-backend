@@ -191,27 +191,80 @@ const getAccountInfo = async (accountIdOrToken) => {
 // ── Messaging ────────────────────────────────────────────────────────────────
 
 /**
- * Send a DM. Signature mirrors metaService.sendDM(accessToken, recipientId, text)
- * so the dispatcher can call either provider transparently.
+ * Resolve a Zernio conversation id for a recipient when we don't already have
+ * one (e.g. for broadcasts / proactive sends not triggered by a webhook).
+ * Zernio's send endpoint is keyed by conversationId, not recipient id.
  */
-const sendDM = async (accountIdOrToken, recipientIgId, text) => {
+const resolveConversationId = async (accountId, recipientIgId) => {
+  try {
+    const { data } = await client().get("/inbox/conversations", {
+      params: { accountId },
+    });
+    const list = Array.isArray(data)
+      ? data
+      : data?.data || data?.conversations || [];
+    const target = String(recipientIgId);
+    const match = list.find(
+      (c) =>
+        String(c.participantId) === target ||
+        String(c.platformConversationId) === target ||
+        String(c.participantUsername || "").toLowerCase() ===
+          target.toLowerCase(),
+    );
+    return match?.id || null;
+  } catch (err) {
+    logger.warn("[BotlifyIG] resolveConversationId failed", {
+      error: err.response?.data || err.message,
+    });
+    return null;
+  }
+};
+
+/**
+ * Send a DM. Signature mirrors metaService.sendDM(accessToken, recipientId, text)
+ * so the dispatcher can call either provider transparently. `opts.conversationId`
+ * (Zernio's platform conversation id, delivered in the inbound webhook) is the
+ * fast path; without it we look the conversation up by recipient.
+ *
+ * Zernio endpoint: POST /v1/inbox/conversations/{conversationId}/messages
+ *   body: { accountId, message }
+ */
+const sendDM = async (accountIdOrToken, recipientIgId, text, opts = {}) => {
   try {
     const accountId = stripPrefix(accountIdOrToken);
-    const { data } = await client().post("/inbox/messages", {
-      accountId,
-      platform: "instagram",
-      recipientId: recipientIgId,
-      content: { text },
-    });
-    return { success: true, messageId: data.id || data.messageId };
+    let conversationId = opts.conversationId || null;
+    if (!conversationId) {
+      conversationId = await resolveConversationId(accountId, recipientIgId);
+    }
+    if (!conversationId) {
+      logger.error("[BotlifyIG] sendDM: no conversation id for recipient", {
+        recipientIgId,
+      });
+      return {
+        success: false,
+        error:
+          "No Instagram conversation found for this recipient. Instagram only allows replies inside an existing 24h conversation window.",
+      };
+    }
+
+    const { data } = await client().post(
+      `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+      { accountId, message: text },
+    );
+    return {
+      success: true,
+      messageId: data?.id || data?.messageId || data?.data?.id,
+    };
   } catch (err) {
     const apiErr = err.response?.data || {};
     const isRateLimit =
       err.response?.status === 429 ||
       /rate.?limit/i.test(apiErr.error || apiErr.message || "");
     logger.error("[BotlifyIG] sendDM error", {
+      status: err.response?.status,
       error: apiErr,
       recipientIgId,
+      conversationId: opts.conversationId,
       rateLimited: isRateLimit,
     });
     return {
