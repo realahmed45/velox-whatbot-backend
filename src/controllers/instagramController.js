@@ -1235,6 +1235,11 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
   );
 
   for (const evt of events) {
+    // Zernio puts the event name in `event` (not `type`) and nests the message
+    // payload (incl. sender) under `message`.
+    const evtType = evt.type || evt.event || evt.eventType || null;
+    const msg = evt.message || {};
+
     const accountId =
       evt.accountId ||
       evt.account_id ||
@@ -1243,11 +1248,12 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       evt.igAccountId ||
       evt.instagramAccountId ||
       evt.profileId ||
+      evt.account?.profileId ||
       evt.data?.accountId ||
       null;
     if (!accountId) {
       logger.warn(
-        `[BotlifyIG webhook] no accountId on event type=${evt.type} keys=${Object.keys(
+        `[BotlifyIG webhook] no accountId on event type=${evtType} keys=${Object.keys(
           evt,
         ).join(",")}`,
       );
@@ -1288,13 +1294,13 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       {
         $set: {
           "instagram.lastWebhookAt": new Date(),
-          "instagram.lastWebhookType": evt.type || "unknown",
+          "instagram.lastWebhookType": evtType || "unknown",
         },
       },
     ).catch(() => {});
 
     // Account-level events (no senderId required)
-    if (evt.type === "account.disconnected") {
+    if (evtType === "account.disconnected") {
       logger.warn(
         `[BotlifyIG webhook] account disconnected for workspace ${target._id}`,
       );
@@ -1311,56 +1317,74 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       continue;
     }
     if (
-      evt.type === "account.connected" ||
-      evt.type === "account.ads.initial_sync_completed"
+      evtType === "account.connected" ||
+      evtType === "account.ads.initial_sync_completed"
     ) {
-      logger.info(`[BotlifyIG webhook] ${evt.type} acknowledged`);
+      logger.info(`[BotlifyIG webhook] ${evtType} acknowledged`);
       continue;
     }
-    // Outbound echo events — we don't act on these, just ack.
+    // Outbound echo events — we don't act on these, just ack. Zernio marks the
+    // direction on the message itself, so skip anything we sent ourselves.
+    const direction = msg.direction || evt.direction;
+    if (direction === "outgoing" || direction === "outbound" || direction === "sent") {
+      continue;
+    }
     if (
-      evt.type === "message.sent" ||
-      evt.type === "message.delivered" ||
-      evt.type === "message.read" ||
-      evt.type === "message.failed" ||
-      evt.type === "message.edited" ||
-      evt.type === "message.deleted" ||
-      evt.type?.startsWith("post.") ||
-      evt.type?.startsWith("review.")
+      evtType === "message.sent" ||
+      evtType === "message.delivered" ||
+      evtType === "message.read" ||
+      evtType === "message.failed" ||
+      evtType === "message.edited" ||
+      evtType === "message.deleted" ||
+      evtType?.startsWith("post.") ||
+      evtType?.startsWith("review.")
     ) {
       continue;
     }
 
     const senderId =
+      msg.sender?.id ||
       evt.sender?.id ||
       evt.from?.id ||
       evt.senderId ||
       evt.sender_id ||
       evt.userId ||
       evt.user?.id ||
-      evt.message?.from?.id ||
+      msg.from?.id ||
       evt.data?.sender?.id ||
+      evt.conversation?.participantId ||
       evt.contact?.id ||
       null;
     if (!senderId) {
       logger.warn(
-        `[BotlifyIG webhook] no senderId on event type=${evt.type} keys=${Object.keys(
+        `[BotlifyIG webhook] no senderId on event type=${evtType} keys=${Object.keys(
           evt,
         ).join(",")}`,
       );
       continue;
     }
 
+    // Sender profile fields can live on either the top-level or nested message.
+    const senderUsername =
+      msg.sender?.username ||
+      evt.sender?.username ||
+      evt.conversation?.participantUsername ||
+      null;
+    const senderName =
+      msg.sender?.name ||
+      evt.sender?.name ||
+      evt.conversation?.participantName ||
+      null;
+
     logger.info(
-      `[BotlifyIG webhook] dispatching type=${evt.type} sender=${senderId} ws=${target._id}`,
+      `[BotlifyIG webhook] dispatching type=${evtType} sender=${senderId} (@${senderUsername}) ws=${target._id}`,
     );
 
     // Translate provider event → automation engine event shape.
-    switch (evt.type) {
+    switch (evtType) {
       case "message.received":
       case "message":
       case "dm": {
-        const msg = evt.message || {};
         // Zernio delivers story-replies and shared-posts inside message.received.
         // Detect the sub-type so the right automation handler runs.
         const attachments = msg.attachments || evt.attachments || [];
@@ -1384,8 +1408,8 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(target._id, {
           type: innerType,
           senderId,
-          senderUsername: evt.sender?.username || null,
-          senderName: evt.sender?.name || null,
+          senderUsername,
+          senderName,
           text: msg.text || evt.text || "",
         });
         break;
@@ -1395,8 +1419,8 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(target._id, {
           type: "post_comment",
           senderId,
-          senderUsername: evt.sender?.username || null,
-          text: evt.comment?.text || evt.text || "",
+          senderUsername,
+          text: evt.comment?.text || msg.text || evt.text || "",
           postId: evt.post?.id || evt.postId || null,
         });
         break;
@@ -1405,7 +1429,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(target._id, {
           type: "story_mention",
           senderId,
-          senderUsername: evt.sender?.username || null,
+          senderUsername,
         });
         break;
       case "story.reply":
@@ -1413,12 +1437,13 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         await handleWebhookEvent(target._id, {
           type: "story_reply",
           senderId,
-          text: evt.message?.text || evt.text || "",
+          senderUsername,
+          text: msg.text || evt.text || "",
           storyId: evt.storyId || null,
         });
         break;
       default:
-        logger.info(`[BotlifyIG webhook] unhandled type: ${evt.type}`);
+        logger.info(`[BotlifyIG webhook] unhandled type: ${evtType}`);
     }
   }
 });
