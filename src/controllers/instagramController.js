@@ -18,6 +18,49 @@ const REDIRECT_URI = process.env.IG_OAUTH_REDIRECT_URI;
 const WEBHOOK_VERIFY_TOKEN =
   process.env.IG_WEBHOOK_VERIFY_TOKEN || "botlify_webhook_2026";
 
+// ── Direct Meta API helpers (used when Zernio is not available) ───────────────
+const axios = require("axios");
+
+const metaExchangeCodeForToken = async (code, redirectUri) => {
+  const { data } = await axios.post(
+    "https://api.instagram.com/oauth/access_token",
+    new URLSearchParams({
+      client_id: IG_APP_ID,
+      client_secret: IG_APP_SECRET,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+      code,
+    }),
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+  );
+  return data; // { access_token, user_id }
+};
+
+const metaGetLongLivedToken = async (shortToken) => {
+  const { data } = await axios.get(
+    "https://graph.instagram.com/access_token",
+    {
+      params: {
+        grant_type: "ig_exchange_token",
+        client_secret: IG_APP_SECRET,
+        access_token: shortToken,
+      },
+    },
+  );
+  return data; // { access_token, token_type, expires_in }
+};
+
+const metaGetAccountInfo = async (accessToken) => {
+  const { data } = await axios.get("https://graph.instagram.com/me", {
+    params: {
+      fields:
+        "id,username,name,profile_picture_url,followers_count,account_type",
+      access_token: accessToken,
+    },
+  });
+  return data;
+};
+
 // Profile lookup is not available via Zernio — return empty object.
 // Sender name is provided directly in the webhook event payload.
 const lookupIgProfile = async (_ws, _igsid) => ({});
@@ -45,13 +88,10 @@ exports.getOAuthUrl = asyncHandler(async (req, res) => {
       });
       return res.json({ url });
     } catch (err) {
-      logger.error("[IG connect] Zernio hosted provider error", {
+      logger.warn("[IG connect] Zernio failed, falling back to Meta OAuth", {
         err: err.response?.data || err.message,
       });
-      return res.status(502).json({
-        message:
-          "Instagram connection service is unavailable. Please check your Zernio API key or contact support.",
-      });
+      // fall through to Meta OAuth below
     }
   }
 
@@ -59,7 +99,7 @@ exports.getOAuthUrl = asyncHandler(async (req, res) => {
   if (!IG_APP_ID || !REDIRECT_URI) {
     return res.status(503).json({
       message:
-        "Instagram is not configured on this server. Set BOTLIFY_IG_PROVIDER_API_KEY (Zernio) or IG_APP_ID + IG_OAUTH_REDIRECT_URI (Meta) in your environment.",
+        "Instagram is not configured on this server. Please contact support.",
     });
   }
 
@@ -105,18 +145,18 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Exchange code → short-lived IG token (1 hour)
-    const shortTokenData = await ig.exchangeCodeForToken(code, REDIRECT_URI);
+    // Exchange code → short-lived IG token (1 hour) — direct Meta API
+    const shortTokenData = await metaExchangeCodeForToken(code, REDIRECT_URI);
     const shortToken = shortTokenData.access_token;
     const igUserId = String(shortTokenData.user_id);
 
-    // Upgrade to long-lived token (60 days)
-    const longTokenData = await ig.getLongLivedToken(shortToken);
+    // Upgrade to long-lived token (60 days) — direct Meta API
+    const longTokenData = await metaGetLongLivedToken(shortToken);
     const longToken = longTokenData.access_token;
     const expiresIn = longTokenData.expires_in || 60 * 24 * 3600;
 
-    // Fetch profile info using the long-lived token
-    const igInfo = await ig.getIGAccountInfo(longToken);
+    // Fetch profile info — direct Meta API
+    const igInfo = await metaGetAccountInfo(longToken);
 
     // Subscribe the IG account to webhook events
     let webhookSubscribed = false;
