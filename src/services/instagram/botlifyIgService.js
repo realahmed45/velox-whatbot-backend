@@ -62,19 +62,23 @@ const createHostedAuthLink = async ({ state, callbackUrl }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  logger.info("[Zernio] creating auth link", { callbackUrl });
-  const payload = {
-    redirectUrl: callbackUrl,
-    state,
-    ...(DEFAULT_PROFILE_ID && { profileId: DEFAULT_PROFILE_ID }),
-  };
-  const { data } = await client().post("/connect/instagram", payload);
+  // Zernio uses GET /connect/instagram?profileId=... (not POST with body)
+  const params = {};
+  if (DEFAULT_PROFILE_ID) params.profileId = DEFAULT_PROFILE_ID;
+  // Some Zernio plans accept a redirectUrl / successUrl query param
+  if (callbackUrl) params.redirectUrl = callbackUrl;
+
+  logger.info("[Zernio] creating auth link", { params });
+  const { data } = await client().get("/connect/instagram", { params });
   logger.info("[Zernio] auth link response", { keys: Object.keys(data || {}) });
-  // Provider returns: { url: "https://..." } or { authUrl: "..." } or { connectUrl: "..." }
-  const url = data.url || data.authUrl || data.connectUrl || data.link;
+
+  // Zernio returns { authUrl: "..." } per docs, but tolerate alternate keys
+  const url = data.authUrl || data.url || data.connectUrl || data.link;
   if (!url) {
     logger.error("[Zernio] unexpected response shape", { data });
-    throw new Error(`Provider did not return an auth URL. Keys: ${Object.keys(data).join(", ")}`);
+    throw new Error(
+      `Provider did not return an auth URL. Keys: ${Object.keys(data).join(", ")}`,
+    );
   }
   return { url };
 };
@@ -87,16 +91,21 @@ const exchangeCallback = async ({ code, accountId }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  // Some providers return ?accountId directly; others use ?code= + a token swap.
+  // If Zernio fires account.connected webhook with accountId directly, use it.
   if (accountId) {
     const info = await getAccountInfo(accountId);
     return { accountId, info };
   }
-  const { data } = await client().post("/connect/instagram/exchange", { code });
-  const acc = data.accountId || data.id;
-  if (!acc) throw new Error("Provider did not return an accountId");
-  const info = await getAccountInfo(acc);
-  return { accountId: acc, info };
+  // Fallback: exchange code via accounts list (Zernio doesn't have a /exchange endpoint)
+  // The account should already be connected; look it up by listing accounts.
+  const { data } = await client().get("/accounts", {
+    params: { platform: "instagram" },
+  });
+  const accounts = Array.isArray(data) ? data : data?.accounts || [];
+  const acc = accounts[0];
+  if (!acc?._id) throw new Error("No Instagram account found after OAuth");
+  const info = await getAccountInfo(acc._id);
+  return { accountId: acc._id, info };
 };
 
 // ── Account lookup ───────────────────────────────────────────────────────────
