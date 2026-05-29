@@ -13,6 +13,9 @@ const {
   sendPasswordResetEmail,
 } = require("../services/emailService");
 const logger = require("../utils/logger");
+const { OAuth2Client } = require("google-auth-library");
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // @POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
@@ -199,16 +202,51 @@ const getMe = asyncHandler(async (req, res) => {
 });
 
 // @POST /api/auth/google
+// Receives the raw Google ID token (credential) from the client and verifies
+// it server-side against our GOOGLE_CLIENT_ID. We NEVER trust client-supplied
+// email/id — that would allow trivial account takeover.
 const googleAuth = asyncHandler(async (req, res) => {
-  const { googleId, email, name, avatar } = req.body;
-  if (!googleId || !email) {
+  const { credential, ref } = req.body;
+  if (!credential) {
     res.status(400);
-    throw new Error("Google auth data required");
+    throw new Error("Google credential required");
+  }
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    logger.error("[googleAuth] GOOGLE_CLIENT_ID not configured");
+    res.status(500);
+    throw new Error("Google sign-in is not configured");
   }
 
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    logger.warn("[googleAuth] token verification failed", {
+      err: err.message,
+    });
+    res.status(401);
+    throw new Error("Invalid or expired Google credential");
+  }
+
+  if (!payload?.email || !payload.email_verified) {
+    res.status(401);
+    throw new Error("Google account email is not verified");
+  }
+
+  const googleId = payload.sub;
+  const email = payload.email.toLowerCase();
+  const name = payload.name || email.split("@")[0];
+  const avatar = payload.picture;
+
   let user = await User.findOne({ $or: [{ googleId }, { email }] });
+  let isNew = false;
 
   if (!user) {
+    isNew = true;
     user = await User.create({
       googleId,
       email,
@@ -216,17 +254,53 @@ const googleAuth = asyncHandler(async (req, res) => {
       avatar,
       isEmailVerified: true, // Google-verified emails are trusted
     });
-    await sendWelcomeEmail({ to: email, name });
+
+    // Auto-create a workspace so the new user lands in onboarding cleanly.
+    const workspace = await Workspace.create({
+      name: `${name}'s Workspace`,
+      owner: user._id,
+      members: [{ user: user._id, role: "owner" }],
+      industry: "other",
+    });
+
+    if (ref) {
+      const refCode = String(ref).toUpperCase().trim();
+      const referrer = await Workspace.findOne({ "referral.code": refCode });
+      if (referrer && String(referrer._id) !== String(workspace._id)) {
+        workspace.referral.referredBy = referrer._id;
+        await workspace.save();
+        await Workspace.updateOne(
+          { _id: referrer._id },
+          { $inc: { "referral.signups": 1 } },
+        );
+      }
+    }
+
+    user.workspaces = [workspace._id];
+    user.activeWorkspace = workspace._id;
+    await user.save();
+
+    await sendWelcomeEmail({ to: email, name }).catch(() => {});
   } else if (!user.googleId) {
+    // Link Google to an existing email/password account.
     user.googleId = googleId;
     user.isEmailVerified = true;
-    await user.save();
+    if (!user.avatar && avatar) user.avatar = avatar;
   }
 
-  const accessToken = generateAccessToken(user._id);
-  const refreshToken = generateRefreshToken(user._id);
+  user.lastLogin = new Date();
+  await user.save();
 
-  res.json({ success: true, token: accessToken, refreshToken, user });
+  const accessToken = generateAccessToken(user._id);
+  const refreshTokenValue = generateRefreshToken(user._id);
+
+  res.json({
+    success: true,
+    isNew,
+    token: accessToken,
+    refreshToken: refreshTokenValue,
+    user,
+  });
 });
 
 module.exports = {
