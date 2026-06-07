@@ -15,10 +15,11 @@ const {
   selectPlan,
 } = require("../controllers/billingController");
 
+// Public — no auth/workspace needed (used by the marketing pricing page)
+router.get("/plans", getPlans);
+
+// Everything below requires an authenticated user + workspace
 router.use(protect);
-
-router.get("/plans", getPlans); // Public — no workspace needed
-
 router.use(requireWorkspace);
 router.get("/subscription", getSubscription);
 router.get("/invoices", getInvoices);
