@@ -310,7 +310,4 @@ exports.receiveShopifyWebhook = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Webhook processed" });
 });
 
-module.exports = {
-  receiveWebhook,
-  receiveShopifyWebhook,
-};
+// Functions already exported via exports.receiveWebhook and exports.receiveShopifyWebhook above
