@@ -197,12 +197,21 @@ const PLAN_PRICES = Object.fromEntries(
   ]),
 );
 
+// USD prices used for international card billing (Xendit). Annual = 10× monthly
+// (2 months free), mirroring the PKR annual discount.
+const PLAN_USD_PRICES = {
+  free: { monthly: 0, annual: 0 },
+  ig_starter: { monthly: 8, annual: 80 },
+  ig_pro: { monthly: 19, annual: 190 },
+};
+
 module.exports = {
   PLANS,
   FEATURES,
   LEGACY_ALIASES,
   PLAN_KEYS_FOR_ENUM,
   PLAN_PRICES,
+  PLAN_USD_PRICES,
   USD,
   resolvePlanId,
   getPlan,

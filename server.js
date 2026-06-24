@@ -35,6 +35,7 @@ const integrationRoutes = require("./src/routes/integrations");
 const linkInBioRoutes = require("./src/routes/linkInBio");
 const publicRoutes = require("./src/routes/publicRoutes");
 const referralRoutes = require("./src/routes/referral");
+const webhookRoutes = require("./src/routes/webhooks");
 
 const app = express();
 const server = http.createServer(app);
@@ -100,6 +101,10 @@ app.use("/api/instagram/webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// ─── Input Sanitization (XSS Protection) ──────────────────
+const sanitizeInput = require("./src/middleware/sanitizeInput");
+app.use(sanitizeInput);
+
 // ─── Compression & Logging ─────────────────────────────────
 app.use(compression());
 app.use(
@@ -108,6 +113,10 @@ app.use(
     skip: (req) => req.path === "/health",
   }),
 );
+
+// ─── API Request Logger (Audit Trail) ─────────────────────
+const { apiLogger } = require("./src/middleware/apiLogger");
+app.use("/api/", apiLogger);
 
 // ─── Rate Limiting ─────────────────────────────────────────
 app.use("/api/", rateLimiter);
@@ -183,6 +192,7 @@ app.use("/api/integrations", integrationRoutes);
 app.use("/api/bio", linkInBioRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/referral", referralRoutes);
+app.use("/api/webhooks", webhookRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
@@ -248,6 +258,14 @@ const { pollFollowers } = require("./src/jobs/followerPollingJob");
 cron.schedule("0 */6 * * *", () => {
   pollFollowers().catch((e) =>
     logger.warn("[Cron] pollFollowers error: " + e.message),
+  );
+});
+
+// Refresh AI knowledge (websites + Shopify) daily at 3am so the bot stays current
+const { resyncStaleKnowledge } = require("./src/jobs/knowledgeResyncJob");
+cron.schedule("0 3 * * *", () => {
+  resyncStaleKnowledge().catch((e) =>
+    logger.warn("[Cron] resyncStaleKnowledge error: " + e.message),
   );
 });
 

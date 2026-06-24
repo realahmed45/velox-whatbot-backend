@@ -27,7 +27,13 @@ const initQueues = () => {
     require("./usageResetJob")(connection);
     require("./igTokenRefreshJob")(connection);
 
-    logger.info("BullMQ queues initialized");
+    // Initialize webhook retry queue
+    const { initWebhookQueue } = require("../services/webhookDispatcher");
+    initWebhookQueue();
+
+    logger.info(
+      "BullMQ queues initialized (broadcasts, usage-reset, webhooks)",
+    );
   } catch (err) {
     logger.warn(
       `BullMQ init failed: ${err.message} — continuing without background jobs`,

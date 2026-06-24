@@ -52,6 +52,145 @@ const listProducts = async (storeUrl, accessToken, limit = 50) => {
   }));
 };
 
+const normalizeOrder = (o, host) => {
+  const fulfillment = (o.fulfillments || [])[0] || {};
+  return {
+    name: o.name, // e.g. "#1234"
+    email: o.email || null,
+    createdAt: o.created_at,
+    financialStatus: o.financial_status || "unknown", // paid, pending, refunded…
+    fulfillmentStatus: o.fulfillment_status || "unfulfilled", // fulfilled, partial, null
+    trackingNumber: fulfillment.tracking_number || null,
+    trackingUrl:
+      fulfillment.tracking_url ||
+      (fulfillment.tracking_urls && fulfillment.tracking_urls[0]) ||
+      null,
+    trackingCompany: fulfillment.tracking_company || null,
+    total: o.total_price || null,
+    currency: o.currency || null,
+    items: (o.line_items || []).map((li) => ({
+      title: li.title,
+      qty: li.quantity,
+    })),
+    statusUrl: o.order_status_url || null,
+  };
+};
+
+/**
+ * Look up an order by order number (name) and/or email. Requires the custom
+ * app token to have `read_orders` scope — a 401/403 throws err.code="no_scope".
+ */
+const lookupOrder = async (storeUrl, accessToken, { name, email } = {}) => {
+  const host = normalizeStoreUrl(storeUrl);
+  if (!host) throw new Error("Invalid Shopify store URL");
+
+  const params = { status: "any", limit: 10 };
+  if (name) {
+    const clean = String(name).replace(/[^\d]/g, "");
+    if (clean) params.name = `#${clean}`;
+  }
+  if (!params.name && email) params.email = email;
+  if (!params.name && !params.email) return null;
+
+  let data;
+  try {
+    ({ data } = await axios.get(
+      `https://${host}/admin/api/${API_VERSION}/orders.json`,
+      {
+        params,
+        headers: { "X-Shopify-Access-Token": accessToken },
+        timeout: 10000,
+      },
+    ));
+  } catch (err) {
+    if ([401, 403].includes(err.response?.status)) {
+      const e = new Error("Order access not granted");
+      e.code = "no_scope";
+      throw e;
+    }
+    throw err;
+  }
+
+  const orders = data.orders || [];
+  if (!orders.length) return null;
+
+  const emailLower = email ? email.toLowerCase() : null;
+  const orderNum = name
+    ? `#${String(name).replace(/[^\d]/g, "")}`
+    : null;
+
+  // Email provided — only return an order that belongs to that email.
+  if (emailLower) {
+    const byEmail = orders.filter(
+      (o) => (o.email || "").toLowerCase() === emailLower,
+    );
+    if (!byEmail.length) return null;
+    if (orderNum) {
+      const exact = byEmail.find((o) => o.name === orderNum);
+      return normalizeOrder(exact || byEmail[0], host);
+    }
+    return normalizeOrder(byEmail[0], host);
+  }
+
+  // Order number only — safe when the customer supplies #1234 in the DM.
+  if (orderNum) {
+    const match = orders.find((o) => o.name === orderNum);
+    return match ? normalizeOrder(match, host) : null;
+  }
+
+  return normalizeOrder(orders[0], host);
+};
+
+/** Probe which Admin API scopes the token actually has. */
+const verifyScopes = async (storeUrl, accessToken) => {
+  const host = normalizeStoreUrl(storeUrl);
+  if (!host) throw new Error("Invalid Shopify store URL");
+  const headers = { "X-Shopify-Access-Token": accessToken };
+  const scopes = { products: false, orders: false };
+
+  try {
+    await axios.get(
+      `https://${host}/admin/api/${API_VERSION}/products.json`,
+      { params: { limit: 1 }, headers, timeout: 8000 },
+    );
+    scopes.products = true;
+  } catch (err) {
+    if (![401, 403].includes(err.response?.status)) throw err;
+  }
+
+  try {
+    await axios.get(
+      `https://${host}/admin/api/${API_VERSION}/orders.json`,
+      { params: { status: "any", limit: 1 }, headers, timeout: 8000 },
+    );
+    scopes.orders = true;
+  } catch (err) {
+    if (![401, 403].includes(err.response?.status)) throw err;
+  }
+
+  return scopes;
+};
+
+/**
+ * Find products matching a free-text query (by title word overlap).
+ * Falls back to the first few products if nothing matches.
+ */
+const searchProducts = async (storeUrl, accessToken, query, limit = 5) => {
+  const all = await listProducts(storeUrl, accessToken, 100);
+  const words = (String(query || "").toLowerCase().match(/[a-z0-9]{3,}/g) || [])
+    .filter((w) => !["the", "and", "for", "you", "your", "have"].includes(w));
+  if (!words.length) return all.slice(0, limit);
+  const scored = all
+    .map((p) => {
+      const t = (p.title || "").toLowerCase();
+      const score = words.reduce((n, w) => n + (t.includes(w) ? 1 : 0), 0);
+      return { p, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return (scored.length ? scored.map((x) => x.p) : all).slice(0, limit);
+};
+
 const testConnection = async (storeUrl, accessToken) => {
   const host = normalizeStoreUrl(storeUrl);
   try {
@@ -72,4 +211,11 @@ const testConnection = async (storeUrl, accessToken) => {
   }
 };
 
-module.exports = { listProducts, testConnection, normalizeStoreUrl };
+module.exports = {
+  listProducts,
+  lookupOrder,
+  searchProducts,
+  testConnection,
+  verifyScopes,
+  normalizeStoreUrl,
+};

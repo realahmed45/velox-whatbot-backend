@@ -3,12 +3,15 @@ const Workspace = require("../models/Workspace");
 const Subscription = require("../models/Subscription");
 const jazzcashService = require("../services/payments/jazzcashService");
 const easypaisaService = require("../services/payments/easypaisaService");
+const xenditService = require("../services/payments/xenditService");
 const { sendInvoiceEmail } = require("../services/emailService");
 const { v4: uuidv4 } = require("uuid");
 const moment = require("moment");
+const logger = require("../utils/logger");
 const {
   PLANS,
   PLAN_PRICES,
+  PLAN_USD_PRICES,
   PLAN_KEYS_FOR_ENUM,
   resolvePlanId,
   getPlan,
@@ -102,6 +105,76 @@ const initiatePayment = asyncHandler(async (req, res) => {
     throw new Error("Plan pricing unavailable");
   }
   const txnRef = `BL-${uuidv4().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+
+  // ── Card subscription via Xendit (auto-recurring) ──────────────────────────
+  if (paymentMethod === "card" || paymentMethod === "xendit") {
+    if (!xenditService.isConfigured()) {
+      res.status(503);
+      throw new Error("Card payments are not configured yet");
+    }
+    const usd = PLAN_USD_PRICES[planId]?.[billingCycle];
+    if (!usd) {
+      res.status(400);
+      throw new Error("USD pricing unavailable for this plan");
+    }
+
+    const clientUrl = process.env.CLIENT_URL || "https://botlify.site";
+    const successUrl =
+      process.env.XENDIT_SUCCESS_URL ||
+      `${clientUrl}/dashboard/billing?billing=success`;
+    const failureUrl =
+      process.env.XENDIT_FAILURE_URL ||
+      `${clientUrl}/dashboard/billing?billing=failed`;
+
+    const checkout = await xenditService.createSubscriptionCheckout({
+      referenceId: txnRef,
+      amount: usd,
+      currency: "USD",
+      billingCycle,
+      customer: {
+        referenceId: String(req.workspace._id),
+        email: req.user?.email,
+        name: req.user?.name,
+      },
+      description: `Botlify ${planId} (${billingCycle})`,
+      successUrl,
+      failureUrl,
+      metadata: {
+        workspaceId: String(req.workspace._id),
+        plan: planId,
+        billingCycle,
+      },
+    });
+
+    // Record a pending subscription so the webhook can resolve the workspace.
+    await Subscription.findOneAndUpdate(
+      { workspaceId: req.workspace._id },
+      {
+        plan: planId,
+        billingCycle,
+        status: "trialing",
+        amount: usd,
+        currency: "USD",
+        provider: "xendit",
+        paymentMethod: "card",
+        xenditReferenceId: txnRef,
+        xenditCustomerId: String(req.workspace._id),
+        xenditSessionId: checkout.sessionId,
+      },
+      { upsert: true, new: true },
+    );
+
+    return res.json({
+      success: true,
+      redirectUrl: checkout.url,
+      txnRef,
+      amount: usd,
+      currency: "USD",
+      plan,
+      billingCycle,
+      message: "Redirecting to secure card checkout…",
+    });
+  }
 
   let result;
   if (paymentMethod === "jazzcash") {
@@ -198,6 +271,10 @@ const activatePlan = async ({
   paymentMethod,
   txnRef,
   amount,
+  currency = "PKR",
+  provider,
+  resetUsage = true,
+  extra = {},
 }) => {
   const now = new Date();
   const periodEnd =
@@ -207,15 +284,19 @@ const activatePlan = async ({
   const messagesLimit = MESSAGE_LIMITS[plan];
   const numericLimit = messagesLimit === Infinity ? -1 : messagesLimit || 0;
 
-  await Workspace.findByIdAndUpdate(workspaceId, {
+  const wsUpdate = {
     "subscription.plan": plan,
     "subscription.status": "active",
     "subscription.currentPeriodStart": now,
     "subscription.currentPeriodEnd": periodEnd,
     "usage.messagesLimit": numericLimit,
-    "usage.messagesThisMonth": 0,
-    "usage.lastResetDate": now,
-  });
+  };
+  // On renewals we keep the running usage; only reset on a fresh activation.
+  if (resetUsage) {
+    wsUpdate["usage.messagesThisMonth"] = 0;
+    wsUpdate["usage.lastResetDate"] = now;
+  }
+  await Workspace.findByIdAndUpdate(workspaceId, wsUpdate);
 
   await Subscription.findOneAndUpdate(
     { workspaceId },
@@ -224,6 +305,8 @@ const activatePlan = async ({
       billingCycle,
       status: "active",
       amount,
+      currency,
+      ...(provider ? { provider } : {}),
       currentPeriodStart: now,
       currentPeriodEnd: periodEnd,
       paymentMethod,
@@ -232,13 +315,109 @@ const activatePlan = async ({
       lastPaymentStatus: "paid",
       nextBillingDate: periodEnd,
       transactionId: txnRef,
+      ...extra,
     },
     { upsert: true, new: true },
   );
 };
 
+// @POST /api/billing/webhook/xendit — Xendit recurring webhooks (public).
+// Verified via the static x-callback-token header. Idempotent: Xendit may
+// re-deliver, and activatePlan is safe to run more than once per cycle.
+const handleXenditWebhook = asyncHandler(async (req, res) => {
+  if (!xenditService.verifyWebhook(req)) {
+    logger.warn("[Xendit webhook] invalid callback token — dropping");
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200); // ack fast
+
+  const body = req.body || {};
+  const event = (body.event || body.type || "").toLowerCase();
+  const data = body.data || body;
+  const meta = data.metadata || body.metadata || {};
+  const referenceId =
+    data.reference_id || data.plan_reference_id || body.reference_id;
+
+  logger.info(`[Xendit webhook] event=${event} ref=${referenceId}`);
+
+  // Resolve the workspace: prefer metadata, fall back to the pending sub row.
+  let sub = null;
+  if (meta.workspaceId) {
+    sub = await Subscription.findOne({ workspaceId: meta.workspaceId });
+  }
+  if (!sub && referenceId) {
+    sub = await Subscription.findOne({ xenditReferenceId: referenceId });
+  }
+  if (!sub) {
+    logger.warn(`[Xendit webhook] no subscription matched (ref=${referenceId})`);
+    return;
+  }
+
+  const plan = resolvePlanId(meta.plan || sub.plan);
+  const billingCycle = meta.billingCycle || sub.billingCycle || "monthly";
+  const planId =
+    data.plan_id || data.recurring_plan_id || data.id || sub.xenditPlanId;
+
+  if (
+    event.includes("plan.activated") ||
+    event.includes("plan_activated") ||
+    event.includes("recurring_plan.activated")
+  ) {
+    await Subscription.updateOne(
+      { _id: sub._id },
+      { provider: "xendit", xenditPlanId: planId, status: "active" },
+    );
+    return;
+  }
+
+  if (event.includes("cycle.succeeded") || event.includes("payment.succeeded")) {
+    // First charge OR a renewal — (re)activate and extend the period.
+    await activatePlan({
+      workspaceId: sub.workspaceId,
+      plan,
+      billingCycle,
+      paymentMethod: "card",
+      provider: "xendit",
+      txnRef: data.action_id || data.id || sub.xenditReferenceId,
+      amount: sub.amount,
+      currency: sub.currency || "USD",
+      resetUsage: true,
+      extra: planId ? { xenditPlanId: planId } : {},
+    });
+    return;
+  }
+
+  if (event.includes("cycle.retrying")) {
+    await Subscription.updateOne({ _id: sub._id }, { status: "past_due" });
+    return;
+  }
+
+  if (
+    event.includes("cycle.failed") ||
+    event.includes("plan.inactivated") ||
+    event.includes("payment.failed")
+  ) {
+    // All retries failed — suspend and drop the workspace back to free limits.
+    await Subscription.updateOne(
+      { _id: sub._id },
+      { status: "suspended", lastPaymentStatus: "failed" },
+    );
+    await Workspace.findByIdAndUpdate(sub.workspaceId, {
+      "subscription.status": "past_due",
+    });
+    return;
+  }
+});
+
 // @POST /api/billing/cancel — Cancel subscription
 const cancelSubscription = asyncHandler(async (req, res) => {
+  const sub = await Subscription.findOne({ workspaceId: req.workspace._id });
+
+  // Stop future auto-charges on the gateway side for card subscriptions.
+  if (sub?.provider === "xendit" && sub.xenditPlanId) {
+    await xenditService.deactivatePlan(sub.xenditPlanId).catch(() => {});
+  }
+
   await Subscription.findOneAndUpdate(
     { workspaceId: req.workspace._id },
     { cancelAtPeriodEnd: true, cancelledAt: new Date() },
@@ -290,4 +469,5 @@ module.exports = {
   confirmPayment,
   cancelSubscription,
   selectPlan,
+  handleXenditWebhook,
 };

@@ -8,8 +8,28 @@ const { encrypt, decrypt } = require("../utils/encryption");
 
 // GET /api/integrations/shopify
 exports.getShopify = asyncHandler(async (req, res) => {
-  const ws = await Workspace.findById(req.workspace._id);
-  const s = ws?.integrations?.shopify || {};
+  let ws = await Workspace.findById(req.workspace._id).select(
+    "+integrations.shopify.accessToken",
+  );
+  let s = ws?.integrations?.shopify || {};
+
+  // Back-fill scope status for stores connected before scope tracking existed.
+  if (s.storeUrl && s.accessToken && !s.scopesCheckedAt) {
+    try {
+      const scopes = await shopify.verifyScopes(
+        s.storeUrl,
+        decrypt(s.accessToken),
+      );
+      await Workspace.findByIdAndUpdate(req.workspace._id, {
+        "integrations.shopify.scopes": scopes,
+        "integrations.shopify.scopesCheckedAt": new Date(),
+      });
+      s = { ...s, scopes, scopesCheckedAt: new Date() };
+    } catch {
+      /* keep cached state */
+    }
+  }
+
   res.json({
     success: true,
     shopify: {
@@ -17,6 +37,11 @@ exports.getShopify = asyncHandler(async (req, res) => {
       connected: !!s.storeUrl,
       connectedAt: s.connectedAt || null,
       productCount: s.productCount || 0,
+      scopes: {
+        products: !!s.scopes?.products,
+        orders: !!s.scopes?.orders,
+      },
+      orderTrackingEnabled: !!s.scopes?.orders,
     },
   });
 });
@@ -35,17 +60,39 @@ exports.connectShopify = asyncHandler(async (req, res) => {
       typeof test.error === "string" ? test.error : "Shopify connection failed",
     );
   }
+
+  const scopes = await shopify.verifyScopes(storeUrl, accessToken);
+  if (!scopes.products) {
+    res.status(400);
+    throw new Error(
+      "We couldn't connect to your store. Please check your Shopify login and try again.",
+    );
+  }
+
   const products = await shopify.listProducts(storeUrl, accessToken, 50);
+  const warnings = [];
+  if (!scopes.orders) {
+    warnings.push(
+      "Order updates in DMs require additional store permissions. Reconnect your store if order lookups don't work.",
+    );
+  }
+
   await Workspace.findByIdAndUpdate(req.workspace._id, {
     "integrations.shopify.storeUrl": shopify.normalizeStoreUrl(storeUrl),
     "integrations.shopify.accessToken": encrypt(accessToken),
     "integrations.shopify.connectedAt": new Date(),
     "integrations.shopify.productCount": products.length,
+    "integrations.shopify.scopes": scopes,
+    "integrations.shopify.scopesCheckedAt": new Date(),
+    "integrations.shopify.authMethod": "manual",
   });
   res.json({
     success: true,
     shop: test.shop,
     products: products.length,
+    scopes,
+    orderTrackingEnabled: scopes.orders,
+    warnings,
   });
 });
 

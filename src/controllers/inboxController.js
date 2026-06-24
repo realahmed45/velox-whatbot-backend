@@ -158,10 +158,14 @@ const sendAgentMessage = asyncHandler(async (req, res) => {
   // Send via Instagram DM
   let result = { success: false, error: "No Instagram token" };
   try {
-    const wsWithToken = await require("../models/Workspace").findById(workspace._id).select("+instagram.accessToken");
+    const wsWithToken = await require("../models/Workspace")
+      .findById(workspace._id)
+      .select("+instagram.accessToken");
     if (wsWithToken?.instagram?.accessToken) {
       const token = decrypt(wsWithToken.instagram.accessToken);
-      const contact = await require("../models/Contact").findById(conversation.contactId).select("igUserId");
+      const contact = await require("../models/Contact")
+        .findById(conversation.contactId)
+        .select("igUserId");
       if (contact?.igUserId) {
         result = await ig.sendDM(token, contact.igUserId, text || "");
       }
@@ -175,7 +179,7 @@ const sendAgentMessage = asyncHandler(async (req, res) => {
     conversationId: conversation._id,
     contactId: conversation.contactId,
     direction: "outbound",
-    type: mediaUrl ? (mediaType || "image") : "text",
+    type: mediaUrl ? mediaType || "image" : "text",
     sender: "agent",
     text,
     mediaUrl,
@@ -288,20 +292,61 @@ const toggleBot = asyncHandler(async (req, res) => {
   const conv = await Conversation.findOne({
     _id: req.params.conversationId,
     workspaceId: req.workspace._id,
-  });
+  }).populate("contactId");
+
   if (!conv) {
     res.status(404);
     throw new Error("Conversation not found");
   }
+
+  const wasEnabled = conv.botEnabled;
   conv.botEnabled = !!enabled;
+
   if (!enabled) {
     conv.botPausedAt = new Date();
     conv.botPausedBy = req.user._id;
     conv.status = "human_active";
+
+    // Send system message to customer when agent takes over
+    if (wasEnabled && conv.contactId && req.workspace.instagramConnected) {
+      try {
+        const agentName = req.user.name || "our team";
+        const systemMessage = `👋 ${agentName} is now handling your conversation. How can we help you?`;
+
+        // Send via Instagram
+        const accessToken = decrypt(req.workspace.instagram.accessToken);
+        const igUserId = req.workspace.instagram.igUserId;
+        await ig.sendDM(
+          igUserId,
+          accessToken,
+          conv.contactId.instagramId,
+          systemMessage,
+        );
+
+        // Save message to database
+        await Message.create({
+          conversationId: conv._id,
+          workspaceId: req.workspace._id,
+          direction: "outbound",
+          messageType: "text",
+          text: systemMessage,
+          sentBy: req.user._id,
+          isSystemMessage: true,
+          status: "sent",
+        });
+      } catch (err) {
+        // Log error but don't fail the toggle operation
+        const logger = require("../utils/logger");
+        logger.error("Failed to send agent takeover message", {
+          error: err.message,
+        });
+      }
+    }
   } else {
     conv.botPausedAt = null;
     conv.status = "bot_active";
   }
+
   await conv.save();
   res.json({ success: true, conversation: conv });
 });

@@ -563,6 +563,48 @@ const handleAwayReply = async (workspace, contact, conv) => {
   return true;
 };
 
+// Increment monthly AI bot stats, resetting at the start of a new month.
+const bumpAiStats = async (workspace, { faq, handoff, lead }) => {
+  const now = new Date();
+  const last = workspace.aiStats?.monthlyResetAt
+    ? new Date(workspace.aiStats.monthlyResetAt)
+    : null;
+  const sameMonth =
+    last &&
+    last.getMonth() === now.getMonth() &&
+    last.getFullYear() === now.getFullYear();
+
+  if (!sameMonth) {
+    await Workspace.updateOne(
+      { _id: workspace._id },
+      {
+        $set: {
+          "aiStats.repliesThisMonth": 1,
+          "aiStats.faqHits": faq ? 1 : 0,
+          "aiStats.handoffs": handoff ? 1 : 0,
+          "aiStats.leadsCaptured": lead ? 1 : 0,
+          "aiStats.monthlyResetAt": now,
+          "aiStats.lastReplyAt": now,
+        },
+      },
+    );
+    return;
+  }
+
+  await Workspace.updateOne(
+    { _id: workspace._id },
+    {
+      $inc: {
+        "aiStats.repliesThisMonth": 1,
+        "aiStats.faqHits": faq ? 1 : 0,
+        "aiStats.handoffs": handoff ? 1 : 0,
+        "aiStats.leadsCaptured": lead ? 1 : 0,
+      },
+      $set: { "aiStats.lastReplyAt": now },
+    },
+  );
+};
+
 const handleAIReply = async (workspace, contact, conv, text) => {
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.AI_BOT))
     return false;
@@ -584,17 +626,40 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     }))
     .filter((m) => m.content);
 
-  const { reply, escalate } = await ai.generateReply({
+  // Pull live Shopify data (order status / matching products) for this message.
+  let extraContext = null;
+  try {
+    const shopifyAssist = require("../integrations/shopifyAssist");
+    extraContext = await shopifyAssist.buildContext(workspace, text, contact);
+  } catch (e) {
+    logger.warn(`[IG flow] shopifyAssist failed: ${e.message}`);
+  }
+
+  const { reply, escalate, provider } = await ai.generateReply({
     workspace,
     history,
     userMessage: text,
     contact,
+    extraContext,
     channel: "instagram",
   });
 
   if (escalate) {
     conv.status = "awaiting_human";
     await conv.save();
+  }
+
+  // Track value metrics (skip in Bot Tester / simulate mode).
+  if (!workspace.__simulate) {
+    const EMAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+    const PHONE_RE = /(\+?\d[\d\s\-()]{7,}\d)/;
+    const isLead =
+      !!aiCfg.leadCapture && (EMAIL_RE.test(text) || PHONE_RE.test(text));
+    bumpAiStats(workspace, {
+      faq: provider === "faq",
+      handoff: !!escalate,
+      lead: isLead,
+    }).catch(() => {});
   }
 
   // Smart Orders — strip the hidden order block before sending

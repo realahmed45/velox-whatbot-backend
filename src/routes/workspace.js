@@ -8,6 +8,20 @@ const {
 const { requireFeature } = require("../middleware/planGate");
 const { FEATURES } = require("../config/plans");
 const c = require("../controllers/workspaceController");
+const multer = require("multer");
+
+// In-memory upload for knowledge documents (PDF / text). 16 MB cap.
+const docUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok =
+      ["application/pdf", "text/plain", "application/octet-stream"].includes(
+        file.mimetype,
+      ) || /\.(pdf|txt|md)$/i.test(file.originalname);
+    cb(ok ? null : new Error("Only PDF or text files are supported"), ok);
+  },
+});
 
 router.use(protect);
 
@@ -21,6 +35,32 @@ router.put("/:workspaceId", requireOwner, c.updateWorkspace);
 // Activation checklist + AI knowledge
 router.patch("/:workspaceId/activation", c.updateActivation);
 router.put("/:workspaceId/ai-knowledge", requireOwner, c.updateAiKnowledge);
+router.post(
+  "/:workspaceId/ai-knowledge/import-url",
+  requireOwner,
+  c.importKnowledgeSource,
+);
+router.post(
+  "/:workspaceId/ai-knowledge/import-doc",
+  requireOwner,
+  docUpload.single("file"),
+  c.importKnowledgeDocument,
+);
+router.post(
+  "/:workspaceId/ai-knowledge/sync-shopify",
+  requireOwner,
+  c.syncShopifyKnowledge,
+);
+router.post(
+  "/:workspaceId/ai-knowledge/sources/:sourceId/resync",
+  requireOwner,
+  c.resyncKnowledgeSource,
+);
+router.delete(
+  "/:workspaceId/ai-knowledge/sources/:sourceId",
+  requireOwner,
+  c.deleteKnowledgeSource,
+);
 router.put("/:workspaceId/smart-orders", requireOwner, c.updateSmartOrders);
 
 // Team / onboarding

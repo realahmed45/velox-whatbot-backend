@@ -135,6 +135,28 @@ const workspaceSchema = new mongoose.Schema(
         type: [String],
         default: ["human", "agent", "support"],
       },
+
+      // What the bot should focus on (drives prompt behaviour).
+      // support | sales | leads | bookings | traffic
+      goals: { type: [String], default: ["support"] },
+      // Reply in the same language the follower used.
+      matchLanguage: { type: Boolean, default: true },
+      // Politely collect name + email/phone when a lead shows interest.
+      leadCapture: { type: Boolean, default: false },
+      // End replies with a light question/CTA to keep the conversation going.
+      engageBack: { type: Boolean, default: false },
+      // Optional link the bot can share (booking page, shop, link-in-bio).
+      ctaLink: { type: String, default: "" },
+    },
+
+    // Lightweight AI bot analytics (reset monthly) so creators see the value.
+    aiStats: {
+      repliesThisMonth: { type: Number, default: 0 },
+      faqHits: { type: Number, default: 0 },
+      handoffs: { type: Number, default: 0 },
+      leadsCaptured: { type: Number, default: 0 },
+      lastReplyAt: Date,
+      monthlyResetAt: Date,
     },
 
     // Subscription
@@ -428,6 +450,12 @@ const workspaceSchema = new mongoose.Schema(
         accessToken: { type: String, select: false },
         connectedAt: Date,
         productCount: { type: Number, default: 0 },
+        scopes: {
+          products: { type: Boolean, default: false },
+          orders: { type: Boolean, default: false },
+        },
+        scopesCheckedAt: Date,
+        authMethod: { type: String, enum: ["oauth", "manual"], default: "manual" },
       },
       mailchimp: {
         apiKey: { type: String, select: false },
@@ -463,10 +491,34 @@ const workspaceSchema = new mongoose.Schema(
       dismissed: { type: Boolean, default: false },
     },
 
-    // AI Knowledge Base — paste-in FAQ for "smart auto-reply"
+    // AI Knowledge Base — the bot's "training" material.
+    //  - `content`  : free-form notes the creator types in.
+    //  - `sources[]`: imported knowledge (website, products, etc.) each kept
+    //                 separately so the creator can re-sync / remove one.
     aiKnowledge: {
-      enabled: { type: Boolean, default: false },
-      content: { type: String, default: "", maxlength: 8000 },
+      enabled: { type: Boolean, default: true },
+      content: { type: String, default: "", maxlength: 12000 },
+      sources: [
+        {
+          type: {
+            type: String,
+            enum: ["website", "text", "products", "shopify"],
+            default: "website",
+          },
+          label: { type: String, default: "" },
+          url: { type: String, default: "" },
+          content: { type: String, default: "", maxlength: 8000 },
+          status: {
+            type: String,
+            enum: ["ready", "processing", "error"],
+            default: "ready",
+          },
+          error: { type: String, default: "" },
+          charCount: { type: Number, default: 0 },
+          addedAt: { type: Date, default: Date.now },
+          syncedAt: Date,
+        },
+      ],
       lastUpdatedAt: Date,
     },
 

@@ -30,6 +30,7 @@ const webhookIntegrationSchema = new mongoose.Schema(
     lastStatus: String,
     lastError: String,
     failureCount: { type: Number, default: 0 },
+    successCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

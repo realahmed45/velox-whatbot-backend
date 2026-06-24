@@ -97,13 +97,21 @@ router.post(
     setImmediate(async () => {
       let sentCount = 0;
       try {
-        const wsWithToken = await Workspace.findById(req.workspace._id).select("+instagram.accessToken");
-        const token = wsWithToken?.instagram?.accessToken ? decrypt(wsWithToken.instagram.accessToken) : null;
+        const wsWithToken = await Workspace.findById(req.workspace._id).select(
+          "+instagram.accessToken",
+        );
+        const token = wsWithToken?.instagram?.accessToken
+          ? decrypt(wsWithToken.instagram.accessToken)
+          : null;
         if (token) {
           for (const contact of contacts) {
             if (!contact.igUserId) continue;
             try {
-              const result = await ig.sendDM(token, contact.igUserId, campaign.message);
+              const result = await ig.sendDM(
+                token,
+                contact.igUserId,
+                campaign.message,
+              );
               if (result.success) sentCount++;
               await new Promise((r) => setTimeout(r, 300)); // rate limiting
             } catch {}
@@ -130,6 +138,52 @@ router.get(
       throw new Error("Campaign not found");
     }
     res.json({ success: true, campaign });
+  }),
+);
+
+// @POST /api/broadcasts/:id/preview — Preview broadcast
+router.post(
+  "/:id/preview",
+  asyncHandler(async (req, res) => {
+    const campaign = await BroadcastCampaign.findOne({
+      _id: req.params.id,
+      workspaceId: req.workspace._id,
+    });
+
+    if (!campaign) {
+      res.status(404);
+      throw new Error("Campaign not found");
+    }
+
+    // Count total recipients
+    const filter = {
+      workspaceId: req.workspace._id,
+      isDeleted: false,
+      optedIn: true,
+    };
+    const seg = campaign.targetSegment;
+    if (seg?.type === "tag" && seg.tags?.length)
+      filter.tags = { $in: seg.tags };
+
+    const totalRecipients = await Contact.countDocuments(filter);
+    const sampleContacts = await Contact.find(filter)
+      .select("name username phone")
+      .limit(5)
+      .lean();
+
+    res.json({
+      success: true,
+      preview: {
+        campaignName: campaign.name,
+        message: campaign.message,
+        mediaUrl: campaign.mediaUrl,
+        mediaType: campaign.mediaType,
+        estimatedReach: totalRecipients,
+        sampleRecipients: sampleContacts,
+        scheduledAt: campaign.scheduledAt,
+        status: campaign.status,
+      },
+    });
   }),
 );
 

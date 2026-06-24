@@ -47,10 +47,49 @@ const fallbackReply = (contact) => {
 
 const pickAiCfg = (workspace) => workspace.aiSettings || workspace.aiBot || {};
 
+const STOP = new Set([
+  "the", "a", "an", "is", "are", "do", "you", "your", "i", "to", "of", "and",
+  "for", "in", "on", "it", "this", "that", "can", "how", "what", "when",
+  "where", "me", "my", "we", "with", "have", "has",
+]);
+const tokenize = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP.has(w));
+
+/**
+ * Find an FAQ that clearly matches the user's message so we can answer
+ * instantly and verbatim — no LLM call, no tokens, perfectly on-message.
+ */
+const matchFaq = (faqs, message) => {
+  if (!Array.isArray(faqs) || !faqs.length) return null;
+  const msgNorm = String(message || "").toLowerCase().trim();
+  if (msgNorm.length < 2) return null;
+  const msgTokens = new Set(tokenize(message));
+  let best = null;
+  let bestScore = 0;
+  for (const f of faqs) {
+    if (!f?.question || !f?.answer) continue;
+    const qNorm = f.question.toLowerCase().trim();
+    if (qNorm.length >= 6 && msgNorm.includes(qNorm)) return f; // contains question
+    const qTokens = tokenize(f.question);
+    if (!qTokens.length) continue;
+    const overlap = qTokens.filter((t) => msgTokens.has(t)).length;
+    const score = overlap / qTokens.length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = f;
+    }
+  }
+  return bestScore >= 0.7 ? best : null;
+};
+
 /**
  * Build the system prompt from workspace.aiSettings (or legacy aiBot).
  */
-const buildSystemPrompt = (workspace, contact) => {
+const buildSystemPrompt = (workspace, contact, extraContext) => {
   const v2 = pickAiCfg(workspace);
   const legacy = workspace.aiBot || {};
   const ai = {
@@ -68,14 +107,26 @@ const buildSystemPrompt = (workspace, contact) => {
     lines.push("", "Business context:", ai.businessContext);
   }
 
-  // User-provided business knowledge (Settings → AI Knowledge tab)
+  // User-provided business knowledge: free-form notes + imported sources
+  // (website, product list, etc.). Bounded so we don't blow the context window.
   const knowledge = workspace.aiKnowledge;
-  if (knowledge?.enabled && knowledge?.content?.trim()) {
-    lines.push(
-      "",
-      "Business knowledge (use these facts when answering questions; do NOT invent details outside this):",
-      knowledge.content.trim(),
-    );
+  if (knowledge?.enabled) {
+    const blocks = [];
+    if (knowledge.content?.trim()) blocks.push(knowledge.content.trim());
+    (knowledge.sources || [])
+      .filter((s) => s && s.status === "ready" && s.content?.trim())
+      .forEach((s) => {
+        const head = s.label || s.url || s.type;
+        blocks.push(`[${head}]\n${s.content.trim()}`);
+      });
+    if (blocks.length) {
+      const merged = blocks.join("\n\n").slice(0, 14000);
+      lines.push(
+        "",
+        "Business knowledge (use these facts when answering questions; do NOT invent details outside this):",
+        merged,
+      );
+    }
   }
 
   // Smart Orders — turn the AI into a sales closer when enabled
@@ -125,6 +176,53 @@ const buildSystemPrompt = (workspace, contact) => {
       });
   }
 
+  // ── Goals & smart behaviour (value options the creator picks) ──
+  const GOAL_TEXT = {
+    support: "Answer questions accurately and helpfully.",
+    sales:
+      "Recommend the most relevant products and gently guide the person toward a purchase.",
+    leads:
+      "Spot genuine interest and turn the person into a lead. Be helpful first, then move things forward.",
+    bookings:
+      "Help the person book or schedule, and collect the details needed to confirm.",
+    traffic:
+      "When relevant, point the person to the right link instead of long explanations.",
+  };
+  const goals = Array.isArray(v2.goals) && v2.goals.length ? v2.goals : ["support"];
+  const goalLines = goals.map((g) => GOAL_TEXT[g]).filter(Boolean);
+  if (goalLines.length) {
+    lines.push("", "Your goals on every reply:");
+    goalLines.forEach((g) => lines.push(`- ${g}`));
+  }
+  if (v2.leadCapture) {
+    lines.push(
+      "When someone shows real interest, naturally ask for their name and best contact (email or phone) so the team can follow up. Ask once, don't nag.",
+    );
+  }
+  if (v2.matchLanguage) {
+    lines.push("Always reply in the same language the person wrote to you in.");
+  }
+  if (v2.engageBack) {
+    lines.push(
+      "End most replies with a short, friendly question or next step to keep the conversation going.",
+    );
+  }
+  if (v2.ctaLink && String(v2.ctaLink).trim()) {
+    lines.push(
+      `When it helps, you may share this link: ${String(v2.ctaLink).trim()}`,
+    );
+  }
+
+  // Live integration data (Shopify order status / products) for THIS message.
+  if (extraContext && String(extraContext).trim()) {
+    lines.push(
+      "",
+      "─── LIVE STORE DATA (highest priority for this reply) ───",
+      String(extraContext).trim(),
+      "─── END LIVE STORE DATA ───",
+    );
+  }
+
   const handle =
     contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `The customer's identifier is: ${handle}.`);
@@ -155,6 +253,7 @@ const generateReply = async ({
   history = [],
   userMessage,
   contact,
+  extraContext = null,
 }) => {
   const ai = {
     ...(workspace.aiBot || {}),
@@ -170,6 +269,20 @@ const generateReply = async ({
   let escalate = escalateKw.some((kw) =>
     lower.includes(String(kw).toLowerCase()),
   );
+
+  // 1b. Instant FAQ answer — reply verbatim when a saved question clearly
+  //     matches. Skipped when we have live store data to weave in.
+  if (!escalate && !extraContext) {
+    const faqHit = matchFaq(ai.faqs, userMessage);
+    if (faqHit) {
+      return {
+        reply: faqHit.answer,
+        escalate: false,
+        tokens: 0,
+        provider: "faq",
+      };
+    }
+  }
 
   // 2. Determine provider
   const requested = (ai.provider || "groq").toLowerCase();
@@ -221,7 +334,7 @@ const generateReply = async ({
     };
   }
 
-  const systemPrompt = buildSystemPrompt(workspace, contact);
+  const systemPrompt = buildSystemPrompt(workspace, contact, extraContext);
 
   try {
     const response = await client.chat.completions.create({
@@ -266,7 +379,49 @@ const generateReply = async ({
   }
 };
 
+/**
+ * Return the first available chat client (Groq preferred, OpenAI fallback).
+ */
+const getAnyClient = () => {
+  let client = getGroqClient();
+  if (client) return { client, model: "llama-3.3-70b-versatile", provider: "groq" };
+  client = getOpenaiClient();
+  if (client) return { client, model: "gpt-4o-mini", provider: "openai" };
+  return { client: null, model: null, provider: "none" };
+};
+
+/**
+ * Low-level one-shot completion used by tools like the website importer.
+ * Returns the text content, or null if no AI provider is configured / it fails.
+ */
+const complete = async ({
+  system,
+  user,
+  maxTokens = 700,
+  temperature = 0.3,
+}) => {
+  const { client, model } = getAnyClient();
+  if (!client) return null;
+  try {
+    const r = await client.chat.completions.create({
+      model,
+      messages: [
+        ...(system ? [{ role: "system", content: system }] : []),
+        { role: "user", content: user },
+      ],
+      temperature,
+      max_tokens: maxTokens,
+    });
+    return r.choices?.[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    logger.error("AI complete() failed", { err: err.message });
+    return null;
+  }
+};
+
 module.exports = {
   generateReply,
   buildSystemPrompt,
+  getAnyClient,
+  complete,
 };

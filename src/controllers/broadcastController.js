@@ -148,6 +148,57 @@ const previewTargets = asyncHandler(async (req, res) => {
   res.json({ success: true, estimatedReach: count });
 });
 
+// @POST /api/broadcasts/:id/preview — Preview broadcast before sending
+const previewBroadcast = asyncHandler(async (req, res) => {
+  const campaign = await BroadcastCampaign.findOne({
+    _id: req.params.id,
+    workspaceId: req.workspace._id,
+  });
+
+  if (!campaign) {
+    res.status(404);
+    throw new Error("Campaign not found");
+  }
+
+  // Count total recipients
+  const totalRecipients = await countTargetContacts(
+    req.workspace._id,
+    campaign.targetSegment,
+  );
+
+  // Get sample of 5 contacts who will receive it
+  const Contact = require("../models/Contact");
+  const filter = {
+    workspaceId: req.workspace._id,
+    isDeleted: false,
+    optedIn: true,
+  };
+  const segment = campaign.targetSegment;
+
+  if (segment?.type === "tag" && segment.tags?.length) {
+    filter.tags = { $in: segment.tags };
+  }
+
+  const sampleContacts = await Contact.find(filter)
+    .select("name username phone")
+    .limit(5)
+    .lean();
+
+  res.json({
+    success: true,
+    preview: {
+      campaignName: campaign.name,
+      message: campaign.message,
+      mediaUrl: campaign.mediaUrl,
+      mediaType: campaign.mediaType,
+      estimatedReach: totalRecipients,
+      sampleRecipients: sampleContacts,
+      scheduledAt: campaign.scheduledAt,
+      status: campaign.status,
+    },
+  });
+});
+
 const countTargetContacts = async (workspaceId, segment) => {
   const filter = { workspaceId, isDeleted: false, optedIn: true };
   if (segment?.type === "tag" && segment.tags?.length) {
@@ -169,4 +220,5 @@ module.exports = {
   getCampaign,
   deleteCampaign,
   previewTargets,
+  previewBroadcast,
 };

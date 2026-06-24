@@ -2,6 +2,60 @@ const asyncHandler = require("express-async-handler");
 const Flow = require("../models/Flow");
 const { FLOW_TEMPLATES } = require("../utils/flowTemplates");
 
+/**
+ * Validate flow structure before activation
+ * @param {Array} nodes - Flow nodes
+ * @param {Array} edges - Flow edges
+ * @returns {Object} { valid: boolean, errors: string[] }
+ */
+const validateFlow = (nodes, edges) => {
+  const errors = [];
+
+  if (!nodes || nodes.length === 0) {
+    errors.push("Flow must have at least one node");
+    return { valid: false, errors };
+  }
+
+  // Check for trigger node
+  const hasTrigger = nodes.some((n) => n.type === "trigger");
+  if (!hasTrigger) {
+    errors.push("Flow must have a trigger node");
+  }
+
+  // Build adjacency map for validation
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const edgeMap = new Map();
+
+  edges?.forEach((edge) => {
+    if (!nodeIds.has(edge.source)) {
+      errors.push(`Edge references non-existent source node: ${edge.source}`);
+    }
+    if (!nodeIds.has(edge.target)) {
+      errors.push(`Edge references non-existent target node: ${edge.target}`);
+    }
+
+    if (!edgeMap.has(edge.source)) {
+      edgeMap.set(edge.source, []);
+    }
+    edgeMap.get(edge.source).push(edge.target);
+  });
+
+  // Check for orphaned nodes (except trigger which starts the flow)
+  nodes.forEach((node) => {
+    if (node.type !== "trigger") {
+      const hasIncomingEdge = edges?.some((e) => e.target === node.id);
+      if (!hasIncomingEdge) {
+        errors.push(`Node "${node.data?.label || node.id}" is disconnected`);
+      }
+    }
+  });
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+};
+
 // @GET /api/flows — List all flows for workspace
 const getFlows = asyncHandler(async (req, res) => {
   const { status } = req.query;
@@ -87,9 +141,19 @@ const updateFlow = asyncHandler(async (req, res) => {
   if (edges !== undefined) flow.edges = edges;
   if (priority !== undefined) flow.priority = priority;
 
+  // Validate flow before activating
+  if (status === "active" && status !== flow.status) {
+    const validation = validateFlow(nodes || flow.nodes, edges || flow.edges);
+    if (!validation.valid) {
+      res.status(400);
+      throw new Error(
+        `Flow validation failed: ${validation.errors.join(", ")}`,
+      );
+    }
+    flow.publishedAt = new Date();
+  }
+
   if (status !== undefined) {
-    if (status === "active" && flow.status !== "active")
-      flow.publishedAt = new Date();
     flow.status = status;
     flow.version += 1;
   }

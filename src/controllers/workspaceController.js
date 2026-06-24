@@ -418,12 +418,261 @@ const updateAiKnowledge = asyncHandler(async (req, res) => {
   const { content, enabled } = req.body || {};
   ws.aiKnowledge = ws.aiKnowledge || {};
   if (typeof content === "string") {
-    ws.aiKnowledge.content = content.slice(0, 8000);
+    ws.aiKnowledge.content = content.slice(0, 12000);
     ws.aiKnowledge.lastUpdatedAt = new Date();
   }
   if (typeof enabled === "boolean") ws.aiKnowledge.enabled = enabled;
   await ws.save();
   res.json({ success: true, aiKnowledge: ws.aiKnowledge });
+});
+
+// @POST /api/workspaces/:workspaceId/ai-knowledge/import-url
+// Scrape a website (+ key internal pages), distill it with AI, and store it as
+// a knowledge source the DM bot can use.
+const importKnowledgeSource = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const { importWebsite } = require("../services/ai/websiteImporter");
+  const ws = await Workspace.findById(req.workspace._id);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+
+  const { url } = req.body || {};
+  if (!url || !String(url).trim()) {
+    res.status(400);
+    throw new Error("A website URL is required");
+  }
+
+  ws.aiKnowledge = ws.aiKnowledge || {};
+  ws.aiKnowledge.sources = ws.aiKnowledge.sources || [];
+  if (ws.aiKnowledge.sources.length >= 12) {
+    res.status(400);
+    throw new Error("You can keep up to 12 sources. Remove one first.");
+  }
+
+  let result;
+  try {
+    result = await importWebsite(url);
+  } catch (err) {
+    res.status(422);
+    throw new Error(err.message || "Could not import that website");
+  }
+
+  ws.aiKnowledge.enabled = true;
+  ws.aiKnowledge.sources.push({
+    type: "website",
+    label: result.title,
+    url: result.url,
+    content: result.content,
+    status: "ready",
+    charCount: result.charCount,
+    addedAt: new Date(),
+    syncedAt: new Date(),
+  });
+  ws.aiKnowledge.lastUpdatedAt = new Date();
+  await ws.save();
+
+  const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];
+  res.json({ success: true, source, pagesScraped: result.pagesScraped });
+});
+
+// @POST /api/workspaces/:workspaceId/ai-knowledge/import-doc  (multipart)
+// Upload a PDF / text doc (menu, price list, policy) → distilled knowledge.
+const importKnowledgeDocument = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const { importDocument } = require("../services/ai/websiteImporter");
+  const ws = await Workspace.findById(req.workspace._id);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  if (!req.file) {
+    res.status(400);
+    throw new Error("No file uploaded");
+  }
+  ws.aiKnowledge = ws.aiKnowledge || {};
+  ws.aiKnowledge.sources = ws.aiKnowledge.sources || [];
+  if (ws.aiKnowledge.sources.length >= 12) {
+    res.status(400);
+    throw new Error("You can keep up to 12 sources. Remove one first.");
+  }
+
+  let result;
+  try {
+    result = await importDocument(
+      req.file.buffer,
+      req.file.originalname,
+      req.file.mimetype,
+    );
+  } catch (err) {
+    res.status(422);
+    throw new Error(err.message || "Could not read that file");
+  }
+
+  ws.aiKnowledge.enabled = true;
+  ws.aiKnowledge.sources.push({
+    type: "text",
+    label: result.title,
+    url: "",
+    content: result.content,
+    status: "ready",
+    charCount: result.charCount,
+    addedAt: new Date(),
+    syncedAt: new Date(),
+  });
+  ws.aiKnowledge.lastUpdatedAt = new Date();
+  await ws.save();
+  res.json({
+    success: true,
+    source: ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1],
+  });
+});
+
+// @POST /api/workspaces/:workspaceId/ai-knowledge/sources/:sourceId/resync
+// Re-fetch a website source (or Shopify) so the bot's knowledge stays fresh.
+const resyncKnowledgeSource = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const ws = await Workspace.findById(req.workspace._id).select(
+    "+integrations.shopify.accessToken",
+  );
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const src = (ws.aiKnowledge?.sources || []).find(
+    (s) => String(s._id) === String(req.params.sourceId),
+  );
+  if (!src) {
+    res.status(404);
+    throw new Error("Source not found");
+  }
+
+  try {
+    if (src.type === "website" && src.url) {
+      const { importWebsite } = require("../services/ai/websiteImporter");
+      const r = await importWebsite(src.url);
+      src.content = r.content;
+      src.charCount = r.charCount;
+      src.label = r.title || src.label;
+    } else if (src.type === "shopify") {
+      const shopify = require("../services/shopifyService");
+      const { decrypt } = require("../utils/encryption");
+      const s = ws.integrations?.shopify;
+      if (!s?.storeUrl || !s?.accessToken) {
+        res.status(400);
+        throw new Error("Shopify is no longer connected");
+      }
+      const products = await shopify.listProducts(
+        s.storeUrl,
+        decrypt(s.accessToken),
+        100,
+      );
+      const content = `Live Shopify catalog (${products.length} products):\n${products
+        .map((p) => {
+          const price = p.price ? `${p.currency || ""} ${p.price}`.trim() : "";
+          const stock = p.inStock ? "" : " (out of stock)";
+          return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
+        })
+        .join("\n")}`.slice(0, 8000);
+      src.content = content;
+      src.charCount = content.length;
+    } else {
+      res.status(400);
+      throw new Error("This source can't be re-synced");
+    }
+  } catch (err) {
+    res.status(422);
+    throw new Error(err.message || "Re-sync failed");
+  }
+
+  src.status = "ready";
+  src.syncedAt = new Date();
+  ws.aiKnowledge.lastUpdatedAt = new Date();
+  await ws.save();
+  res.json({ success: true, source: src });
+});
+
+// @POST /api/workspaces/:workspaceId/ai-knowledge/sync-shopify
+// Pull the live Shopify catalog and store it as a knowledge source so the bot
+// can quote real products + prices. Replaces any previous Shopify source.
+const syncShopifyKnowledge = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const shopify = require("../services/shopifyService");
+  const { decrypt } = require("../utils/encryption");
+
+  const ws = await Workspace.findById(req.workspace._id).select(
+    "+integrations.shopify.accessToken",
+  );
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const s = ws.integrations?.shopify;
+  if (!s?.storeUrl || !s?.accessToken) {
+    res.status(400);
+    throw new Error("Connect your Shopify store first (Integrations → Shopify)");
+  }
+
+  let products;
+  try {
+    products = await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 100);
+  } catch (err) {
+    res.status(422);
+    throw new Error(`Couldn't fetch Shopify products: ${err.message || ""}`);
+  }
+  if (!products.length) {
+    res.status(422);
+    throw new Error("No products found in your Shopify store");
+  }
+
+  const catalogLines = products.map((p) => {
+    const price = p.price ? `${p.currency || ""} ${p.price}`.trim() : "";
+    const stock = p.inStock ? "" : " (out of stock)";
+    return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
+  });
+  const content = `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
+    "\n",
+  )}`.slice(0, 8000);
+
+  ws.aiKnowledge = ws.aiKnowledge || {};
+  ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(
+    (x) => x.type !== "shopify",
+  );
+  ws.aiKnowledge.enabled = true;
+  ws.aiKnowledge.sources.push({
+    type: "shopify",
+    label: `Shopify · ${s.storeUrl}`,
+    url: `https://${s.storeUrl}`,
+    content,
+    status: "ready",
+    charCount: content.length,
+    addedAt: new Date(),
+    syncedAt: new Date(),
+  });
+  ws.aiKnowledge.lastUpdatedAt = new Date();
+  await ws.save();
+
+  const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];
+  res.json({ success: true, source, productCount: products.length });
+});
+
+// @DELETE /api/workspaces/:workspaceId/ai-knowledge/sources/:sourceId
+const deleteKnowledgeSource = asyncHandler(async (req, res) => {
+  const Workspace = require("../models/Workspace");
+  const ws = await Workspace.findById(req.workspace._id);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const { sourceId } = req.params;
+  ws.aiKnowledge = ws.aiKnowledge || {};
+  ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(
+    (s) => String(s._id) !== String(sourceId),
+  );
+  ws.aiKnowledge.lastUpdatedAt = new Date();
+  await ws.save();
+  res.json({ success: true, sources: ws.aiKnowledge.sources });
 });
 
 // @PUT /api/workspaces/:workspaceId/smart-orders — catalog + payment instructions
@@ -458,6 +707,11 @@ module.exports = {
   updateWorkspace,
   updateActivation,
   updateAiKnowledge,
+  importKnowledgeSource,
+  importKnowledgeDocument,
+  resyncKnowledgeSource,
+  syncShopifyKnowledge,
+  deleteKnowledgeSource,
   updateSmartOrders,
   saveDmMessages,
   saveAutomationSettings,
