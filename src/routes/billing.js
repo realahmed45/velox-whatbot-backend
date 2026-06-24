@@ -17,14 +17,15 @@ const {
   handleXenditWebhook,
 } = require("../controllers/billingController");
 
+// Public — no auth/workspace needed (used by the marketing pricing page)
+router.get("/plans", getPlans);
+
 // Public — Xendit posts recurring webhooks here (verified via x-callback-token).
 // Must be registered BEFORE the auth middleware below.
 router.post("/webhook/xendit", handleXenditWebhook);
 
+// Everything below requires an authenticated user + workspace
 router.use(protect);
-
-router.get("/plans", getPlans); // Public — no workspace needed
-
 router.use(requireWorkspace);
 router.get("/subscription", getSubscription);
 router.get("/invoices", getInvoices);
