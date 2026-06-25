@@ -43,6 +43,10 @@ const sanitizeObject = (obj) => {
  * Middleware to sanitize request body
  */
 const sanitizeInput = (req, res, next) => {
+  // Never touch raw Buffer bodies (e.g. webhook routes using express.raw) —
+  // iterating a Buffer would convert it into a plain {0:.., 1:..} object and
+  // destroy the raw bytes needed for signature verification + JSON parsing.
+  if (Buffer.isBuffer(req.body)) return next();
   if (req.body && typeof req.body === "object") {
     req.body = sanitizeObject(req.body);
   }

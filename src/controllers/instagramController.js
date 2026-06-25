@@ -1256,8 +1256,16 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
   let parsedBody;
   if (Buffer.isBuffer(rawBodyInput)) {
     rawBytes = rawBodyInput;
+  } else if (
+    rawBodyInput &&
+    typeof rawBodyInput === "object" &&
+    typeof rawBodyInput["0"] === "number"
+  ) {
+    // A Buffer that got serialized to a numeric-keyed object (e.g. by a
+    // middleware that iterated it). Reconstruct the original bytes.
+    rawBytes = Buffer.from(Object.values(rawBodyInput));
   } else if (rawBodyInput && typeof rawBodyInput === "object") {
-    // express.json already parsed it — reconstruct buffer and use the object.
+    // express.json already parsed it into the real event object.
     rawBytes = Buffer.from(JSON.stringify(rawBodyInput));
     parsedBody = rawBodyInput;
   } else {
@@ -1298,9 +1306,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
 
   // Log the raw shape — critical for understanding Zernio's exact payload format.
   logger.info(
-    `[BotlifyIG webhook] received ${events.length} event(s) keys=${Object.keys(body).join(",")} raw: ${JSON.stringify(
-      body,
-    ).slice(0, 2000)}`,
+    `[BotlifyIG webhook] received ${events.length} event(s) raw: ${JSON.stringify(body).slice(0, 1500)}`,
   );
 
   for (const evt of events) {
@@ -1321,10 +1327,12 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       evt.data?.accountId ||
       msg.accountId ||
       msg.account?.id ||
+      evt.platformMessagingId ||
+      evt.platformMessageId ||
       null;
     if (!accountId) {
       logger.warn(
-        `[BotlifyIG webhook] no accountId on event type=${evtType} allKeys=${JSON.stringify(Object.keys(evt))} full=${JSON.stringify(evt).slice(0, 500)}`,
+        `[BotlifyIG webhook] no accountId on event type=${evtType} keys=${Object.keys(evt).join(",")} msgKeys=${Object.keys(msg).join(",")}`,
       );
       continue;
     }
@@ -1427,6 +1435,11 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       evt.userId ||
       evt.user?.id ||
       msg.from?.id ||
+      msg.senderId ||
+      msg.sender_id ||
+      msg.participantId ||
+      msg.participant?.id ||
+      msg.fromId ||
       evt.data?.sender?.id ||
       evt.conversation?.participantId ||
       evt.contact?.id ||
@@ -1444,11 +1457,15 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     const senderUsername =
       msg.sender?.username ||
       evt.sender?.username ||
+      msg.participantUsername ||
+      msg.participant?.username ||
       evt.conversation?.participantUsername ||
       null;
     const senderName =
       msg.sender?.name ||
       evt.sender?.name ||
+      msg.participantName ||
+      msg.participant?.name ||
       evt.conversation?.participantName ||
       null;
 
@@ -1488,7 +1505,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           senderName,
           providerConversationId:
             evt.conversation?.id || msg.conversationId || null,
-          text: msg.text || evt.text || "",
+          text: msg.text || msg.content || msg.body || evt.text || "",
         });
         break;
       }
