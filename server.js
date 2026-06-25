@@ -96,8 +96,13 @@ app.use(
 );
 
 // ─── Body Parsing ──────────────────────────────────────────
-// Instagram webhook needs raw body for signature verification
-app.use("/api/instagram/webhook", express.raw({ type: "application/json" }));
+// Instagram webhook needs raw body for signature verification.
+// Apply express.raw to BOTH webhook paths (Meta + Zernio/BotlifyIG) so
+// req.body is always a Buffer before express.json can parse it.
+app.use(
+  ["/api/instagram/webhook", "/api/instagram/webhook/botlify"],
+  express.raw({ type: "*/*" }),  // match any content-type Zernio may send
+);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 

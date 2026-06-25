@@ -1241,43 +1241,66 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
 // raw webhook so we translate to our internal `handleWebhookEvent` format.
 // Signature: X-Botlify-Signature: sha256=<hex(hmac(secret, rawBody))>
 exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
-  const rawBody = req.body; // Buffer (express.raw applied in server.js)
+  const rawBodyInput = req.body; // Buffer when express.raw matched; object if not
   const secret = process.env.BOTLIFY_IG_PROVIDER_WEBHOOK_SECRET;
   const sig =
     req.headers["x-botlify-signature"] || req.headers["x-zernio-signature"];
 
+  // Always log that we received something — the #1 debug signal.
+  logger.info(
+    `[BotlifyIG webhook] inbound ${Buffer.isBuffer(rawBodyInput) ? rawBodyInput.length : typeof rawBodyInput}B sig=${sig ? "present" : "missing"}`,
+  );
+
+  // Normalize to raw bytes for signature check and JSON parsing.
+  let rawBytes;
+  let parsedBody;
+  if (Buffer.isBuffer(rawBodyInput)) {
+    rawBytes = rawBodyInput;
+  } else if (rawBodyInput && typeof rawBodyInput === "object") {
+    // express.json already parsed it — reconstruct buffer and use the object.
+    rawBytes = Buffer.from(JSON.stringify(rawBodyInput));
+    parsedBody = rawBodyInput;
+  } else {
+    logger.warn("[BotlifyIG webhook] unexpected body type — ignoring");
+    return res.sendStatus(200);
+  }
+
+  // Verify HMAC signature if secret is configured.
   if (secret && sig) {
+    let expected;
     try {
-      const expected =
-        "sha256=" +
-        crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
-      if (sig !== expected) {
-        logger.warn("[BotlifyIG webhook] signature mismatch — dropping");
-        return res.sendStatus(200);
-      }
-    } catch {
+      expected = "sha256=" + crypto.createHmac("sha256", secret).update(rawBytes).digest("hex");
+    } catch (e) {
+      logger.warn("[BotlifyIG webhook] signature computation failed", { err: e.message });
+      // Continue without signature check rather than silently dropping.
+    }
+    if (expected && sig !== expected) {
+      logger.warn("[BotlifyIG webhook] signature mismatch — dropping");
       return res.sendStatus(200);
     }
   }
 
   res.sendStatus(200); // ack fast
 
-  let body;
-  try {
-    body = JSON.parse(rawBody.toString("utf8"));
-  } catch {
-    logger.warn("[BotlifyIG webhook] malformed JSON");
-    return;
+  // Parse body if not already parsed.
+  if (!parsedBody) {
+    try {
+      parsedBody = JSON.parse(rawBytes.toString("utf8"));
+    } catch {
+      logger.warn("[BotlifyIG webhook] malformed JSON");
+      return;
+    }
   }
+  const body = parsedBody;
 
   // Normalize: provider may send a single event or an array.
   const events = Array.isArray(body) ? body : body.events || [body];
 
-  // Diagnostic: log the raw shape so we can see exactly what Zernio sends.
+  // Log the raw shape — critical for understanding Zernio's exact payload format.
   logger.info(
-    `[BotlifyIG webhook] received ${events.length} event(s): ${JSON.stringify(
+    `[BotlifyIG webhook] received ${events.length} event(s) keys=${Object.keys(body).join(",")} raw: ${JSON.stringify(
       body,
-    ).slice(0, 1500)}`,
+    ).slice(0, 2000)}`,
   );
 
   for (const evt of events) {
@@ -1296,29 +1319,38 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       evt.profileId ||
       evt.account?.profileId ||
       evt.data?.accountId ||
+      msg.accountId ||
+      msg.account?.id ||
       null;
     if (!accountId) {
       logger.warn(
-        `[BotlifyIG webhook] no accountId on event type=${evtType} keys=${Object.keys(
-          evt,
-        ).join(",")}`,
+        `[BotlifyIG webhook] no accountId on event type=${evtType} allKeys=${JSON.stringify(Object.keys(evt))} full=${JSON.stringify(evt).slice(0, 500)}`,
       );
       continue;
     }
 
-    // Find the workspace by encrypted botlifyAccountId.
-    const all = await Workspace.find({
+    // Find the workspace — check both botlify_oauth (Zernio) and meta_oauth connections.
+    // Zernio stores accountId in botlifyAccountId; fallback checks igUserId for accounts
+    // that may have been re-linked.
+    const allWs = await Workspace.find({
       "instagram.status": "connected",
-      "instagram.connectionType": "botlify_oauth",
-    }).select("+instagram.botlifyAccountId");
+    }).select("+instagram.botlifyAccountId +instagram.igUserId instagram.connectionType");
 
     let target = null;
     const candidates = [];
-    for (const ws of all) {
+    for (const ws of allWs) {
       try {
         if (ws.instagram?.botlifyAccountId) {
           const decoded = decrypt(ws.instagram.botlifyAccountId);
-          candidates.push(decoded);
+          candidates.push(`botlify:${decoded}`);
+          if (decoded === accountId || decoded === String(accountId)) {
+            target = ws;
+            break;
+          }
+        }
+        if (!target && ws.instagram?.igUserId) {
+          const decoded = decrypt(ws.instagram.igUserId);
+          candidates.push(`ig:${decoded}`);
           if (decoded === accountId || decoded === String(accountId)) {
             target = ws;
             break;
@@ -1328,9 +1360,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     }
     if (!target) {
       logger.warn(
-        `[BotlifyIG webhook] no workspace matched accountId=${accountId}. Known botlifyAccountIds=[${candidates.join(
-          ", ",
-        )}]`,
+        `[BotlifyIG webhook] no workspace matched accountId=${accountId}. KnownIds=[${candidates.join(", ")}]`,
       );
       continue;
     }
