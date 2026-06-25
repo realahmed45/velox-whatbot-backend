@@ -271,9 +271,12 @@ const sendAndLog = async ({
     if (Array.isArray(workspace.__outbox)) workspace.__outbox.push(finalText);
   } else {
     const accessToken = decrypt(workspace.instagram.accessToken);
+    const convId = conversation.metadata?.providerConversationId;
+    logger.info(`[sendDM] ws=${workspace._id} recipient=${contact.igUserId} convId=${convId || "none"} trigger=${triggerType}`);
     result = await sendDM(accessToken, contact.igUserId, finalText + brand, {
-      conversationId: conversation.metadata?.providerConversationId,
+      conversationId: convId,
     });
+    logger.info(`[sendDM] result: success=${result.success} msgId=${result.messageId || "n/a"} err=${result.error || "none"}`);
   }
 
   await Message.create({
@@ -606,15 +609,24 @@ const bumpAiStats = async (workspace, { faq, handoff, lead }) => {
 };
 
 const handleAIReply = async (workspace, contact, conv, text) => {
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.AI_BOT))
+  const plan = workspace.subscription?.plan || "free";
+  if (!planHasFeature(plan, FEATURES.AI_BOT)) {
+    logger.info(`[AI] ws=${workspace._id} plan=${plan} has no AI_BOT feature — skip`);
     return false;
+  }
   // Read v2 aiSettings first, fall back to legacy aiBot for older installs.
   const aiCfg = workspace.aiSettings || workspace.aiBot || {};
   // Only an explicit OFF disables the bot. Missing `enabled` (legacy/partial
   // docs) is treated as ON so a workspace that has AI knowledge still replies.
-  if (aiCfg.enabled === false) return false;
+  if (aiCfg.enabled === false) {
+    logger.info(`[AI] ws=${workspace._id} aiSettings.enabled=false — skip`);
+    return false;
+  }
   const maxTurns = aiCfg.maxTurnsPerConversation || 20;
-  if ((conv.botReplyCount || 0) >= maxTurns) return false;
+  if ((conv.botReplyCount || 0) >= maxTurns) {
+    logger.info(`[AI] ws=${workspace._id} maxTurns=${maxTurns} reached — skip`);
+    return false;
+  }
 
   const msgs = await Message.find({ conversationId: conv._id })
     .sort({ createdAt: -1 })
@@ -637,6 +649,8 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     logger.warn(`[IG flow] shopifyAssist failed: ${e.message}`);
   }
 
+  logger.info(`[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`);
+
   const { reply, escalate, provider } = await ai.generateReply({
     workspace,
     history,
@@ -645,6 +659,8 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     extraContext,
     channel: "instagram",
   });
+
+  logger.info(`[AI] ws=${workspace._id} reply="${(reply || "").slice(0, 80)}" provider=${provider} escalate=${!!escalate}`);
 
   if (escalate) {
     conv.status = "awaiting_human";
