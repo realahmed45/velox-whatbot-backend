@@ -658,8 +658,8 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     logger.info(`[AI] ws=${workspace._id} aiSettings.enabled=false — skip`);
     return false;
   }
-  const maxTurns = aiCfg.maxTurnsPerConversation || 20;
-  if ((conv.botReplyCount || 0) >= maxTurns) {
+  const maxTurns = aiCfg.maxTurnsPerConversation || 200;
+  if (maxTurns > 0 && (conv.botReplyCount || 0) >= maxTurns) {
     logger.info(`[AI] ws=${workspace._id} maxTurns=${maxTurns} reached — skip`);
     return false;
   }
@@ -1431,6 +1431,18 @@ const handleWebhookEvent = async (workspaceId, event) => {
       logger.info(
         `[IG flow] ws=${workspace._id} entering trigger chain (botReplyCount=${conv.botReplyCount || 0})`,
       );
+
+      // Auto-reset botReplyCount if the last bot message was >24h ago — treat
+      // it as a fresh conversation session so the AI limit never silently cuts off
+      // a returning customer.
+      if (
+        conv.botReplyCount > 0 &&
+        conv.lastBotMessageAt &&
+        Date.now() - new Date(conv.lastBotMessageAt).getTime() > 24 * 60 * 60 * 1000
+      ) {
+        conv.botReplyCount = 0;
+        logger.info(`[IG flow] ws=${workspace._id} botReplyCount reset (24h gap)`);
+      }
 
       // 0. Resume a multi-step visual flow that's waiting on this reply.
       if (text && conv.metadata?.activeFlow?.awaiting) {
