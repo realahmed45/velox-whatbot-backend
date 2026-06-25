@@ -138,15 +138,15 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     lines.push(
       "",
       "─── SENDABLE IMAGES ───",
-      "This business has uploaded image(s) you can send to the customer (e.g. a menu or price list). When the customer asks to see the menu / catalog / price list / photos — or when showing the image clearly answers them better than text — send it by ending your reply with a marker on its own line, exactly:",
+      "IMPORTANT: You ARE able to send images through this chat system. The system will handle the actual delivery — you just need to output the marker. When the customer asks to see the menu, price list, catalog, or photos — or when an image would answer their question better than text — you MUST send it. Do NOT say you cannot send images. Instead, write a short friendly line then put the marker below it on its own line:",
       "<<SEND_IMAGE:THE_IMAGE_URL>>",
-      "Available images:",
+      "Replace THE_IMAGE_URL with the actual URL from the list below. Available images:",
     );
     imageSources.forEach((s, i) => {
       lines.push(`  ${i + 1}. ${s.label || "image"} — ${s.imageUrl}`);
     });
     lines.push(
-      "Use the exact URL from the list. Only send an image when it's genuinely helpful — don't attach one to every reply. The marker is stripped before the customer sees your text, so still write a short friendly line above it (e.g. \"Here's our menu 👇\").",
+      "Use the exact URL from the list. Only send an image when genuinely helpful — not on every reply. The <<SEND_IMAGE:url>> marker is invisible to the customer; always write a friendly sentence above it (e.g. \"Here's our menu 👇\"). NEVER say you cannot send images.",
       "─── END SENDABLE IMAGES ───",
     );
   }
