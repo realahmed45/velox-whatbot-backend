@@ -131,8 +131,13 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
 
   // Images the business uploaded (menu, price list, lookbook). The bot can SEND
   // these back to the customer when they ask to see them.
-  const imageSources = (knowledge?.sources || []).filter(
+  const allSources = knowledge?.sources || [];
+  const imageSources = allSources.filter(
     (s) => s && s.type === "image" && s.imageUrl && s.status === "ready",
+  );
+  logger.info(
+    `[AI:prompt] ws=${workspace._id} sources=${allSources.length} imageSources=${imageSources.length} ` +
+    `imageUrls=${imageSources.map((s) => s.imageUrl?.slice(0, 40)).join(",")}`,
   );
   if (imageSources.length) {
     lines.push(
@@ -394,6 +399,10 @@ const generateReply = async ({
         return "";
       })
       .trim();
+
+    logger.info(
+      `[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length} urls=${imageUrls.map((u) => u.slice(0, 40)).join(",") || "none"}`,
+    );
 
     return {
       reply,

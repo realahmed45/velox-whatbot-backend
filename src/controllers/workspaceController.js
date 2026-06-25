@@ -520,12 +520,17 @@ const importKnowledgeDocument = asyncHandler(async (req, res) => {
   if (isImage) {
     try {
       const cloudinary = require("../config/cloudinary");
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      if (!cloudName) {
+        logger.warn("[knowledge] CLOUDINARY_CLOUD_NAME not set — image will save as text only");
+      }
       const dataUri = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
       const uploaded = await cloudinary.uploader.upload(dataUri, {
         folder: `botlify/knowledge/${ws._id}`,
         resource_type: "image",
       });
       imageUrl = uploaded.secure_url || "";
+      logger.info(`[knowledge] image uploaded to Cloudinary: ${imageUrl.slice(0, 80)}`);
     } catch (e) {
       logger.warn(`[knowledge] image upload failed: ${e.message}`);
     }
