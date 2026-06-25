@@ -239,6 +239,7 @@ const sendAndLog = async ({
   text,
   triggerType,
   keyword = null,
+  imageUrls = [],
 }) => {
   // Simulate mode (Bot Tester): compute the reply but never hit the IG API or
   // touch usage quota. We still collect the reply text into __outbox so the
@@ -292,6 +293,41 @@ const sendAndLog = async ({
     failureReason: result.success ? undefined : result.error,
     metadata: { triggerType, keyword, igMessageId: result.messageId },
   });
+
+  // Send any images the AI chose to attach (e.g. the menu) as follow-up
+  // messages, so the customer gets the text reply first, then the visual.
+  const images = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
+  for (const imageUrl of images.slice(0, 3)) {
+    let imgResult;
+    if (simulate) {
+      imgResult = { success: true, messageId: "simulated" };
+      if (Array.isArray(workspace.__outbox))
+        workspace.__outbox.push(`[image] ${imageUrl}`);
+    } else {
+      const accessToken = decrypt(workspace.instagram.accessToken);
+      const convId = conversation.metadata?.providerConversationId;
+      imgResult = await sendDM(accessToken, contact.igUserId, "", {
+        conversationId: convId,
+        mediaUrl: imageUrl,
+      });
+      logger.info(
+        `[sendDM:image] success=${imgResult.success} err=${imgResult.error || "none"}`,
+      );
+    }
+    await Message.create({
+      workspaceId: workspace._id,
+      conversationId: conversation._id,
+      contactId: contact._id,
+      direction: "outbound",
+      sender: "bot",
+      type: "image",
+      mediaUrl: imageUrl,
+      channelType: "instagram",
+      status: imgResult.success ? "sent" : "failed",
+      failureReason: imgResult.success ? undefined : imgResult.error,
+      metadata: { triggerType, igMessageId: imgResult.messageId },
+    });
+  }
 
   conversation.lastMessageAt = new Date();
   conversation.lastMessagePreview = finalText.slice(0, 120);
@@ -651,7 +687,7 @@ const handleAIReply = async (workspace, contact, conv, text) => {
 
   logger.info(`[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`);
 
-  const { reply, escalate, provider } = await ai.generateReply({
+  const { reply, escalate, provider, imageUrls } = await ai.generateReply({
     workspace,
     history,
     userMessage: text,
@@ -705,6 +741,7 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     conversation: conv,
     text: outboundText,
     triggerType: TRIGGERS.AI_REPLY,
+    imageUrls: imageUrls || [],
   });
   return true;
 };

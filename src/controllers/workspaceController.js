@@ -4,6 +4,7 @@ const User = require("../models/User");
 const { encrypt, decrypt } = require("../utils/encryption");
 const { sendTeamInviteEmail } = require("../services/emailService");
 const { generateToken } = require("../utils/crypto");
+const logger = require("../utils/logger");
 
 // @POST /api/workspaces — Create workspace
 const createWorkspace = asyncHandler(async (req, res) => {
@@ -512,11 +513,30 @@ const importKnowledgeDocument = asyncHandler(async (req, res) => {
     throw new Error(err.message || "Could not read that file");
   }
 
+  // If the upload is an image (menu, price list, lookbook), keep the actual
+  // image so the AI bot can send it back to customers — not just its OCR text.
+  const isImage = (req.file.mimetype || "").startsWith("image/");
+  let imageUrl = "";
+  if (isImage) {
+    try {
+      const cloudinary = require("../config/cloudinary");
+      const dataUri = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+      const uploaded = await cloudinary.uploader.upload(dataUri, {
+        folder: `botlify/knowledge/${ws._id}`,
+        resource_type: "image",
+      });
+      imageUrl = uploaded.secure_url || "";
+    } catch (e) {
+      logger.warn(`[knowledge] image upload failed: ${e.message}`);
+    }
+  }
+
   ws.aiKnowledge.enabled = true;
   ws.aiKnowledge.sources.push({
-    type: "text",
+    type: imageUrl ? "image" : "text",
     label: result.title,
     url: "",
+    imageUrl,
     content: result.content,
     status: "ready",
     charCount: result.charCount,

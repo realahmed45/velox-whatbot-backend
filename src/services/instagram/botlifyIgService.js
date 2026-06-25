@@ -227,7 +227,10 @@ const resolveConversationId = async (accountId, recipientIgId) => {
  * fast path; without it we look the conversation up by recipient.
  *
  * Zernio endpoint: POST /v1/inbox/conversations/{conversationId}/messages
- *   body: { accountId, message }
+ *   body: { accountId, message, attachments? }
+ *
+ * `opts.mediaUrl` (single) or `opts.attachments` ([{ type, url }]) attach media
+ * to the message — used so the AI bot can reply with a menu/catalog image.
  */
 const sendDM = async (accountIdOrToken, recipientIgId, text, opts = {}) => {
   try {
@@ -247,9 +250,27 @@ const sendDM = async (accountIdOrToken, recipientIgId, text, opts = {}) => {
       };
     }
 
+    // Normalize attachments: accept a single mediaUrl or a list, coerce to the
+    // Zernio shape [{ type, url }].
+    let attachments = null;
+    if (Array.isArray(opts.attachments) && opts.attachments.length) {
+      attachments = opts.attachments
+        .map((a) =>
+          typeof a === "string"
+            ? { type: "image", url: a }
+            : { type: a.type || "image", url: a.url },
+        )
+        .filter((a) => a.url);
+    } else if (opts.mediaUrl) {
+      attachments = [{ type: opts.mediaType || "image", url: opts.mediaUrl }];
+    }
+
+    const body = { accountId, message: text || "" };
+    if (attachments && attachments.length) body.attachments = attachments;
+
     const { data } = await client().post(
       `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
-      { accountId, message: text },
+      body,
     );
     return {
       success: true,

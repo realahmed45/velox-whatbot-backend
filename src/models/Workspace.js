@@ -502,11 +502,12 @@ const workspaceSchema = new mongoose.Schema(
         {
           type: {
             type: String,
-            enum: ["website", "text", "products", "shopify"],
+            enum: ["website", "text", "products", "shopify", "image"],
             default: "website",
           },
           label: { type: String, default: "" },
           url: { type: String, default: "" },
+          imageUrl: { type: String, default: "" },
           content: { type: String, default: "", maxlength: 16000 },
           status: {
             type: String,

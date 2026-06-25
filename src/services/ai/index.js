@@ -129,6 +129,28 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     }
   }
 
+  // Images the business uploaded (menu, price list, lookbook). The bot can SEND
+  // these back to the customer when they ask to see them.
+  const imageSources = (knowledge?.sources || []).filter(
+    (s) => s && s.type === "image" && s.imageUrl && s.status === "ready",
+  );
+  if (imageSources.length) {
+    lines.push(
+      "",
+      "─── SENDABLE IMAGES ───",
+      "This business has uploaded image(s) you can send to the customer (e.g. a menu or price list). When the customer asks to see the menu / catalog / price list / photos — or when showing the image clearly answers them better than text — send it by ending your reply with a marker on its own line, exactly:",
+      "<<SEND_IMAGE:THE_IMAGE_URL>>",
+      "Available images:",
+    );
+    imageSources.forEach((s, i) => {
+      lines.push(`  ${i + 1}. ${s.label || "image"} — ${s.imageUrl}`);
+    });
+    lines.push(
+      "Use the exact URL from the list. Only send an image when it's genuinely helpful — don't attach one to every reply. The marker is stripped before the customer sees your text, so still write a short friendly line above it (e.g. \"Here's our menu 👇\").",
+      "─── END SENDABLE IMAGES ───",
+    );
+  }
+
   // Smart Orders — turn the AI into a sales closer when enabled
   const smartOrders = workspace.smartOrders;
   if (smartOrders?.enabled && smartOrders?.catalog?.trim()) {
@@ -228,7 +250,10 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
   lines.push("", `The customer's identifier is: ${handle}.`);
   lines.push("You are replying via Instagram DM.");
   lines.push(
-    "Keep replies 1-3 sentences, natural, and warm. Never invent prices, links, addresses, or policies that you weren't told.",
+    "Keep replies short, natural, and warm — usually 1-3 sentences. Never invent prices, links, addresses, or policies that you weren't told.",
+  );
+  lines.push(
+    "When you list multiple items (a menu, products, steps, or options), format them cleanly: a short intro line, then each item on its own line starting with \"• \", like \"• Classic Burger — $8\". Keep one item per line with a blank line before the list so it reads sharp in a DM. Use plain text only (Instagram DMs don't render markdown — no **bold**, #, or tables).",
   );
   lines.push(
     "If the user clearly wants a human, escalate by responding with: ESCALATE: <short reason>.",
@@ -360,9 +385,20 @@ const generateReply = async ({
         fallbackReply(contact);
     }
 
+    // Extract any <<SEND_IMAGE:url>> markers so the caller can attach images.
+    const imageUrls = [];
+    reply = reply
+      .replace(/<<\s*SEND_IMAGE\s*:\s*([^>]+?)\s*>>/gi, (_, url) => {
+        const clean = String(url).trim();
+        if (/^https?:\/\//i.test(clean)) imageUrls.push(clean);
+        return "";
+      })
+      .trim();
+
     return {
       reply,
       escalate,
+      imageUrls,
       tokens: response.usage?.total_tokens || 0,
       provider: providerUsed,
     };
