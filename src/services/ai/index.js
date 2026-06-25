@@ -387,7 +387,7 @@ const generateReply = async ({
         { role: "user", content: userMessage || "" },
       ],
       temperature: typeof ai.temperature === "number" ? ai.temperature : 0.4,
-      max_tokens: ai.maxTokens || 600,
+      max_tokens: ai.maxTokens || 1500,
     });
 
     let reply =
