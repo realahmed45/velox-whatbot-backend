@@ -143,15 +143,18 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     lines.push(
       "",
       "─── SENDABLE IMAGES ───",
-      "IMPORTANT: You ARE able to send images through this chat system. The system will handle the actual delivery — you just need to output the marker. When the customer asks to see the menu, price list, catalog, or photos — or when an image would answer their question better than text — you MUST send it. Do NOT say you cannot send images. Instead, write a short friendly line then put the marker below it on its own line:",
+      "CRITICAL RULE: You CAN send images. When the customer asks for the menu, price list, catalog, or any image — output the marker <<SEND_IMAGE:URL>> on its VERY FIRST LINE of your reply (before any text). The system strips it invisibly and delivers the image. Then write your friendly text response below it.",
+      "FORMAT (marker MUST be first line, exact URL, no spaces inside << >>):",
       "<<SEND_IMAGE:THE_IMAGE_URL>>",
-      "Replace THE_IMAGE_URL with the actual URL from the list below. Available images:",
+      "Here's our menu! Let me know if you have questions 😊",
+      "",
+      "Available images (use exact URL):",
     );
     imageSources.forEach((s, i) => {
       lines.push(`  ${i + 1}. ${s.label || "image"} — ${s.imageUrl}`);
     });
     lines.push(
-      "Use the exact URL from the list. Only send an image when genuinely helpful — not on every reply. The <<SEND_IMAGE:url>> marker is invisible to the customer; always write a friendly sentence above it (e.g. \"Here's our menu 👇\"). NEVER say you cannot send images.",
+      "NEVER say you cannot send images. NEVER skip the marker when customer asks for an image.",
       "─── END SENDABLE IMAGES ───",
     );
   }
@@ -302,9 +305,18 @@ const generateReply = async ({
 
   // 1b. Instant FAQ answer — reply verbatim when a saved question clearly
   //     matches. Skipped when we have live store data to weave in.
-  if (!escalate && !extraContext) {
+  //     Also skip if the workspace has sendable images — the LLM must handle
+  //     those because FAQ answers can't attach images.
+  const hasSendableImages = (workspace.aiKnowledge?.sources || []).some(
+    (s) => s && s.type === "image" && s.imageUrl && s.status === "ready",
+  );
+  logger.info(
+    `[AI:generateReply] ws=${workspace?._id} msg="${(userMessage || "").slice(0, 60)}" hasSendableImages=${hasSendableImages}`,
+  );
+  if (!escalate && !extraContext && !hasSendableImages) {
     const faqHit = matchFaq(ai.faqs, userMessage);
     if (faqHit) {
+      logger.info(`[AI:generateReply] ws=${workspace?._id} → FAQ match, returning canned answer`);
       return {
         reply: faqHit.answer,
         escalate: false,
@@ -375,7 +387,7 @@ const generateReply = async ({
         { role: "user", content: userMessage || "" },
       ],
       temperature: typeof ai.temperature === "number" ? ai.temperature : 0.4,
-      max_tokens: ai.maxTokens || 240,
+      max_tokens: ai.maxTokens || 600,
     });
 
     let reply =
@@ -392,6 +404,7 @@ const generateReply = async ({
 
     // Extract any <<SEND_IMAGE:url>> markers so the caller can attach images.
     const imageUrls = [];
+    logger.info(`[AI:raw] ws=${workspace?._id} raw="${(reply || "").slice(0, 150).replace(/\n/g, "\\n")}"`);
     reply = reply
       .replace(/<<\s*SEND_IMAGE\s*:\s*([^>]+?)\s*>>/gi, (_, url) => {
         const clean = String(url).trim();
@@ -401,7 +414,7 @@ const generateReply = async ({
       .trim();
 
     logger.info(
-      `[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length} urls=${imageUrls.map((u) => u.slice(0, 40)).join(",") || "none"}`,
+      `[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length} urls=${imageUrls.map((u) => u.slice(0, 60)).join(",") || "none"}`,
     );
 
     return {
