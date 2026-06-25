@@ -61,6 +61,32 @@ const metaGetAccountInfo = async (accessToken) => {
   return data;
 };
 
+// Subscribe a Meta-OAuth IG account to webhook fields so Meta routes events to us.
+// This is a per-account call (independent of Meta App Dashboard registration).
+const WEBHOOK_FIELDS = [
+  "messages",
+  "messaging_postbacks",
+  "messaging_referrals",
+  "comments",
+  "story_mentions",
+  "feed",
+].join(",");
+
+const metaSubscribeForWebhook = async (igUserId, accessToken) => {
+  const { data } = await axios.post(
+    `https://graph.instagram.com/v21.0/${igUserId}/subscribed_apps`,
+    null,
+    {
+      params: {
+        subscribed_fields: WEBHOOK_FIELDS,
+        access_token: accessToken,
+      },
+    },
+  );
+  logger.info(`[IG webhook subscribe] igUserId=${igUserId} result=${JSON.stringify(data)}`);
+  return data;
+};
+
 // Profile lookup is not available via Zernio — return empty object.
 // Sender name is provided directly in the webhook event payload.
 const lookupIgProfile = async (_ws, _igsid) => ({});
@@ -162,11 +188,12 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     // Fetch profile info — direct Meta API
     const igInfo = await metaGetAccountInfo(longToken);
 
-    // Subscribe the IG account to webhook events
+    // Subscribe the IG account to webhook fields via direct Meta API.
+    // This is account-level subscription (independent of App Dashboard URL config).
     let webhookSubscribed = false;
     let webhookError = null;
     try {
-      await ig.subscribeWebhook(longToken);
+      await metaSubscribeForWebhook(igUserId, longToken);
       webhookSubscribed = true;
     } catch (e) {
       webhookError = e.response?.data?.error?.message || e.message;
@@ -821,7 +848,7 @@ exports.testTrigger = asyncHandler(async (req, res) => {
 exports.resubscribeWebhook = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
   const ws = await Workspace.findById(workspaceId).select(
-    "+instagram.accessToken",
+    "+instagram.accessToken +instagram.igUserId instagram.connectionType",
   );
   if (!ws || ws.instagram?.status !== "connected") {
     return res.status(400).json({
@@ -839,7 +866,26 @@ exports.resubscribeWebhook = asyncHandler(async (req, res) => {
     });
   }
   try {
-    await ig.subscribeWebhook(token);
+    const connectionType = ws.instagram?.connectionType || "meta_oauth";
+    if (connectionType === "meta_oauth" || !connectionType.startsWith("botlify")) {
+      // Direct Meta API — subscribe via /{ig_user_id}/subscribed_apps
+      let igUserId;
+      try {
+        igUserId = decrypt(ws.instagram.igUserId);
+      } catch {
+        igUserId = null;
+      }
+      if (!igUserId) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot read Instagram user ID. Please reconnect.",
+        });
+      }
+      await metaSubscribeForWebhook(igUserId, token);
+    } else {
+      // Hosted provider (Zernio/BotlifyIG) — use the provider SDK
+      await ig.subscribeWebhook(token);
+    }
     await Workspace.findByIdAndUpdate(workspaceId, {
       "instagram.webhookSubscribed": true,
       "instagram.webhookError": null,
