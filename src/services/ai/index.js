@@ -120,7 +120,7 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
         blocks.push(`[${head}]\n${s.content.trim()}`);
       });
     if (blocks.length) {
-      const merged = blocks.join("\n\n").slice(0, 14000);
+      const merged = blocks.join("\n\n").slice(0, 24000);
       lines.push(
         "",
         "Business knowledge (use these facts when answering questions; do NOT invent details outside this):",
@@ -419,9 +419,55 @@ const complete = async ({
   }
 };
 
+/**
+ * Vision completion — extract/describe content from an image.
+ * Uses a Groq vision model (Llama 4 Scout) so it stays free + key-compatible.
+ * @param {Buffer} buffer  raw image bytes
+ * @param {string} mimetype  e.g. "image/png"
+ * @param {string} instruction  what to do with the image
+ * @returns {Promise<string|null>}
+ */
+const completeVision = async ({
+  buffer,
+  mimetype = "image/png",
+  instruction,
+  maxTokens = 1500,
+}) => {
+  const groq = getGroqClient();
+  const oai = getOpenaiClient();
+  const client = groq || oai;
+  if (!client) return null;
+  // Groq + OpenAI both accept base64 data URLs on a vision-capable model.
+  const model = groq
+    ? "meta-llama/llama-4-scout-17b-16e-instruct"
+    : "gpt-4o-mini";
+  const dataUrl = `data:${mimetype};base64,${buffer.toString("base64")}`;
+  try {
+    const r = await client.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: instruction },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: maxTokens,
+    });
+    return r.choices?.[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    logger.error("AI completeVision() failed", { err: err.message });
+    return null;
+  }
+};
+
 module.exports = {
   generateReply,
   buildSystemPrompt,
   getAnyClient,
   complete,
+  completeVision,
 };

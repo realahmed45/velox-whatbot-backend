@@ -471,6 +471,8 @@ const importKnowledgeSource = asyncHandler(async (req, res) => {
     syncedAt: new Date(),
   });
   ws.aiKnowledge.lastUpdatedAt = new Date();
+  // Adding knowledge turns the bot live (Manychat-style — no separate toggle).
+  ws.set("aiSettings.enabled", true);
   await ws.save();
 
   const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];
@@ -522,6 +524,7 @@ const importKnowledgeDocument = asyncHandler(async (req, res) => {
     syncedAt: new Date(),
   });
   ws.aiKnowledge.lastUpdatedAt = new Date();
+  ws.set("aiSettings.enabled", true);
   await ws.save();
   res.json({
     success: true,
@@ -574,7 +577,7 @@ const resyncKnowledgeSource = asyncHandler(async (req, res) => {
           const stock = p.inStock ? "" : " (out of stock)";
           return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
         })
-        .join("\n")}`.slice(0, 8000);
+        .join("\n")}`.slice(0, 16000);
       src.content = content;
       src.charCount = content.length;
     } else {
@@ -633,7 +636,7 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
   });
   const content = `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
     "\n",
-  )}`.slice(0, 8000);
+  )}`.slice(0, 16000);
 
   ws.aiKnowledge = ws.aiKnowledge || {};
   ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(
@@ -651,6 +654,7 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
     syncedAt: new Date(),
   });
   ws.aiKnowledge.lastUpdatedAt = new Date();
+  ws.set("aiSettings.enabled", true);
   await ws.save();
 
   const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];

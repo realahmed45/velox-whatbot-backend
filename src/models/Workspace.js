@@ -507,7 +507,7 @@ const workspaceSchema = new mongoose.Schema(
           },
           label: { type: String, default: "" },
           url: { type: String, default: "" },
-          content: { type: String, default: "", maxlength: 8000 },
+          content: { type: String, default: "", maxlength: 16000 },
           status: {
             type: String,
             enum: ["ready", "processing", "error"],

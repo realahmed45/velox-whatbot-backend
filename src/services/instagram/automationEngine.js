@@ -610,7 +610,9 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     return false;
   // Read v2 aiSettings first, fall back to legacy aiBot for older installs.
   const aiCfg = workspace.aiSettings || workspace.aiBot || {};
-  if (!aiCfg.enabled) return false;
+  // Only an explicit OFF disables the bot. Missing `enabled` (legacy/partial
+  // docs) is treated as ON so a workspace that has AI knowledge still replies.
+  if (aiCfg.enabled === false) return false;
   const maxTurns = aiCfg.maxTurnsPerConversation || 20;
   if ((conv.botReplyCount || 0) >= maxTurns) return false;
 

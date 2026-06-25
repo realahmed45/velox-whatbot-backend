@@ -10,16 +10,30 @@ const { FEATURES } = require("../config/plans");
 const c = require("../controllers/workspaceController");
 const multer = require("multer");
 
-// In-memory upload for knowledge documents (PDF / text). 16 MB cap.
+// In-memory upload for knowledge documents (PDF / Word / text / images). 25 MB cap.
 const docUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 16 * 1024 * 1024 },
+  limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok =
-      ["application/pdf", "text/plain", "application/octet-stream"].includes(
-        file.mimetype,
-      ) || /\.(pdf|txt|md)$/i.test(file.originalname);
-    cb(ok ? null : new Error("Only PDF or text files are supported"), ok);
+      [
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/octet-stream",
+      ].includes(file.mimetype) ||
+      /^image\//i.test(file.mimetype) ||
+      /\.(pdf|txt|md|doc|docx|png|jpe?g|gif|webp|bmp|heic)$/i.test(
+        file.originalname,
+      );
+    cb(
+      ok
+        ? null
+        : new Error("Upload a PDF, Word doc, text file, or image"),
+      ok,
+    );
   },
 });
 
