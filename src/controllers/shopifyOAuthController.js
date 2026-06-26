@@ -22,14 +22,32 @@ const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 
 const normalizeShopInput = (raw) => {
   if (!raw) return null;
-  let s = String(raw)
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/$/, "");
-  if (!s) return null;
-  if (!s.includes(".")) s = `${s}.myshopify.com`;
-  if (!s.endsWith(".myshopify.com")) return null;
+  let s = String(raw).trim().toLowerCase();
+
+  // If user entered an email, extract the domain part before @
+  // e.g. ahmed@mystore.myshopify.com → mystore.myshopify.com
+  //      ahmed@mystore.com           → try mystore.myshopify.com
+  if (s.includes("@")) {
+    const domain = s.split("@")[1] || "";
+    if (!domain) return null;
+    // If domain is already a myshopify.com address, use it directly
+    if (domain.endsWith(".myshopify.com")) {
+      s = domain;
+    } else {
+      // Strip TLD (e.g. mystore.com → mystore), try as store slug
+      const slug = domain.split(".")[0];
+      if (!slug || slug.length < 2) return null;
+      s = `${slug}.myshopify.com`;
+    }
+  } else {
+    s = s
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+    if (!s) return null;
+    if (!s.includes(".")) s = `${s}.myshopify.com`;
+    if (!s.endsWith(".myshopify.com")) return null;
+  }
+
   return s;
 };
 
