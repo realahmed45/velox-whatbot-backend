@@ -17,6 +17,7 @@ router.use(protect, requireWorkspace);
 // Shopify
 router.get("/shopify", ext.getShopify);
 router.get("/shopify/oauth-url", requireOwner, shopifyOAuth.getOAuthUrl);
+router.post("/shopify/storefront", requireOwner, ext.connectShopifyStorefront);
 router.post("/shopify", requireOwner, ext.connectShopify);
 router.get("/shopify/products", ext.listShopifyProducts);
 router.delete("/shopify", requireOwner, ext.disconnectShopify);

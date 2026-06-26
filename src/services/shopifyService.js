@@ -1,18 +1,108 @@
 /**
- * Shopify catalog sync service (G4).
- * Fetches products from a Shopify store and caches them in-memory by workspace.
- * Designed to power DM catalog flows — customer asks "what's available" → bot
- * posts the top products with prices + link.
+ * Shopify catalog sync service.
  *
- * Shopify Admin API docs:
- *   GET https://{shop}.myshopify.com/admin/api/2024-10/products.json
+ * TWO connection methods:
+ *   1. Tokenless Storefront API — merchant provides store URL only.
+ *      Uses Shopify's official tokenless GraphQL endpoint (products, collections).
+ *      Zero admin setup required. FREE. Official Shopify feature.
+ *      Endpoint: POST https://{shop}.myshopify.com/api/STOREFRONT_VERSION/graphql.json
  *
- * Auth: X-Shopify-Access-Token header (custom app / private app token).
+ *   2. Admin API (manual token) — for order tracking. Requires merchant to
+ *      create a custom app and copy the Admin API access token.
  */
 const axios = require("axios");
 const logger = require("../utils/logger");
 
 const API_VERSION = "2024-10";
+const STOREFRONT_VERSION = "2026-04";
+
+// ─── Storefront API (tokenless) ──────────────────────────────────────────────
+
+/**
+ * Fetch products from any Shopify store with NO token required.
+ * Uses Shopify's official Storefront API tokenless access.
+ */
+const listProductsStorefront = async (storeUrl, limit = 50) => {
+  const host = normalizeStoreUrl(storeUrl);
+  if (!host) throw new Error("Invalid Shopify store URL");
+
+  const query = `{
+    products(first: ${Math.min(limit, 250)}) {
+      edges {
+        node {
+          id
+          title
+          handle
+          description
+          priceRange {
+            minVariantPrice { amount currencyCode }
+          }
+          featuredImage { url altText }
+          variants(first: 1) {
+            edges {
+              node {
+                availableForSale
+                price { amount currencyCode }
+              }
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+  const { data } = await axios.post(
+    `https://${host}/api/${STOREFRONT_VERSION}/graphql.json`,
+    { query },
+    {
+      headers: { "Content-Type": "application/json" },
+      timeout: 10000,
+    },
+  );
+
+  if (data.errors) {
+    const msg = data.errors[0]?.message || "Shopify storefront error";
+    throw new Error(msg);
+  }
+
+  return (data.data?.products?.edges || []).map(({ node: p }) => {
+    const variant = p.variants?.edges?.[0]?.node;
+    const price = variant?.price?.amount || p.priceRange?.minVariantPrice?.amount;
+    const currency = variant?.price?.currencyCode || p.priceRange?.minVariantPrice?.currencyCode;
+    return {
+      id: p.id,
+      title: p.title,
+      handle: p.handle,
+      description: (p.description || "").slice(0, 300),
+      image: p.featuredImage?.url || null,
+      price: price ? parseFloat(price).toFixed(2) : null,
+      currency: currency || null,
+      inStock: variant?.availableForSale ?? true,
+      url: `https://${host}/products/${p.handle}`,
+    };
+  });
+};
+
+/**
+ * Verify a store URL is a valid, reachable Shopify store (tokenless).
+ * Returns { ok, shopName } or { ok: false, error }.
+ */
+const testStorefront = async (storeUrl) => {
+  const host = normalizeStoreUrl(storeUrl);
+  try {
+    const { data } = await axios.post(
+      `https://${host}/api/${STOREFRONT_VERSION}/graphql.json`,
+      { query: "{ shop { name } }" },
+      { headers: { "Content-Type": "application/json" }, timeout: 8000 },
+    );
+    const name = data?.data?.shop?.name;
+    if (!name) throw new Error("Not a valid Shopify store");
+    return { ok: true, shopName: name };
+  } catch (err) {
+    logger.warn(`[shopify:storefront] test failed for ${host}: ${err.message}`);
+    return { ok: false, error: err.response?.data?.errors?.[0]?.message || err.message };
+  }
+};
 
 const normalizeStoreUrl = (raw) => {
   if (!raw) return null;
@@ -213,6 +303,8 @@ const testConnection = async (storeUrl, accessToken) => {
 
 module.exports = {
   listProducts,
+  listProductsStorefront,
+  testStorefront,
   lookupOrder,
   searchProducts,
   testConnection,

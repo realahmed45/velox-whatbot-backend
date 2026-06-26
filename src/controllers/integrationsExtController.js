@@ -96,21 +96,62 @@ exports.connectShopify = asyncHandler(async (req, res) => {
   });
 });
 
+// POST /api/integrations/shopify/storefront  { storeUrl }
+// Tokenless — merchant gives store name only, zero admin setup required.
+exports.connectShopifyStorefront = asyncHandler(async (req, res) => {
+  const { storeUrl } = req.body;
+  if (!storeUrl) {
+    res.status(400);
+    throw new Error("storeUrl required");
+  }
+
+  const test = await shopify.testStorefront(storeUrl);
+  if (!test.ok) {
+    res.status(400);
+    throw new Error(
+      "Could not reach that Shopify store. Make sure the store name is correct (e.g. your-store-name).",
+    );
+  }
+
+  const products = await shopify.listProductsStorefront(storeUrl, 50);
+
+  await Workspace.findByIdAndUpdate(req.workspace._id, {
+    "integrations.shopify.storeUrl": shopify.normalizeStoreUrl(storeUrl),
+    "integrations.shopify.accessToken": null,
+    "integrations.shopify.connectedAt": new Date(),
+    "integrations.shopify.productCount": products.length,
+    "integrations.shopify.scopes": { products: true, orders: false },
+    "integrations.shopify.scopesCheckedAt": new Date(),
+    "integrations.shopify.authMethod": "storefront",
+    "integrations.shopify.shopName": test.shopName,
+  });
+
+  res.json({
+    success: true,
+    shop: test.shopName,
+    products: products.length,
+    authMethod: "storefront",
+    orderTrackingEnabled: false,
+  });
+});
+
 // GET /api/integrations/shopify/products
 exports.listShopifyProducts = asyncHandler(async (req, res) => {
   const ws = await Workspace.findById(req.workspace._id).select(
     "+integrations.shopify.accessToken",
   );
   const s = ws?.integrations?.shopify;
-  if (!s?.storeUrl || !s?.accessToken) {
+  if (!s?.storeUrl) {
     res.status(400);
     throw new Error("Shopify not connected");
   }
-  const products = await shopify.listProducts(
-    s.storeUrl,
-    decrypt(s.accessToken),
-    50,
-  );
+
+  // Storefront-connected stores use tokenless API
+  const products =
+    s.authMethod === "storefront" || !s.accessToken
+      ? await shopify.listProductsStorefront(s.storeUrl, 50)
+      : await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 50);
+
   res.json({ success: true, products });
 });
 
