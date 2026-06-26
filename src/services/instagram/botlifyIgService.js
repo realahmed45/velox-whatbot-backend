@@ -157,7 +157,8 @@ const exchangeCallback = async ({ accountId, excludeAccountIds = [] }) => {
     acc = pool[0];
   }
 
-  if (!acc?.accountId) throw new Error("No Instagram account found after OAuth");
+  if (!acc?.accountId)
+    throw new Error("No Instagram account found after OAuth");
   return {
     accountId: acc.accountId,
     info: acc,

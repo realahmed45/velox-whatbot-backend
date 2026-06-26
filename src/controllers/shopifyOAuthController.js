@@ -40,9 +40,7 @@ const normalizeShopInput = (raw) => {
       s = `${slug}.myshopify.com`;
     }
   } else {
-    s = s
-      .replace(/^https?:\/\//, "")
-      .replace(/\/$/, "");
+    s = s.replace(/^https?:\/\//, "").replace(/\/$/, "");
     if (!s) return null;
     if (!s.includes(".")) s = `${s}.myshopify.com`;
     if (!s.endsWith(".myshopify.com")) return null;
@@ -58,9 +56,15 @@ const verifyHmac = (query) => {
     .sort()
     .map((k) => `${k}=${rest[k]}`)
     .join("&");
-  const hash = crypto.createHmac("sha256", API_SECRET).update(message).digest("hex");
+  const hash = crypto
+    .createHmac("sha256", API_SECRET)
+    .update(message)
+    .digest("hex");
   try {
-    return crypto.timingSafeEqual(Buffer.from(hash, "utf8"), Buffer.from(hmac, "utf8"));
+    return crypto.timingSafeEqual(
+      Buffer.from(hash, "utf8"),
+      Buffer.from(hmac, "utf8"),
+    );
   } catch {
     return hash === hmac;
   }
@@ -157,6 +161,8 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     return res.redirect(`${CLIENT_URL}/dashboard?shopify=connected`);
   } catch (err) {
     logger.error("[Shopify OAuth] callback failed", { err: err.message });
-    return res.redirect(`${CLIENT_URL}/dashboard?shopify=error&reason=exchange`);
+    return res.redirect(
+      `${CLIENT_URL}/dashboard?shopify=error&reason=exchange`,
+    );
   }
 });

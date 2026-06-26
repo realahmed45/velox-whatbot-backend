@@ -421,7 +421,9 @@ const importDocument = async (buffer, filename = "document", mimetype = "") => {
       const out = await mammoth.extractRawText({ buffer });
       text = out.value || "";
     } catch (err) {
-      logger.warn("[websiteImporter] docx parse failed", { error: err.message });
+      logger.warn("[websiteImporter] docx parse failed", {
+        error: err.message,
+      });
       throw new Error("Couldn't read that Word document.");
     }
   } else {

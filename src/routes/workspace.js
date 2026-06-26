@@ -29,9 +29,7 @@ const docUpload = multer({
         file.originalname,
       );
     cb(
-      ok
-        ? null
-        : new Error("Upload a PDF, Word doc, text file, or image"),
+      ok ? null : new Error("Upload a PDF, Word doc, text file, or image"),
       ok,
     );
   },

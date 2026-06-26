@@ -2,10 +2,10 @@
  * Shopify catalog sync service.
  *
  * TWO connection methods:
- *   1. Tokenless Storefront API — merchant provides store URL only.
- *      Uses Shopify's official tokenless GraphQL endpoint (products, collections).
- *      Zero admin setup required. FREE. Official Shopify feature.
- *      Endpoint: POST https://{shop}.myshopify.com/api/STOREFRONT_VERSION/graphql.json
+ *   1. Tokenless (public REST) — merchant provides store URL only.
+ *      Uses Shopify's public products.json endpoint — works on all public stores.
+ *      Zero admin setup required. FREE.
+ *      Endpoint: GET https://{shop}.myshopify.com/products.json
  *
  *   2. Admin API (manual token) — for order tracking. Requires merchant to
  *      create a custom app and copy the Admin API access token.
@@ -14,70 +14,34 @@ const axios = require("axios");
 const logger = require("../utils/logger");
 
 const API_VERSION = "2024-10";
-const STOREFRONT_VERSION = "2026-04";
 
-// ─── Storefront API (tokenless) ──────────────────────────────────────────────
+// ─── Public REST (tokenless) ─────────────────────────────────────────────────
 
 /**
- * Fetch products from any Shopify store with NO token required.
- * Uses Shopify's official Storefront API tokenless access.
+ * Fetch products from any public Shopify store with NO token required.
+ * Uses the public products.json REST endpoint — works on all public stores.
  */
 const listProductsStorefront = async (storeUrl, limit = 50) => {
   const host = normalizeStoreUrl(storeUrl);
   if (!host) throw new Error("Invalid Shopify store URL");
 
-  const query = `{
-    products(first: ${Math.min(limit, 250)}) {
-      edges {
-        node {
-          id
-          title
-          handle
-          description
-          priceRange {
-            minVariantPrice { amount currencyCode }
-          }
-          featuredImage { url altText }
-          variants(first: 1) {
-            edges {
-              node {
-                availableForSale
-                price { amount currencyCode }
-              }
-            }
-          }
-        }
-      }
-    }
-  }`;
+  const { data } = await axios.get(`https://${host}/products.json`, {
+    params: { limit: Math.min(limit, 250) },
+    headers: { Accept: "application/json" },
+    timeout: 10000,
+  });
 
-  const { data } = await axios.post(
-    `https://${host}/api/${STOREFRONT_VERSION}/graphql.json`,
-    { query },
-    {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000,
-    },
-  );
-
-  if (data.errors) {
-    const msg = data.errors[0]?.message || "Shopify storefront error";
-    throw new Error(msg);
-  }
-
-  return (data.data?.products?.edges || []).map(({ node: p }) => {
-    const variant = p.variants?.edges?.[0]?.node;
-    const price = variant?.price?.amount || p.priceRange?.minVariantPrice?.amount;
-    const currency = variant?.price?.currencyCode || p.priceRange?.minVariantPrice?.currencyCode;
+  return (data.products || []).map((p) => {
+    const variant = p.variants?.[0];
     return {
-      id: p.id,
+      id: `gid://shopify/Product/${p.id}`,
       title: p.title,
       handle: p.handle,
-      description: (p.description || "").slice(0, 300),
-      image: p.featuredImage?.url || null,
-      price: price ? parseFloat(price).toFixed(2) : null,
-      currency: currency || null,
-      inStock: variant?.availableForSale ?? true,
+      description: (p.body_html || "").replace(/<[^>]*>/g, "").slice(0, 300),
+      image: p.images?.[0]?.src || null,
+      price: variant?.price || null,
+      currency: null,
+      inStock: variant?.available ?? true,
       url: `https://${host}/products/${p.handle}`,
     };
   });
@@ -85,28 +49,31 @@ const listProductsStorefront = async (storeUrl, limit = 50) => {
 
 /**
  * Verify a store URL is a valid, reachable Shopify store (tokenless).
- * Uses products query (not shop query) since shop.name requires a token.
  * Returns { ok, shopName } or { ok: false, error }.
  */
 const testStorefront = async (storeUrl) => {
   const host = normalizeStoreUrl(storeUrl);
   try {
-    const { data } = await axios.post(
-      `https://${host}/api/${STOREFRONT_VERSION}/graphql.json`,
-      { query: "{ products(first: 1) { edges { node { id title } } } }" },
-      { headers: { "Content-Type": "application/json" }, timeout: 8000 },
-    );
-    // Any valid Shopify store will return data (even if zero products)
-    if (data.errors && !data.data) {
-      const msg = data.errors[0]?.message || "Invalid store";
-      throw new Error(msg);
+    const { data } = await axios.get(`https://${host}/products.json`, {
+      params: { limit: 1 },
+      headers: { Accept: "application/json" },
+      timeout: 8000,
+    });
+    if (!data || !Array.isArray(data.products)) {
+      throw new Error("Unexpected response from store");
     }
-    // Derive a display name from the host (e.g. my-store from my-store.myshopify.com)
     const shopName = host.replace(".myshopify.com", "");
     return { ok: true, shopName };
   } catch (err) {
     logger.warn(`[shopify:storefront] test failed for ${host}: ${err.message}`);
-    return { ok: false, error: err.response?.data?.errors?.[0]?.message || err.message };
+    const status = err.response?.status;
+    let error = err.message;
+    if (status === 401 || status === 302) {
+      error = "This store is password-protected. Remove the password to connect.";
+    } else if (status === 404) {
+      error = "Store not found. Check the store name and try again.";
+    }
+    return { ok: false, error };
   }
 };
 
