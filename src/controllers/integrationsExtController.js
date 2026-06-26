@@ -37,6 +37,8 @@ exports.getShopify = asyncHandler(async (req, res) => {
       connected: !!s.storeUrl,
       connectedAt: s.connectedAt || null,
       productCount: s.productCount || 0,
+      authMethod: s.authMethod || null,
+      shopName: s.shopName || null,
       scopes: {
         products: !!s.scopes?.products,
         orders: !!s.scopes?.orders,
