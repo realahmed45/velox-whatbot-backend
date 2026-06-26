@@ -113,7 +113,7 @@ exports.connectShopifyStorefront = asyncHandler(async (req, res) => {
     throw new Error(test.error || "Could not reach that Shopify store. Make sure the store name is correct (e.g. your-store-name).");
   }
 
-  const products = await shopify.listProductsStorefront(storeUrl, 50);
+  const products = await shopify.listAllProductsStorefront(storeUrl, 1000);
 
   await Workspace.findByIdAndUpdate(req.workspace._id, {
     "integrations.shopify.storeUrl": shopify.normalizeStoreUrl(storeUrl),
@@ -146,11 +146,11 @@ exports.listShopifyProducts = asyncHandler(async (req, res) => {
     throw new Error("Shopify not connected");
   }
 
-  // Storefront-connected stores use tokenless API
+  // Storefront-connected stores use tokenless API (fetch all)
   const products =
     s.authMethod === "storefront" || !s.accessToken
-      ? await shopify.listProductsStorefront(s.storeUrl, 50)
-      : await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 50);
+      ? await shopify.listAllProductsStorefront(s.storeUrl, 1000)
+      : await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 250);
 
   res.json({ success: true, products });
 });

@@ -637,14 +637,19 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
     throw new Error("Workspace not found");
   }
   const s = ws.integrations?.shopify;
-  if (!s?.storeUrl || !s?.accessToken) {
+  if (!s?.storeUrl) {
     res.status(400);
     throw new Error("Connect your Shopify store first (Integrations → Shopify)");
   }
 
   let products;
   try {
-    products = await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 100);
+    // Storefront (tokenless) connections — use public REST with full pagination
+    if (s.authMethod === "storefront" || !s.accessToken) {
+      products = await shopify.listAllProductsStorefront(s.storeUrl, 1000);
+    } else {
+      products = await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 250);
+    }
   } catch (err) {
     res.status(422);
     throw new Error(`Couldn't fetch Shopify products: ${err.message || ""}`);
@@ -656,12 +661,13 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
 
   const catalogLines = products.map((p) => {
     const price = p.price ? `${p.currency || ""} ${p.price}`.trim() : "";
-    const stock = p.inStock ? "" : " (out of stock)";
-    return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
+    const stock = p.inStock ? "in stock" : "out of stock";
+    const desc = p.description ? ` — ${p.description.slice(0, 150)}` : "";
+    return `- ${p.title}${price ? ` | ${price}` : ""} | ${stock}${desc} | ${p.url}`;
   });
   const content = `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
     "\n",
-  )}`.slice(0, 16000);
+  )}`.slice(0, 40000);
 
   ws.aiKnowledge = ws.aiKnowledge || {};
   ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(

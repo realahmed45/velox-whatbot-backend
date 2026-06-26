@@ -19,32 +19,51 @@ const API_VERSION = "2024-10";
 
 /**
  * Fetch products from any public Shopify store with NO token required.
- * Uses the public products.json REST endpoint — works on all public stores.
+ * Paginates using page-based params (still works on public products.json).
+ * Fetches up to maxProducts (default 1000) across multiple pages.
  */
-const listProductsStorefront = async (storeUrl, limit = 50) => {
+const listProductsStorefront = async (storeUrl, limit = 250) => {
+  // Single page — kept for backward compat, just delegates to listAllProductsStorefront
+  return listAllProductsStorefront(storeUrl, Math.min(limit, 250));
+};
+
+const listAllProductsStorefront = async (storeUrl, maxProducts = 1000) => {
   const host = normalizeStoreUrl(storeUrl);
   if (!host) throw new Error("Invalid Shopify store URL");
 
-  const { data } = await axios.get(`https://${host}/products.json`, {
-    params: { limit: Math.min(limit, 250) },
-    headers: { Accept: "application/json" },
-    timeout: 10000,
-  });
+  const PAGE_SIZE = 250;
+  const all = [];
+  let page = 1;
 
-  return (data.products || []).map((p) => {
-    const variant = p.variants?.[0];
-    return {
-      id: `gid://shopify/Product/${p.id}`,
-      title: p.title,
-      handle: p.handle,
-      description: (p.body_html || "").replace(/<[^>]*>/g, "").slice(0, 300),
-      image: p.images?.[0]?.src || null,
-      price: variant?.price || null,
-      currency: null,
-      inStock: variant?.available ?? true,
-      url: `https://${host}/products/${p.handle}`,
-    };
-  });
+  while (all.length < maxProducts) {
+    const { data } = await axios.get(`https://${host}/products.json`, {
+      params: { limit: PAGE_SIZE, page },
+      headers: { Accept: "application/json" },
+      timeout: 15000,
+    });
+
+    const products = data.products || [];
+    const mapped = products.map((p) => {
+      const variant = p.variants?.[0];
+      return {
+        id: `gid://shopify/Product/${p.id}`,
+        title: p.title,
+        handle: p.handle,
+        description: (p.body_html || "").replace(/<[^>]*>/g, "").slice(0, 500),
+        image: p.images?.[0]?.src || null,
+        price: variant?.price || null,
+        currency: null,
+        inStock: variant?.available ?? true,
+        url: `https://${host}/products/${p.handle}`,
+      };
+    });
+
+    all.push(...mapped);
+    if (products.length < PAGE_SIZE) break; // last page
+    page++;
+  }
+
+  return all.slice(0, maxProducts);
 };
 
 /**
@@ -277,6 +296,7 @@ const testConnection = async (storeUrl, accessToken) => {
 module.exports = {
   listProducts,
   listProductsStorefront,
+  listAllProductsStorefront,
   testStorefront,
   lookupOrder,
   searchProducts,
