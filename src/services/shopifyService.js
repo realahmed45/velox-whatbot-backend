@@ -85,6 +85,7 @@ const listProductsStorefront = async (storeUrl, limit = 50) => {
 
 /**
  * Verify a store URL is a valid, reachable Shopify store (tokenless).
+ * Uses products query (not shop query) since shop.name requires a token.
  * Returns { ok, shopName } or { ok: false, error }.
  */
 const testStorefront = async (storeUrl) => {
@@ -92,12 +93,17 @@ const testStorefront = async (storeUrl) => {
   try {
     const { data } = await axios.post(
       `https://${host}/api/${STOREFRONT_VERSION}/graphql.json`,
-      { query: "{ shop { name } }" },
+      { query: "{ products(first: 1) { edges { node { id title } } } }" },
       { headers: { "Content-Type": "application/json" }, timeout: 8000 },
     );
-    const name = data?.data?.shop?.name;
-    if (!name) throw new Error("Not a valid Shopify store");
-    return { ok: true, shopName: name };
+    // Any valid Shopify store will return data (even if zero products)
+    if (data.errors && !data.data) {
+      const msg = data.errors[0]?.message || "Invalid store";
+      throw new Error(msg);
+    }
+    // Derive a display name from the host (e.g. my-store from my-store.myshopify.com)
+    const shopName = host.replace(".myshopify.com", "");
+    return { ok: true, shopName };
   } catch (err) {
     logger.warn(`[shopify:storefront] test failed for ${host}: ${err.message}`);
     return { ok: false, error: err.response?.data?.errors?.[0]?.message || err.message };
