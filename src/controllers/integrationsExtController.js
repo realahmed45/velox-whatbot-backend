@@ -110,9 +110,7 @@ exports.connectShopifyStorefront = asyncHandler(async (req, res) => {
   const test = await shopify.testStorefront(storeUrl);
   if (!test.ok) {
     res.status(400);
-    throw new Error(
-      "Could not reach that Shopify store. Make sure the store name is correct (e.g. your-store-name).",
-    );
+    throw new Error(test.error || "Could not reach that Shopify store. Make sure the store name is correct (e.g. your-store-name).");
   }
 
   const products = await shopify.listProductsStorefront(storeUrl, 50);
