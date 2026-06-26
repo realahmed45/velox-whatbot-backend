@@ -667,7 +667,7 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
   });
   const content = `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
     "\n",
-  )}`.slice(0, 40000);
+  )}`.slice(0, 50000);
 
   ws.aiKnowledge = ws.aiKnowledge || {};
   ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(

@@ -455,7 +455,7 @@ const workspaceSchema = new mongoose.Schema(
           orders: { type: Boolean, default: false },
         },
         scopesCheckedAt: Date,
-        authMethod: { type: String, enum: ["oauth", "manual"], default: "manual" },
+        authMethod: { type: String, enum: ["oauth", "manual", "storefront"], default: "manual" },
       },
       mailchimp: {
         apiKey: { type: String, select: false },
@@ -508,7 +508,7 @@ const workspaceSchema = new mongoose.Schema(
           label: { type: String, default: "" },
           url: { type: String, default: "" },
           imageUrl: { type: String, default: "" },
-          content: { type: String, default: "", maxlength: 16000 },
+          content: { type: String, default: "", maxlength: 50000 },
           status: {
             type: String,
             enum: ["ready", "processing", "error"],
