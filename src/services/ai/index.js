@@ -1,10 +1,8 @@
 /**
  * Botlify — Unified AI provider abstraction.
  *
- * Default: Groq (free, fast) → Llama 3.3 70B
- * Fallbacks: OpenAI (gpt-4o-mini) if configured, otherwise canned reply.
- *
- * Workspaces can override via workspace.aiSettings.provider.
+ * Default: OpenAI gpt-4o-mini (best quality/cost ratio)
+ * Fallback: Groq (free, fast) if no OpenAI key configured
  */
 const logger = require("../../utils/logger");
 
@@ -15,7 +13,6 @@ const getGroqClient = () => {
   if (groqClient) return groqClient;
   if (!process.env.GROQ_API_KEY) return null;
   try {
-    // Groq uses the OpenAI SDK (drop-in compatible)
     const OpenAI = require("openai");
     groqClient = new OpenAI({
       apiKey: process.env.GROQ_API_KEY,
@@ -60,8 +57,7 @@ const tokenize = (s) =>
     .filter((w) => w.length > 2 && !STOP.has(w));
 
 /**
- * Find an FAQ that clearly matches the user's message so we can answer
- * instantly and verbatim — no LLM call, no tokens, perfectly on-message.
+ * Find an FAQ that clearly matches the user's message.
  */
 const matchFaq = (faqs, message) => {
   if (!Array.isArray(faqs) || !faqs.length) return null;
@@ -73,21 +69,18 @@ const matchFaq = (faqs, message) => {
   for (const f of faqs) {
     if (!f?.question || !f?.answer) continue;
     const qNorm = f.question.toLowerCase().trim();
-    if (qNorm.length >= 6 && msgNorm.includes(qNorm)) return f; // contains question
+    if (qNorm.length >= 6 && msgNorm.includes(qNorm)) return f;
     const qTokens = tokenize(f.question);
     if (!qTokens.length) continue;
     const overlap = qTokens.filter((t) => msgTokens.has(t)).length;
     const score = overlap / qTokens.length;
-    if (score > bestScore) {
-      bestScore = score;
-      best = f;
-    }
+    if (score > bestScore) { bestScore = score; best = f; }
   }
   return bestScore >= 0.7 ? best : null;
 };
 
 /**
- * Build the system prompt from workspace.aiSettings (or legacy aiBot).
+ * Build the system prompt — tuned for GPT-4o mini's superior instruction-following.
  */
 const buildSystemPrompt = (workspace, contact, extraContext) => {
   const v2 = pickAiCfg(workspace);
@@ -97,18 +90,17 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     businessContext: v2.businessContext || legacy.businessInfo,
     faqs: v2.faqs && v2.faqs.length ? v2.faqs : legacy.faqs,
   };
-  const channelEffective = "instagram";
+
   const lines = [
     ai.systemPrompt ||
-      "You are a friendly, professional assistant. Keep replies short, warm, and helpful.",
+      "You are a warm, on-brand Instagram DM assistant. Reply like a real person — short, helpful, friendly. Max 1 emoji per reply unless listing products.",
   ];
 
   if (ai.businessContext) {
-    lines.push("", "Business context:", ai.businessContext);
+    lines.push("", "About this business:", ai.businessContext);
   }
 
-  // User-provided business knowledge: free-form notes + imported sources
-  // (website, product list, etc.). Bounded so we don't blow the context window.
+  // Business knowledge: free-form notes + imported sources (website, catalog, etc.)
   const knowledge = workspace.aiKnowledge;
   if (knowledge?.enabled) {
     const blocks = [];
@@ -120,84 +112,71 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
         blocks.push(`[${head}]\n${s.content.trim()}`);
       });
     if (blocks.length) {
-      const merged = blocks.join("\n\n").slice(0, 24000);
+      const merged = blocks.join("\n\n").slice(0, 28000);
       lines.push(
         "",
-        "Business knowledge (use these facts when answering questions; do NOT invent details outside this):",
+        "BUSINESS KNOWLEDGE — use these facts to answer questions accurately. Never invent details outside this:",
         merged,
       );
     }
   }
 
-  // Images the business uploaded (menu, price list, lookbook). The bot can SEND
-  // these back to the customer when they ask to see them.
+  // Sendable images
   const allSources = knowledge?.sources || [];
   const imageSources = allSources.filter(
     (s) => s && s.type === "image" && s.imageUrl && s.status === "ready",
   );
   logger.info(
-    `[AI:prompt] ws=${workspace._id} sources=${allSources.length} imageSources=${imageSources.length} ` +
-    `imageUrls=${imageSources.map((s) => s.imageUrl?.slice(0, 40)).join(",")}`,
+    `[AI:prompt] ws=${workspace._id} sources=${allSources.length} imageSources=${imageSources.length}`,
   );
   if (imageSources.length) {
     lines.push(
       "",
       "─── SENDABLE IMAGES ───",
-      "CRITICAL RULE: You CAN send images. When the customer asks for the menu, price list, catalog, or any image — output the marker <<SEND_IMAGE:URL>> on its VERY FIRST LINE of your reply (before any text). The system strips it invisibly and delivers the image. Then write your friendly text response below it.",
-      "FORMAT (marker MUST be first line, exact URL, no spaces inside << >>):",
+      "You CAN send images in DMs. When the customer asks for the menu, catalog, price list, or any image — output <<SEND_IMAGE:URL>> as the VERY FIRST LINE of your reply (before any text). The system delivers the image automatically. Then write your reply below.",
+      "FORMAT — marker must be first line, exact URL, no spaces inside << >>:",
       "<<SEND_IMAGE:THE_IMAGE_URL>>",
       "Here's our menu! Let me know if you have questions 😊",
       "",
-      "Available images (use exact URL):",
+      "Available images:",
     );
     imageSources.forEach((s, i) => {
       lines.push(`  ${i + 1}. ${s.label || "image"} — ${s.imageUrl}`);
     });
     lines.push(
-      "NEVER say you cannot send images. NEVER skip the marker when customer asks for an image.",
+      "NEVER say you cannot send images. NEVER skip the marker when the customer asks for an image.",
       "─── END SENDABLE IMAGES ───",
     );
   }
 
-  // Smart Orders — turn the AI into a sales closer when enabled
+  // Smart Orders
   const smartOrders = workspace.smartOrders;
   if (smartOrders?.enabled && smartOrders?.catalog?.trim()) {
     lines.push(
       "",
       "─── SMART ORDERS MODE ───",
-      "You are also a sales assistant. Below is the product catalog for this business. Use these EXACT prices and product names. Never invent items or prices that aren't listed.",
+      "You are a sales assistant. Use EXACT prices and product names from the catalog. Never invent items or prices.",
       "",
       "PRODUCT CATALOG:",
       smartOrders.catalog.trim(),
     );
     if (smartOrders.paymentInstructions?.trim()) {
-      lines.push(
-        "",
-        "PAYMENT INSTRUCTIONS:",
-        smartOrders.paymentInstructions.trim(),
-      );
+      lines.push("", "PAYMENT INSTRUCTIONS:", smartOrders.paymentInstructions.trim());
     }
     lines.push(
       "",
-      "When a customer wants to place an order, your job is to politely collect:",
-      "  1. The product(s) they want, including quantity and any variant (size, color)",
-      "  2. Their full name",
-      "  3. Complete delivery address",
-      "  4. A contact phone number",
-      "  5. Preferred payment method (from the instructions above)",
+      "When a customer wants to order, collect: product + qty + variant, full name, delivery address, phone, payment method.",
+      "Ask 1-2 fields at a time — conversational, not a form. Confirm prices as you go.",
       "",
-      "Ask for missing fields one or two at a time — don't dump a long form. Confirm prices and totals as you go. Be conversational, not robotic.",
-      "",
-      "When ALL of the following are collected — items, customer name, full delivery address — you MUST end your reply with a hidden order block on its own line, in this exact format:",
-      '<<ORDER_JSON>>{"items":[{"name":"<product>","qty":<int>,"variant":"<size/color or empty>","price":<unit price number>}],"customerName":"<full name>","customerAddress":"<full address>","customerPhone":"<phone or empty>","paymentMethod":"<method>","subtotal":<total number>,"currency":"<PKR/USD/etc>","notes":"<any extra notes from the customer>"}<<END_ORDER>>',
-      "",
-      "The order block is parsed by the system — it is NEVER shown to the customer. Above the block, write a friendly confirmation message summarising the order and totals. Only emit the block once, when you have everything. If something is still missing, do NOT emit the block — just keep collecting.",
+      "When ALL collected emit ONCE on its own line:",
+      '<<ORDER_JSON>>{"items":[{"name":"<product>","qty":<int>,"variant":"<size/color or empty>","price":<unit price number>}],"customerName":"<full name>","customerAddress":"<full address>","customerPhone":"<phone or empty>","paymentMethod":"<method>","subtotal":<total number>,"currency":"<PKR/USD/etc>","notes":"<any extra notes>"}<<END_ORDER>>',
+      "The order block is never shown to the customer. Write a friendly confirmation above it.",
       "─── END SMART ORDERS ───",
     );
   }
 
   if (Array.isArray(ai.faqs) && ai.faqs.length) {
-    lines.push("", "Known FAQs (use these if the user asks):");
+    lines.push("", "QUICK ANSWERS — use these verbatim when the question matches:");
     ai.faqs
       .filter((f) => f && f.question && f.answer)
       .slice(0, 30)
@@ -206,17 +185,13 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
       });
   }
 
-  // ── Goals & smart behaviour (value options the creator picks) ──
+  // Goals
   const GOAL_TEXT = {
     support: "Answer questions accurately and helpfully.",
-    sales:
-      "Recommend the most relevant products and gently guide the person toward a purchase.",
-    leads:
-      "Spot genuine interest and turn the person into a lead. Be helpful first, then move things forward.",
-    bookings:
-      "Help the person book or schedule, and collect the details needed to confirm.",
-    traffic:
-      "When relevant, point the person to the right link instead of long explanations.",
+    sales: "Recommend relevant products and gently guide toward a purchase.",
+    leads: "Spot genuine interest and turn the person into a lead. Be helpful first.",
+    bookings: "Help the person book or schedule, collect the details needed.",
+    traffic: "When relevant, point to the right link instead of long explanations.",
   };
   const goals = Array.isArray(v2.goals) && v2.goals.length ? v2.goals : ["support"];
   const goalLines = goals.map((g) => GOAL_TEXT[g]).filter(Boolean);
@@ -225,25 +200,19 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     goalLines.forEach((g) => lines.push(`- ${g}`));
   }
   if (v2.leadCapture) {
-    lines.push(
-      "When someone shows real interest, naturally ask for their name and best contact (email or phone) so the team can follow up. Ask once, don't nag.",
-    );
+    lines.push("When someone shows real interest, naturally ask for name + contact (email or phone) to follow up. Ask once.");
   }
   if (v2.matchLanguage) {
     lines.push("Always reply in the same language the person wrote to you in.");
   }
   if (v2.engageBack) {
-    lines.push(
-      "End most replies with a short, friendly question or next step to keep the conversation going.",
-    );
+    lines.push("End most replies with a short, friendly question or next step to keep the conversation going.");
   }
   if (v2.ctaLink && String(v2.ctaLink).trim()) {
-    lines.push(
-      `When it helps, you may share this link: ${String(v2.ctaLink).trim()}`,
-    );
+    lines.push(`When helpful, share this link: ${String(v2.ctaLink).trim()}`);
   }
 
-  // Live integration data (Shopify order status / products) for THIS message.
+  // Live integration data
   if (extraContext && String(extraContext).trim()) {
     lines.push(
       "",
@@ -253,33 +222,29 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     );
   }
 
-  const handle =
-    contact?.igUsername || contact?.username || contact?.phone || "user";
-  lines.push("", `The customer's identifier is: ${handle}.`);
-  lines.push("You are replying via Instagram DM.");
+  const handle = contact?.igUsername || contact?.username || contact?.phone || "user";
+  lines.push("", `Customer identifier: ${handle}`);
+  lines.push("Channel: Instagram DM");
   lines.push(
-    "Keep replies short, natural, and warm — usually 1-3 sentences. Never invent prices, links, addresses, or policies that you weren't told.",
+    "",
+    "REPLY RULES:",
+    "- Keep replies short and natural — 1 to 4 lines normally.",
+    "- When listing products, prices, or options: one item per line starting with •",
+    "  Example: • Classic Hoodie — PKR 2,500 | Sizes: S M L XL | In stock ✅",
+    "- If a customer asks about a specific product, give the full details: name, price, sizes, stock, link.",
+    "- Split long replies into 2–3 short messages naturally (use newlines, not walls of text).",
+    "- Plain text only — Instagram DMs don't render markdown. No **bold**, no #headers, no tables.",
+    "- Never invent prices, links, addresses, or policies you weren't told.",
+    "- If the user clearly wants a human: respond with ESCALATE: <short reason>",
+    "- Never pretend to be human. Never fabricate facts.",
   );
-  lines.push(
-    "When you list multiple items (a menu, products, steps, or options), format them cleanly: a short intro line, then each item on its own line starting with \"• \", like \"• Classic Burger — $8\". Keep one item per line with a blank line before the list so it reads sharp in a DM. Use plain text only (Instagram DMs don't render markdown — no **bold**, #, or tables).",
-  );
-  lines.push(
-    "If the user clearly wants a human, escalate by responding with: ESCALATE: <short reason>.",
-  );
-  lines.push("Never pretend to be human. Never fabricate facts.");
 
   return lines.join("\n");
 };
 
 /**
  * Generate a chatbot reply.
- *
- * @param {Object} opts
- * @param {Object} opts.workspace
- * @param {Array}  opts.history     [{role:'user'|'assistant', content:'...'}]
- * @param {string} opts.userMessage
- * @param {Object} opts.contact
- * @returns {Promise<{reply:string, escalate:boolean, tokens:number, provider:string}>}
+ * Provider priority: openai (gpt-4o-mini) → groq (fallback)
  */
 const generateReply = async ({
   workspace,
@@ -292,21 +257,15 @@ const generateReply = async ({
     ...(workspace.aiBot || {}),
     ...pickAiCfg(workspace),
   };
-  // Map legacy field names
   if (!ai.handoffKeywords && workspace.aiBot?.escalateOnKeywords)
     ai.handoffKeywords = workspace.aiBot.escalateOnKeywords;
 
   // 1. Early escalation by keyword
   const escalateKw = ai.handoffKeywords || ["human", "agent", "support"];
   const lower = (userMessage || "").toLowerCase();
-  let escalate = escalateKw.some((kw) =>
-    lower.includes(String(kw).toLowerCase()),
-  );
+  let escalate = escalateKw.some((kw) => lower.includes(String(kw).toLowerCase()));
 
-  // 1b. Instant FAQ answer — reply verbatim when a saved question clearly
-  //     matches. Skipped when we have live store data to weave in.
-  //     Also skip if the workspace has sendable images — the LLM must handle
-  //     those because FAQ answers can't attach images.
+  // 2. Instant FAQ match (skip if live data or sendable images involved)
   const hasSendableImages = (workspace.aiKnowledge?.sources || []).some(
     (s) => s && s.type === "image" && s.imageUrl && s.status === "ready",
   );
@@ -316,64 +275,41 @@ const generateReply = async ({
   if (!escalate && !extraContext && !hasSendableImages) {
     const faqHit = matchFaq(ai.faqs, userMessage);
     if (faqHit) {
-      logger.info(`[AI:generateReply] ws=${workspace?._id} → FAQ match, returning canned answer`);
-      return {
-        reply: faqHit.answer,
-        escalate: false,
-        tokens: 0,
-        provider: "faq",
-      };
+      logger.info(`[AI:generateReply] ws=${workspace?._id} → FAQ match`);
+      return { reply: faqHit.answer, escalate: false, tokens: 0, provider: "faq" };
     }
   }
 
-  // 2. Determine provider
-  const requested = (ai.provider || "groq").toLowerCase();
+  // 3. Determine provider — OpenAI first, Groq fallback
+  const requested = (ai.provider || "openai").toLowerCase();
   let client = null;
   let model = null;
   let providerUsed = null;
 
-  if (requested === "groq" || requested === "auto") {
-    client = getGroqClient();
-    let requestedModel = ai.model || "llama-3.3-70b-versatile";
-    // Remap decommissioned Groq models to current equivalents
-    const GROQ_DEPRECATED = {
-      "llama-3.1-70b-versatile": "llama-3.3-70b-versatile",
-      "llama-3.1-8b-instant": "llama-3.1-8b-instant", // still active, keep
-      "mixtral-8x7b-32768": "llama-3.3-70b-versatile",
-    };
-    model = GROQ_DEPRECATED[requestedModel] ?? requestedModel;
-    providerUsed = "groq";
-  }
-
-  if (!client && (requested === "openai" || requested === "auto")) {
+  if (requested === "openai" || requested === "auto") {
     client = getOpenaiClient();
-    model = ai.model || "gpt-4o-mini";
+    model = "gpt-4o-mini";
     providerUsed = "openai";
   }
 
-  // Auto fallback chain — try the other provider if primary missing
-  if (!client) {
+  if (!client && (requested === "groq" || requested === "auto" || requested === "openai")) {
     client = getGroqClient();
-    if (client) {
-      model = "llama-3.1-70b-versatile";
-      providerUsed = "groq";
-    }
+    model = "llama-3.3-70b-versatile";
+    providerUsed = "groq";
   }
+
+  // Final fallback chain
   if (!client) {
     client = getOpenaiClient();
-    if (client) {
-      model = "gpt-4o-mini";
-      providerUsed = "openai";
-    }
+    if (client) { model = "gpt-4o-mini"; providerUsed = "openai"; }
+  }
+  if (!client) {
+    client = getGroqClient();
+    if (client) { model = "llama-3.3-70b-versatile"; providerUsed = "groq"; }
   }
 
   if (!client) {
-    return {
-      reply: fallbackReply(contact),
-      escalate: true,
-      tokens: 0,
-      provider: "none",
-    };
+    return { reply: fallbackReply(contact), escalate: true, tokens: 0, provider: "none" };
   }
 
   const systemPrompt = buildSystemPrompt(workspace, contact, extraContext);
@@ -383,28 +319,25 @@ const generateReply = async ({
       model,
       messages: [
         { role: "system", content: systemPrompt },
-        ...history.slice(-10),
+        ...history.slice(-12),
         { role: "user", content: userMessage || "" },
       ],
-      temperature: typeof ai.temperature === "number" ? ai.temperature : 0.4,
-      max_tokens: ai.maxTokens || 1500,
+      temperature: typeof ai.temperature === "number" ? ai.temperature : 0.45,
+      max_tokens: ai.maxTokens || 600,
     });
 
     let reply =
       response.choices?.[0]?.message?.content?.trim() ||
       "Thanks for your message! A teammate will reply shortly.";
 
-    // Detect ESCALATE: prefix
     if (/^\s*ESCALATE\s*:/i.test(reply)) {
       escalate = true;
-      reply =
-        reply.replace(/^\s*ESCALATE\s*:\s*/i, "").trim() ||
-        fallbackReply(contact);
+      reply = reply.replace(/^\s*ESCALATE\s*:\s*/i, "").trim() || fallbackReply(contact);
     }
 
-    // Extract any <<SEND_IMAGE:url>> markers so the caller can attach images.
+    // Extract <<SEND_IMAGE:url>> markers
     const imageUrls = [];
-    logger.info(`[AI:raw] ws=${workspace?._id} raw="${(reply || "").slice(0, 150).replace(/\n/g, "\\n")}"`);
+    logger.info(`[AI:raw] ws=${workspace?._id} provider=${providerUsed} raw="${(reply || "").slice(0, 150).replace(/\n/g, "\\n")}"`);
     reply = reply
       .replace(/<<\s*SEND_IMAGE\s*:\s*([^>]+?)\s*>>/gi, (_, url) => {
         const clean = String(url).trim();
@@ -413,9 +346,7 @@ const generateReply = async ({
       })
       .trim();
 
-    logger.info(
-      `[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length} urls=${imageUrls.map((u) => u.slice(0, 60)).join(",") || "none"}`,
-    );
+    logger.info(`[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length}`);
 
     return {
       reply,
@@ -425,26 +356,40 @@ const generateReply = async ({
       provider: providerUsed,
     };
   } catch (err) {
-    logger.error(`AI generateReply (${providerUsed}) failed`, {
-      err: err.message,
-    });
-    return {
-      reply: fallbackReply(contact),
-      escalate: true,
-      tokens: 0,
-      provider: providerUsed,
-    };
+    logger.error(`AI generateReply (${providerUsed}) failed`, { err: err.message });
+    // Try Groq as emergency fallback if OpenAI failed
+    if (providerUsed === "openai") {
+      const groq = getGroqClient();
+      if (groq) {
+        try {
+          const sp = buildSystemPrompt(workspace, contact, extraContext);
+          const r2 = await groq.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            messages: [
+              { role: "system", content: sp },
+              ...history.slice(-12),
+              { role: "user", content: userMessage || "" },
+            ],
+            temperature: 0.45,
+            max_tokens: 600,
+          });
+          const reply2 = r2.choices?.[0]?.message?.content?.trim() || fallbackReply(contact);
+          return { reply: reply2, escalate, imageUrls: [], tokens: r2.usage?.total_tokens || 0, provider: "groq-fallback" };
+        } catch { /* fall through */ }
+      }
+    }
+    return { reply: fallbackReply(contact), escalate: true, tokens: 0, provider: providerUsed };
   }
 };
 
 /**
- * Return the first available chat client (Groq preferred, OpenAI fallback).
+ * Return the first available chat client (OpenAI preferred, Groq fallback).
  */
 const getAnyClient = () => {
-  let client = getGroqClient();
-  if (client) return { client, model: "llama-3.3-70b-versatile", provider: "groq" };
-  client = getOpenaiClient();
+  let client = getOpenaiClient();
   if (client) return { client, model: "gpt-4o-mini", provider: "openai" };
+  client = getGroqClient();
+  if (client) return { client, model: "llama-3.3-70b-versatile", provider: "groq" };
   return { client: null, model: null, provider: "none" };
 };
 
