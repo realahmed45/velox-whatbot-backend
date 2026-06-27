@@ -18,11 +18,12 @@ const webhookIntegrationSchema = new mongoose.Schema(
     events: {
       type: [String],
       default: [
-        "contact.created",
+        "dm.received",
+        "dm.sent",
+        "comment.received",
+        "lead.created",
+        "flow.completed",
         "contact.tagged",
-        "message.inbound",
-        "giveaway.winner",
-        "drip.completed",
       ],
     },
     enabled: { type: Boolean, default: true },

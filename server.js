@@ -101,7 +101,7 @@ app.use(
 // req.body is always a Buffer before express.json can parse it.
 app.use(
   ["/api/instagram/webhook", "/api/instagram/webhook/botlify"],
-  express.raw({ type: "*/*" }),  // match any content-type Zernio may send
+  express.raw({ type: "*/*" }), // match any content-type Zernio may send
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
