@@ -158,11 +158,11 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
     });
 
     logger.info(`[Shopify OAuth] connected ws=${workspaceId} shop=${host}`);
-    return res.redirect(`${CLIENT_URL}/dashboard?shopify=connected`);
+    return res.redirect(`${CLIENT_URL}/dashboard/apps?shopify=connected&shop=${encodeURIComponent(host)}`);
   } catch (err) {
     logger.error("[Shopify OAuth] callback failed", { err: err.message });
     return res.redirect(
-      `${CLIENT_URL}/dashboard?shopify=error&reason=exchange`,
+      `${CLIENT_URL}/dashboard/apps?shopify=error&reason=exchange`,
     );
   }
 });
