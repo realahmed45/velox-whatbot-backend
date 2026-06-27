@@ -199,6 +199,11 @@ app.use("/api/public", publicRoutes);
 app.use("/api/referral", referralRoutes);
 app.use("/api/webhooks", webhookRoutes);
 
+// ─── Version check (public) ────────────────────────────────
+app.get("/api/version", (req, res) => {
+  res.json({ version: "2.1.0", build: "2026-06-28-dm-events", features: ["dm.received", "mailchimp-auto-subscribe"] });
+});
+
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
