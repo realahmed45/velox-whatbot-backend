@@ -167,7 +167,9 @@ exports.disconnectShopify = asyncHandler(async (req, res) => {
 
 // GET /api/integrations/mailchimp
 exports.getMailchimp = asyncHandler(async (req, res) => {
-  const ws = await Workspace.findById(req.workspace._id);
+  const ws = await Workspace.findById(req.workspace._id).select(
+    "+integrations.mailchimp.apiKey",
+  );
   const m = ws?.integrations?.mailchimp || {};
   res.json({
     success: true,
