@@ -463,6 +463,20 @@ const workspaceSchema = new mongoose.Schema(
         serverPrefix: String, // e.g. "us1"
         connectedAt: Date,
       },
+      // Make.com integration (API-token based, scenarios fetched via Make API)
+      make: {
+        apiToken: { type: String, select: false }, // encrypted
+        connected: { type: Boolean, default: false },
+        connectedAt: Date,
+        teamId: Number,
+        region: { type: String, default: "us1" }, // us1 | eu1 | us2 etc.
+        accountEmail: String, // display only
+        linkedScenarioId: Number,
+        linkedScenarioName: String,
+        linkedHookUrl: String, // the Make.com webhook URL we POST events to
+        linkedHookId: Number,
+        lastSyncAt: Date,
+      },
     },
 
     // Referral program (G8)

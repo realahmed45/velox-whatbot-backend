@@ -262,3 +262,224 @@ exports.disconnectMailchimp = asyncHandler(async (req, res) => {
   });
   res.json({ success: true });
 });
+
+// ─── Make.com ───────────────────────────────────────────────────────────────
+
+const MAKE_API_REGIONS = ["us1", "us2", "eu1", "eu2"];
+
+// Helper: call Make.com API with a given token + region
+const makeApiCall = async (token, region = "us1", path) => {
+  const base = `https://${region}.make.com/api/v2`;
+  const res = await fetch(`${base}${path}`, {
+    headers: {
+      Authorization: `Token ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Make API ${res.status}: ${err}`);
+  }
+  return res.json();
+};
+
+// Auto-detect region by trying each until one works
+const detectRegion = async (token) => {
+  for (const region of MAKE_API_REGIONS) {
+    try {
+      const data = await makeApiCall(token, region, "/users/me");
+      return { region, user: data };
+    } catch {
+      // try next
+    }
+  }
+  throw new Error("Invalid API token or Make.com is unreachable. Please check your token.");
+};
+
+// GET /api/integrations/make
+exports.getMake = asyncHandler(async (req, res) => {
+  const ws = await Workspace.findById(req.workspace._id);
+  const m = ws?.integrations?.make || {};
+  res.json({
+    success: true,
+    make: {
+      connected: !!m.connected,
+      accountEmail: m.accountEmail || null,
+      region: m.region || "us1",
+      teamId: m.teamId || null,
+      linkedScenarioId: m.linkedScenarioId || null,
+      linkedScenarioName: m.linkedScenarioName || null,
+      linkedHookUrl: m.linkedHookUrl || null,
+      connectedAt: m.connectedAt || null,
+      lastSyncAt: m.lastSyncAt || null,
+    },
+  });
+});
+
+// POST /api/integrations/make/connect  { apiToken }
+// Validates the token, detects region, saves encrypted token
+exports.connectMake = asyncHandler(async (req, res) => {
+  const { apiToken } = req.body;
+  if (!apiToken || apiToken.trim().length < 10) {
+    res.status(400);
+    throw new Error("A valid Make.com API token is required");
+  }
+
+  const token = apiToken.trim();
+  const { region, user } = await detectRegion(token);
+
+  // user object shape varies — extract what we can
+  const email =
+    user?.user?.email ||
+    user?.email ||
+    user?.data?.email ||
+    null;
+  const teamId =
+    user?.user?.teamId ||
+    user?.teamId ||
+    user?.data?.teamId ||
+    null;
+
+  await Workspace.findByIdAndUpdate(req.workspace._id, {
+    "integrations.make.apiToken": encrypt(token),
+    "integrations.make.connected": true,
+    "integrations.make.connectedAt": new Date(),
+    "integrations.make.region": region,
+    "integrations.make.accountEmail": email,
+    "integrations.make.teamId": teamId || null,
+    "integrations.make.lastSyncAt": new Date(),
+  });
+
+  res.json({ success: true, region, email, teamId });
+});
+
+// GET /api/integrations/make/scenarios
+// Returns user's scenarios, each annotated with hasWebhook + webhookUrl
+exports.listMakeScenarios = asyncHandler(async (req, res) => {
+  const ws = await Workspace.findById(req.workspace._id).select(
+    "+integrations.make.apiToken",
+  );
+  const m = ws?.integrations?.make;
+  if (!m?.apiToken || !m?.connected) {
+    res.status(400);
+    throw new Error("Make.com not connected");
+  }
+
+  const token = decrypt(m.apiToken);
+  const region = m.region || "us1";
+
+  // Fetch scenarios + hooks in parallel
+  const [scenariosData, hooksData] = await Promise.all([
+    makeApiCall(token, region, `/scenarios?pg[sortBy]=updatedAt&pg[sortDir]=desc&pg[limit]=100`),
+    makeApiCall(token, region, `/hooks?pg[limit]=200`),
+  ]);
+
+  const scenarios = scenariosData?.scenarios || [];
+  const hooks = hooksData?.hooks || [];
+
+  // Build a scenarioId → hook map
+  const hookByScenario = {};
+  for (const h of hooks) {
+    if (h.scenarioId && !hookByScenario[h.scenarioId]) {
+      hookByScenario[h.scenarioId] = h;
+    }
+  }
+
+  const enriched = scenarios.map((s) => {
+    const hook = hookByScenario[s.id] || null;
+    return {
+      id: s.id,
+      name: s.name,
+      isActive: s.isEnabled && !s.isPaused,
+      isPaused: s.isPaused || false,
+      updatedAt: s.updatedAt,
+      hasWebhook: !!hook,
+      webhookUrl: hook?.url || null,
+      hookId: hook?.id || null,
+    };
+  });
+
+  await Workspace.findByIdAndUpdate(req.workspace._id, {
+    "integrations.make.lastSyncAt": new Date(),
+  });
+
+  res.json({ success: true, scenarios: enriched });
+});
+
+// POST /api/integrations/make/link  { scenarioId, scenarioName, webhookUrl, hookId }
+// Links a specific scenario — auto-creates / updates the WebhookIntegration record
+exports.linkMakeScenario = asyncHandler(async (req, res) => {
+  const { scenarioId, scenarioName, webhookUrl, hookId } = req.body;
+
+  if (!webhookUrl) {
+    res.status(400);
+    throw new Error(
+      "Selected scenario has no webhook trigger. Add a 'Custom webhook' module as the first step in Make, then try again.",
+    );
+  }
+
+  const ws = req.workspace;
+
+  // Save linked scenario on workspace
+  await Workspace.findByIdAndUpdate(ws._id, {
+    "integrations.make.linkedScenarioId": scenarioId,
+    "integrations.make.linkedScenarioName": scenarioName,
+    "integrations.make.linkedHookUrl": webhookUrl,
+    "integrations.make.linkedHookId": hookId || null,
+  });
+
+  // Upsert WebhookIntegration so the dispatcher fires to this URL
+  const WebhookIntegration = require("../models/WebhookIntegration");
+  let existing = await WebhookIntegration.findOne({
+    workspaceId: ws._id,
+    name: { $regex: /^Make\.com/i },
+  });
+
+  const payload = {
+    workspaceId: ws._id,
+    name: `Make.com — ${scenarioName}`,
+    url: webhookUrl,
+    enabled: true,
+    events: [
+      "dm.received",
+      "dm.sent",
+      "comment.received",
+      "lead.created",
+      "flow.completed",
+      "contact.tagged",
+    ],
+  };
+
+  if (existing) {
+    Object.assign(existing, payload);
+    await existing.save();
+  } else {
+    existing = await WebhookIntegration.create(payload);
+  }
+
+  res.json({
+    success: true,
+    message: `Linked to "${scenarioName}" — Botlify will now fire all events to your Make.com scenario.`,
+    integrationId: existing._id,
+  });
+});
+
+// DELETE /api/integrations/make
+exports.disconnectMake = asyncHandler(async (req, res) => {
+  const ws = req.workspace;
+
+  // Remove linked webhook integration
+  const WebhookIntegration = require("../models/WebhookIntegration");
+  await WebhookIntegration.deleteMany({
+    workspaceId: ws._id,
+    name: { $regex: /^Make\.com/i },
+  });
+
+  await Workspace.findByIdAndUpdate(ws._id, {
+    "integrations.make": {
+      connected: false,
+    },
+  });
+
+  res.json({ success: true });
+});
