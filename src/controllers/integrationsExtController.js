@@ -460,9 +460,9 @@ exports.listMakeScenarios = asyncHandler(async (req, res) => {
     return {
       id: s.id,
       name: s.name,
-      isActive: s.isEnabled && !s.isPaused,
+      isActive: s.isActive || false,          // Make returns isActive, not isEnabled
       isPaused: s.isPaused || false,
-      updatedAt: s.updatedAt,
+      updatedAt: s.lastEdit || s.updatedAt,   // Make returns lastEdit, not updatedAt
       hasWebhook: !!hook,
       webhookUrl: hook?.url || null,
       hookId: hook?.id || null,
@@ -479,6 +479,9 @@ exports.listMakeScenarios = asyncHandler(async (req, res) => {
     "integrations.make.lastSyncAt": new Date(),
   });
 
+  // Prevent browser from caching this response (avoids stale 304 showing empty list)
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
   res.json({ success: true, scenarios: enriched });
 });
 
