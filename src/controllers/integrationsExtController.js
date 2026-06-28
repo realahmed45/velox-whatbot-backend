@@ -370,49 +370,79 @@ exports.connectMake = asyncHandler(async (req, res) => {
 // GET /api/integrations/make/scenarios
 // Returns user's scenarios, each annotated with hasWebhook + webhookUrl
 exports.listMakeScenarios = asyncHandler(async (req, res) => {
+  console.log("[Make] listMakeScenarios called for workspace:", req.workspace._id);
+
   const ws = await Workspace.findById(req.workspace._id).select(
     "+integrations.make.apiToken",
   );
   const m = ws?.integrations?.make;
+
+  console.log("[Make] integrations.make state:", {
+    connected: m?.connected,
+    region: m?.region,
+    teamId: m?.teamId,
+    accountEmail: m?.accountEmail,
+    hasToken: !!m?.apiToken,
+  });
+
   if (!m?.apiToken || !m?.connected) {
+    console.error("[Make] Not connected or missing token");
     res.status(400);
     throw new Error("Make.com not connected");
   }
 
   const token = decrypt(m.apiToken);
   const region = m.region || "us1";
-
   let teamId = m.teamId;
+
+  console.log("[Make] Using region:", region, "| teamId from DB:", teamId);
 
   // Dynamic recovery for existing connected workspaces that missed teamId
   if (!teamId) {
+    console.log("[Make] teamId missing — attempting auto-recovery via /organizations...");
     try {
       const orgsData = await makeApiCall(token, region, "/organizations");
+      console.log("[Make] /organizations raw response:", JSON.stringify(orgsData));
       const orgId = orgsData?.organizations?.[0]?.id;
+      console.log("[Make] Resolved orgId:", orgId);
       if (orgId) {
         const teamsData = await makeApiCall(token, region, `/teams?organizationId=${orgId}`);
+        console.log("[Make] /teams raw response:", JSON.stringify(teamsData));
         teamId = teamsData?.teams?.[0]?.id;
+        console.log("[Make] Resolved teamId:", teamId);
         if (teamId) {
           await Workspace.findByIdAndUpdate(req.workspace._id, {
             "integrations.make.teamId": teamId,
           });
+          console.log("[Make] teamId saved to workspace DB");
         }
       }
     } catch (err) {
-      console.error("Error auto-recovering teamId in listMakeScenarios:", err);
+      console.error("[Make] Error auto-recovering teamId:", err.message);
     }
   }
 
   if (!teamId) {
+    console.error("[Make] teamId still null after recovery — aborting");
     res.status(400);
     throw new Error("Could not retrieve teamId or organizationId for Make.com. Please try reconnecting.");
   }
 
+  const scenariosUrl = `/scenarios?teamId=${teamId}&pg[limit]=150`;
+  const hooksUrl = `/hooks?teamId=${teamId}&pg[limit]=200`;
+  console.log("[Make] Fetching:", scenariosUrl);
+  console.log("[Make] Fetching:", hooksUrl);
+
   // Fetch scenarios + hooks in parallel, scoped to the teamId
   const [scenariosData, hooksData] = await Promise.all([
-    makeApiCall(token, region, `/scenarios?teamId=${teamId}&pg[limit]=150`),
-    makeApiCall(token, region, `/hooks?teamId=${teamId}&pg[limit]=200`),
+    makeApiCall(token, region, scenariosUrl),
+    makeApiCall(token, region, hooksUrl),
   ]);
+
+  console.log("[Make] scenariosData keys:", Object.keys(scenariosData || {}));
+  console.log("[Make] raw scenarios count:", scenariosData?.scenarios?.length ?? "undefined");
+  console.log("[Make] raw scenarios sample:", JSON.stringify(scenariosData?.scenarios?.slice(0, 2)));
+  console.log("[Make] raw hooks count:", hooksData?.hooks?.length ?? "undefined");
 
   const scenarios = scenariosData?.scenarios || [];
   const hooks = hooksData?.hooks || [];
@@ -441,6 +471,9 @@ exports.listMakeScenarios = asyncHandler(async (req, res) => {
 
   // Sort programmatically since Make API v2 doesn't support pg[sortBy]=updatedAt on scenarios
   enriched.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+
+  console.log("[Make] Final enriched scenarios count:", enriched.length);
+  console.log("[Make] Final enriched scenarios:", JSON.stringify(enriched));
 
   await Workspace.findByIdAndUpdate(req.workspace._id, {
     "integrations.make.lastSyncAt": new Date(),
