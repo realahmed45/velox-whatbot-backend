@@ -3,7 +3,7 @@ const Workspace = require("../models/Workspace");
 const logger = require("../utils/logger");
 
 // Runs monthly to reset usage counters
-module.exports = (connection) => {
+module.exports = (connection, workerDefaults = {}) => {
   const worker = new Worker(
     "usage-reset",
     async (job) => {
@@ -32,7 +32,7 @@ module.exports = (connection) => {
         );
       }
     },
-    { connection },
+    { connection, ...workerDefaults },
   );
 
   worker.on("failed", (job, err) =>

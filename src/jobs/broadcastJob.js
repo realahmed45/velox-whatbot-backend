@@ -9,7 +9,7 @@ const logger = require("../utils/logger");
 const DELAY_MS = 1200;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = (connection) => {
+module.exports = (connection, workerDefaults = {}) => {
   const worker = new Worker(
     "broadcasts",
     async (job) => {
@@ -103,7 +103,7 @@ module.exports = (connection) => {
         `[BroadcastJob] Campaign ${campaignId} done. sent:${sent} failed:${failed}`,
       );
     },
-    { connection, concurrency: 1 },
+    { connection, concurrency: 1, ...workerDefaults },
   );
 
   worker.on("failed", (job, err) => {

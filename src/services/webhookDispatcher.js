@@ -14,11 +14,12 @@ const sign = (secret, body) =>
 let webhookQueue = null;
 let webhookWorker = null;
 
-const initWebhookQueue = () => {
+const initWebhookQueue = (workerDefaults = {}) => {
   try {
     const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
     const connection = new (require("ioredis"))(redisUrl, {
       maxRetriesPerRequest: null,
+      enableOfflineQueue: false,
       tls: redisUrl.startsWith("rediss://") ? {} : undefined,
     });
 
@@ -45,6 +46,7 @@ const initWebhookQueue = () => {
           max: 100,
           duration: 1000,
         },
+        ...workerDefaults,
       },
     );
 

@@ -44,11 +44,12 @@ async function refreshExpiringTokens() {
   return { ok, fail };
 }
 
-module.exports = (connection) => {
+module.exports = (connection, workerDefaults = {}) => {
   const queue = new Queue(QUEUE_NAME, { connection });
   const worker = new Worker(QUEUE_NAME, async () => refreshExpiringTokens(), {
     connection,
     concurrency: 1,
+    ...workerDefaults,
   });
   worker.on("failed", (_job, err) =>
     logger.error(`[IGTokenRefresh] job failed: ${err.message}`),
