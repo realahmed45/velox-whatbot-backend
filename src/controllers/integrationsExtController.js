@@ -334,11 +334,25 @@ exports.connectMake = asyncHandler(async (req, res) => {
     user?.email ||
     user?.data?.email ||
     null;
-  const teamId =
+  let teamId =
     user?.user?.teamId ||
     user?.teamId ||
     user?.data?.teamId ||
     null;
+
+  // Let's resolve teamId via organizations if it's missing (which it typically is in users/me)
+  if (!teamId) {
+    try {
+      const orgsData = await makeApiCall(token, region, "/organizations");
+      const orgId = orgsData?.organizations?.[0]?.id;
+      if (orgId) {
+        const teamsData = await makeApiCall(token, region, `/teams?organizationId=${orgId}`);
+        teamId = teamsData?.teams?.[0]?.id;
+      }
+    } catch (err) {
+      console.error("Error fetching organizations/teams for Make connection:", err);
+    }
+  }
 
   await Workspace.findByIdAndUpdate(req.workspace._id, {
     "integrations.make.apiToken": encrypt(token),
@@ -368,10 +382,36 @@ exports.listMakeScenarios = asyncHandler(async (req, res) => {
   const token = decrypt(m.apiToken);
   const region = m.region || "us1";
 
-  // Fetch scenarios + hooks in parallel
+  let teamId = m.teamId;
+
+  // Dynamic recovery for existing connected workspaces that missed teamId
+  if (!teamId) {
+    try {
+      const orgsData = await makeApiCall(token, region, "/organizations");
+      const orgId = orgsData?.organizations?.[0]?.id;
+      if (orgId) {
+        const teamsData = await makeApiCall(token, region, `/teams?organizationId=${orgId}`);
+        teamId = teamsData?.teams?.[0]?.id;
+        if (teamId) {
+          await Workspace.findByIdAndUpdate(req.workspace._id, {
+            "integrations.make.teamId": teamId,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error auto-recovering teamId in listMakeScenarios:", err);
+    }
+  }
+
+  if (!teamId) {
+    res.status(400);
+    throw new Error("Could not retrieve teamId or organizationId for Make.com. Please try reconnecting.");
+  }
+
+  // Fetch scenarios + hooks in parallel, scoped to the teamId
   const [scenariosData, hooksData] = await Promise.all([
-    makeApiCall(token, region, `/scenarios?pg[sortBy]=updatedAt&pg[sortDir]=desc&pg[limit]=100`),
-    makeApiCall(token, region, `/hooks?pg[limit]=200`),
+    makeApiCall(token, region, `/scenarios?teamId=${teamId}&pg[sortBy]=updatedAt&pg[sortDir]=desc&pg[limit]=100`),
+    makeApiCall(token, region, `/hooks?teamId=${teamId}&pg[limit]=200`),
   ]);
 
   const scenarios = scenariosData?.scenarios || [];
