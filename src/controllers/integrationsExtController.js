@@ -410,7 +410,7 @@ exports.listMakeScenarios = asyncHandler(async (req, res) => {
 
   // Fetch scenarios + hooks in parallel, scoped to the teamId
   const [scenariosData, hooksData] = await Promise.all([
-    makeApiCall(token, region, `/scenarios?teamId=${teamId}&pg[sortBy]=updatedAt&pg[sortDir]=desc&pg[limit]=100`),
+    makeApiCall(token, region, `/scenarios?teamId=${teamId}&pg[limit]=150`),
     makeApiCall(token, region, `/hooks?teamId=${teamId}&pg[limit]=200`),
   ]);
 
@@ -438,6 +438,9 @@ exports.listMakeScenarios = asyncHandler(async (req, res) => {
       hookId: hook?.id || null,
     };
   });
+
+  // Sort programmatically since Make API v2 doesn't support pg[sortBy]=updatedAt on scenarios
+  enriched.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 
   await Workspace.findByIdAndUpdate(req.workspace._id, {
     "integrations.make.lastSyncAt": new Date(),
