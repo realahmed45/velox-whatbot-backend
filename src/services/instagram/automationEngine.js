@@ -431,7 +431,7 @@ const handlePostComment = async (
   const blocked = guardSend(workspace, contact, conv);
   if (blocked) return logger.debug(`[handlePostComment] blocked: ${blocked}`);
 
-  if (await recentlyTriggered(conv, TRIGGERS.POST_COMMENT, matched.keyword, 24))
+  if (await recentlyTriggered(conv, TRIGGERS.POST_COMMENT, matched.keyword, 0.002))
     return;
 
   let body = matched.replyMessage;
@@ -463,7 +463,7 @@ const handleDMKeyword = async (workspace, contact, conv, text) => {
     matchKeyword(text, t.keyword, t.matchType),
   );
   if (!matched) return false;
-  if (await recentlyTriggered(conv, TRIGGERS.DM_KEYWORD, matched.keyword, 1))
+  if (await recentlyTriggered(conv, TRIGGERS.DM_KEYWORD, matched.keyword, 0.002))
     return true;
 
   let body = matched.replyMessage;
@@ -500,7 +500,7 @@ const handleStoryReply = async (workspace, contact, conv, text) => {
   if (!cfg?.enabled) return false;
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_REPLY))
     return false;
-  if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 6)) return true;
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 0.002)) return true;
 
   let message = cfg.replyMessage;
   const routed = (cfg.keywords || []).find((k) =>
@@ -531,7 +531,7 @@ const handleStoryMention = async (workspace, senderId, meta = {}) => {
   const conv = await getOrCreateConversation(workspace, contact);
   const blocked = guardSend(workspace, contact, conv);
   if (blocked) return;
-  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 12)) return;
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 0.002)) return;
 
   await sendAndLog({
     workspace,
@@ -547,7 +547,7 @@ const handleShare = async (workspace, contact, conv) => {
   if (!cfg?.enabled) return false;
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.SHARE_TO_STORY))
     return false;
-  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 6))
+  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 0.002))
     return true;
 
   await sendAndLog({
