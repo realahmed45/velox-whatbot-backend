@@ -1002,6 +1002,8 @@ exports.diagnose = asyncHandler(async (req, res) => {
   const push = (ok, label, hint) =>
     checks.push({ ok: !!ok, label, hint: ok ? null : hint });
 
+  const isBotlify = ws.instagram?.connectionType?.startsWith("botlify");
+
   push(
     ws.instagram?.status === "connected",
     "Instagram connected",
@@ -1014,14 +1016,20 @@ exports.diagnose = asyncHandler(async (req, res) => {
   );
   push(
     hasMetaSub,
-    "App subscribed to this IG account (verified with Meta)",
+    isBotlify
+      ? "App webhook registered with Botlify service"
+      : "App subscribed to this IG account (verified with Meta)",
     metaSubsError ||
-      "Meta reports this account is NOT subscribed to any fields. In Meta App Dashboard, add the Webhooks product, set the callback URL to https://velox-whatbot-backend.onrender.com/api/instagram/webhook, then click 'Re-subscribe webhook' here.",
+      (isBotlify
+        ? "Webhook registration is missing on the hosted provider. Click 'Re-subscribe webhook' above to register your callback URL."
+        : "Meta reports this account is NOT subscribed to any fields. In Meta App Dashboard, add the Webhooks product, set the callback URL to https://velox-whatbot-backend.onrender.com/api/instagram/webhook, then click 'Re-subscribe webhook' here."),
   );
   push(
     !!ws.instagram?.lastWebhookAt,
     "Meta has delivered at least one event",
-    "No webhook has ever reached this server. Either the app isn't in Live mode (Dev mode only delivers events for app admins/testers), or the callback URL in Meta App Dashboard is wrong. Send a DM or comment from a test account added as an Instagram Tester.",
+    isBotlify
+      ? "No webhook event has reached this server yet. Send a direct message or leave a comment from a test account to trigger the initial connection test."
+      : "No webhook has ever reached this server. Either the app isn't in Live mode (Dev mode only delivers events for app admins/testers), or the callback URL in Meta App Dashboard is wrong. Send a DM or comment from a test account added as an Instagram Tester.",
   );
   push(
     !ws.instagram?.tokenExpiresAt ||
