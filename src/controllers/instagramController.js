@@ -37,16 +37,13 @@ const metaExchangeCodeForToken = async (code, redirectUri) => {
 };
 
 const metaGetLongLivedToken = async (shortToken) => {
-  const { data } = await axios.get(
-    "https://graph.instagram.com/access_token",
-    {
-      params: {
-        grant_type: "ig_exchange_token",
-        client_secret: IG_APP_SECRET,
-        access_token: shortToken,
-      },
+  const { data } = await axios.get("https://graph.instagram.com/access_token", {
+    params: {
+      grant_type: "ig_exchange_token",
+      client_secret: IG_APP_SECRET,
+      access_token: shortToken,
     },
-  );
+  });
   return data; // { access_token, token_type, expires_in }
 };
 
@@ -63,13 +60,15 @@ const metaGetAccountInfo = async (accessToken) => {
 
 // Subscribe a Meta-OAuth IG account to webhook fields so Meta routes events to us.
 // This is a per-account call (independent of Meta App Dashboard registration).
+// "mentions" is the correct Instagram Business API field for story @mentions
+// (when someone tags your account in their story). "story_mentions" is not a
+// valid Instagram webhook field and will be silently ignored by Meta.
 const WEBHOOK_FIELDS = [
   "messages",
   "messaging_postbacks",
   "messaging_referrals",
   "comments",
-  "story_mentions",
-  "feed",
+  "mentions",
 ].join(",");
 
 const metaSubscribeForWebhook = async (igUserId, accessToken) => {
@@ -83,7 +82,9 @@ const metaSubscribeForWebhook = async (igUserId, accessToken) => {
       },
     },
   );
-  logger.info(`[IG webhook subscribe] igUserId=${igUserId} result=${JSON.stringify(data)}`);
+  logger.info(
+    `[IG webhook subscribe] igUserId=${igUserId} result=${JSON.stringify(data)}`,
+  );
   return data;
 };
 
@@ -589,10 +590,23 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
           continue;
         }
 
-        // Share (attachment type=share / story_mention)
+        // Story mention via messaging: Instagram sends attachment.type="story_mention"
+        // when someone @mentions us in their story. This is DIFFERENT from share_to_story
+        // (where someone shares your post to their story = attachment.type="share").
         const attachments = message.attachments || [];
+        const storyMentionAttachment = attachments.some((a) => a.type === "story_mention");
+        if (storyMentionAttachment) {
+          await handleWebhookEvent(ws._id, {
+            type: "story_mention",
+            senderId,
+            text: message.text,
+          });
+          continue;
+        }
+
+        // Share to story (someone shared your post to their own story)
         const isShare = attachments.some((a) =>
-          ["share", "story_mention", "template"].includes(a.type),
+          ["share", "template"].includes(a.type),
         );
         if (isShare) {
           await handleWebhookEvent(ws._id, {
@@ -747,8 +761,17 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
               continue;
             }
             const attachments = message.attachments || [];
+            const storyMentionAttachment = attachments.some((a) => a.type === "story_mention");
+            if (storyMentionAttachment) {
+              await handleWebhookEvent(reprocessWorkspace._id, {
+                type: "story_mention",
+                senderId,
+                text: message.text,
+              });
+              continue;
+            }
             const isShare = attachments.some((a) =>
-              ["share", "story_mention", "template"].includes(a.type),
+              ["share", "template"].includes(a.type),
             );
             if (isShare) {
               await handleWebhookEvent(reprocessWorkspace._id, {
@@ -867,7 +890,10 @@ exports.resubscribeWebhook = asyncHandler(async (req, res) => {
   }
   try {
     const connectionType = ws.instagram?.connectionType || "meta_oauth";
-    if (connectionType === "meta_oauth" || !connectionType.startsWith("botlify")) {
+    if (
+      connectionType === "meta_oauth" ||
+      !connectionType.startsWith("botlify")
+    ) {
       // Direct Meta API — subscribe via /{ig_user_id}/subscribed_apps
       let igUserId;
       try {
@@ -1002,8 +1028,6 @@ exports.diagnose = asyncHandler(async (req, res) => {
   const push = (ok, label, hint) =>
     checks.push({ ok: !!ok, label, hint: ok ? null : hint });
 
-  const isBotlify = ws.instagram?.connectionType?.startsWith("botlify");
-
   push(
     ws.instagram?.status === "connected",
     "Instagram connected",
@@ -1016,20 +1040,14 @@ exports.diagnose = asyncHandler(async (req, res) => {
   );
   push(
     hasMetaSub,
-    isBotlify
-      ? "App webhook registered with Botlify service"
-      : "App subscribed to this IG account (verified with Meta)",
+    "App subscribed to this IG account (verified with Meta)",
     metaSubsError ||
-      (isBotlify
-        ? "Webhook registration is missing on the hosted provider. Click 'Re-subscribe webhook' above to register your callback URL."
-        : "Meta reports this account is NOT subscribed to any fields. In Meta App Dashboard, add the Webhooks product, set the callback URL to https://velox-whatbot-backend.onrender.com/api/instagram/webhook, then click 'Re-subscribe webhook' here."),
+      "Meta reports this account is NOT subscribed to any fields. In Meta App Dashboard, add the Webhooks product, set the callback URL to https://velox-whatbot-backend.onrender.com/api/instagram/webhook, then click 'Re-subscribe webhook' here.",
   );
   push(
     !!ws.instagram?.lastWebhookAt,
     "Meta has delivered at least one event",
-    isBotlify
-      ? "No webhook event has reached this server yet. Send a direct message or leave a comment from a test account to trigger the initial connection test."
-      : "No webhook has ever reached this server. Either the app isn't in Live mode (Dev mode only delivers events for app admins/testers), or the callback URL in Meta App Dashboard is wrong. Send a DM or comment from a test account added as an Instagram Tester.",
+    "No webhook has ever reached this server. Either the app isn't in Live mode (Dev mode only delivers events for app admins/testers), or the callback URL in Meta App Dashboard is wrong. Send a DM or comment from a test account added as an Instagram Tester.",
   );
   push(
     !ws.instagram?.tokenExpiresAt ||
@@ -1285,9 +1303,13 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
   if (secret && sig) {
     let expected;
     try {
-      expected = "sha256=" + crypto.createHmac("sha256", secret).update(rawBytes).digest("hex");
+      expected =
+        "sha256=" +
+        crypto.createHmac("sha256", secret).update(rawBytes).digest("hex");
     } catch (e) {
-      logger.warn("[BotlifyIG webhook] signature computation failed", { err: e.message });
+      logger.warn("[BotlifyIG webhook] signature computation failed", {
+        err: e.message,
+      });
       // Continue without signature check rather than silently dropping.
     }
     if (expected && sig !== expected) {
@@ -1350,7 +1372,9 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     // that may have been re-linked.
     const allWs = await Workspace.find({
       "instagram.status": "connected",
-    }).select("+instagram.botlifyAccountId +instagram.igUserId instagram.connectionType");
+    }).select(
+      "+instagram.botlifyAccountId +instagram.igUserId instagram.connectionType",
+    );
 
     let target = null;
     const candidates = [];
@@ -1418,7 +1442,11 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     // Outbound echo events — we don't act on these, just ack. Zernio marks the
     // direction on the message itself, so skip anything we sent ourselves.
     const direction = msg.direction || evt.direction;
-    if (direction === "outgoing" || direction === "outbound" || direction === "sent") {
+    if (
+      direction === "outgoing" ||
+      direction === "outbound" ||
+      direction === "sent"
+    ) {
       continue;
     }
     if (

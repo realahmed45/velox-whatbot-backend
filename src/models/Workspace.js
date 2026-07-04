@@ -62,7 +62,6 @@ const instagramConnectionSchema = new mongoose.Schema(
   { _id: false },
 );
 
-
 const workspaceSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -246,7 +245,7 @@ const workspaceSchema = new mongoose.Schema(
         enabled: { type: Boolean, default: true },
         matchType: {
           type: String,
-          enum: ["contains", "exact"],
+          enum: ["contains", "exact", "starts_with", "ends_with"],
           default: "contains",
         },
         // Optional: attach Call-to-Action button to the DM
@@ -263,7 +262,7 @@ const workspaceSchema = new mongoose.Schema(
         enabled: { type: Boolean, default: true },
         matchType: {
           type: String,
-          enum: ["contains", "exact"],
+          enum: ["contains", "exact", "starts_with", "ends_with"],
           default: "contains",
         },
         ctaLabel: String,
@@ -286,7 +285,7 @@ const workspaceSchema = new mongoose.Schema(
           replyMessage: String,
           matchType: {
             type: String,
-            enum: ["contains", "exact"],
+            enum: ["contains", "exact", "starts_with", "ends_with"],
             default: "contains",
           },
         },
@@ -455,27 +454,17 @@ const workspaceSchema = new mongoose.Schema(
           orders: { type: Boolean, default: false },
         },
         scopesCheckedAt: Date,
-        authMethod: { type: String, enum: ["oauth", "manual", "storefront"], default: "manual" },
+        authMethod: {
+          type: String,
+          enum: ["oauth", "manual", "storefront"],
+          default: "manual",
+        },
       },
       mailchimp: {
         apiKey: { type: String, select: false },
         listId: String,
         serverPrefix: String, // e.g. "us1"
         connectedAt: Date,
-      },
-      // Make.com integration (API-token based, scenarios fetched via Make API)
-      make: {
-        apiToken: { type: String, select: false }, // encrypted
-        connected: { type: Boolean, default: false },
-        connectedAt: Date,
-        teamId: Number,
-        region: { type: String, default: "us1" }, // us1 | eu1 | us2 etc.
-        accountEmail: String, // display only
-        linkedScenarioId: Number,
-        linkedScenarioName: String,
-        linkedHookUrl: String, // the Make.com webhook URL we POST events to
-        linkedHookId: Number,
-        lastSyncAt: Date,
       },
     },
 
