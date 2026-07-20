@@ -6,7 +6,7 @@ const logger = require("../utils/logger");
 
 const BREVO_API_KEY = process.env.BREVO_API_KEY; // NEVER hardcode — set in .env
 const FROM_EMAIL = process.env.FROM_EMAIL || "realahmedali4@gmail.com";
-const FROM_NAME = "Velox Whatbot";
+const FROM_NAME = "Botlify";
 
 logger.info("Email service init", {
   BREVO_API_KEY: BREVO_API_KEY
@@ -71,7 +71,7 @@ const sendWelcomeEmail = async ({ to, name }) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <div style="background: #25D366; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0;">Welcome to Velox-Whatbot! 🎉</h1>
+        <h1 style="color: white; margin: 0;">Welcome to Botlify! 🎉</h1>
       </div>
       <div style="background: white; padding: 30px; border-radius: 0 0 8px 8px;">
         <h2>Hi ${name},</h2>
@@ -90,7 +90,7 @@ const sendWelcomeEmail = async ({ to, name }) => {
     </div>`;
   return sendEmail({
     to,
-    subject: "Welcome to Velox-Whatbot — Let's get your bot live!",
+    subject: "Welcome to Botlify — Let's get your bot live!",
     html,
   });
 };
@@ -99,7 +99,7 @@ const sendPasswordResetEmail = async ({ to, name, resetUrl }) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <div style="background: #333; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0;">Velox-Whatbot</h1>
+        <h1 style="color: white; margin: 0;">Botlify</h1>
       </div>
       <div style="background: white; padding: 30px; border-radius: 0 0 8px 8px;">
         <h2>Reset Your Password</h2>
@@ -110,7 +110,7 @@ const sendPasswordResetEmail = async ({ to, name, resetUrl }) => {
         <p style="color: #999; font-size: 14px;">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
       </div>
     </div>`;
-  return sendEmail({ to, subject: "Reset your Velox-Whatbot password", html });
+  return sendEmail({ to, subject: "Reset your Botlify password", html });
 };
 
 const sendUsageAlertEmail = async ({
@@ -166,7 +166,7 @@ const sendInvoiceEmail = async ({
       </div>
       <div style="background: white; padding: 30px; border-radius: 0 0 8px 8px;">
         <h2>Hi ${name},</h2>
-        <p style="color: #666;">Your Velox-Whatbot invoice is ready.</p>
+        <p style="color: #666;">Your Botlify invoice is ready.</p>
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
           <tr style="border-bottom: 1px solid #eee;">
             <td style="padding: 10px 0; color: #666;">Invoice Number</td>
@@ -186,7 +186,7 @@ const sendInvoiceEmail = async ({
     </div>`;
   return sendEmail({
     to,
-    subject: `Invoice #${invoiceNumber} — Velox-Whatbot`,
+    subject: `Invoice #${invoiceNumber} — Botlify`,
     html,
   });
 };
@@ -204,7 +204,7 @@ const sendTeamInviteEmail = async ({
       </div>
       <div style="background: white; padding: 30px; border-radius: 0 0 8px 8px;">
         <h2>${inviterName} invited you to join ${workspaceName}</h2>
-        <p style="color: #666;">You've been invited as an Agent on Velox-Whatbot to help manage WhatsApp conversations.</p>
+        <p style="color: #666;">You've been invited as an Agent on Botlify to help manage your conversations.</p>
         <div style="text-align: center; margin: 30px 0;">
           <a href="${inviteUrl}" style="background: #25D366; color: white; padding: 14px 32px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">Accept Invitation</a>
         </div>
@@ -213,7 +213,7 @@ const sendTeamInviteEmail = async ({
     </div>`;
   return sendEmail({
     to,
-    subject: `You've been invited to ${workspaceName} on Velox-Whatbot`,
+    subject: `You've been invited to ${workspaceName} on Botlify`,
     html,
   });
 };
