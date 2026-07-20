@@ -44,6 +44,26 @@ const TRIGGERS = {
   AI_REPLY: "ai_reply",
 };
 
+// Sensible fallback copy so an automation the user enabled but left blank
+// still sends *something* professional instead of silently doing nothing.
+// {name}/{first_name} are personalized by `personalize()` at send time.
+const DEFAULT_MESSAGES = {
+  welcome:
+    "Hey {first_name}! 👋 Thanks so much for reaching out. How can we help you today?",
+  storyReply:
+    "Thanks for replying to our story, {first_name}! 🙌 Want to know more? Just ask.",
+  storyMention:
+    "Thank you so much for the mention, {first_name}! 💛 It means a lot. Anything we can help you with?",
+  share:
+    "Thanks for sharing, {first_name}! 🙏 Really appreciate the love. Let us know if you have any questions!",
+  liveComment:
+    "Thanks for joining our live, {first_name}! 🎉 Here's the info you asked for — reply if you need anything else.",
+  fallback:
+    "Thanks for your message, {first_name}! 🙏 A member of our team will get back to you shortly. In the meantime, is there anything specific we can help with?",
+  away:
+    "Thanks for reaching out! We're away right now but we've got your message and will reply as soon as we're back. 🙌",
+};
+
 // ── Utilities ────────────────────────────────────────────────────────────────
 const personalize = (tpl, contact) => {
   const firstName = (
@@ -438,8 +458,9 @@ const handleDMKeyword = async (workspace, contact, conv, text) => {
 const handleWelcome = async (workspace, contact, conv) => {
   if (conv.botReplyCount > 0) return false;
   if (workspace.dmMessages?.enabled === false) return false;
-  const greeting = workspace.dmMessages?.greeting;
-  if (!greeting) return false;
+  // Fall back to a professional default so an enabled-but-blank welcome
+  // still greets the user instead of silently doing nothing.
+  const greeting = workspace.dmMessages?.greeting || DEFAULT_MESSAGES.welcome;
   await sendAndLog({
     workspace,
     contact,
@@ -457,7 +478,7 @@ const handleStoryReply = async (workspace, contact, conv, text) => {
     return false;
   if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 6)) return true;
 
-  let message = cfg.replyMessage;
+  let message = cfg.replyMessage || DEFAULT_MESSAGES.storyReply;
   const routed = (cfg.keywords || []).find((k) =>
     matchKeyword(text, k.keyword, k.matchType),
   );
@@ -492,7 +513,7 @@ const handleStoryMention = async (workspace, senderId, meta = {}) => {
     workspace,
     contact,
     conversation: conv,
-    text: cfg.replyMessage,
+    text: cfg.replyMessage || DEFAULT_MESSAGES.storyMention,
     triggerType: TRIGGERS.STORY_MENTION,
   });
 };
@@ -509,7 +530,7 @@ const handleShare = async (workspace, contact, conv) => {
     workspace,
     contact,
     conversation: conv,
-    text: cfg.replyMessage,
+    text: cfg.replyMessage || DEFAULT_MESSAGES.share,
     triggerType: TRIGGERS.SHARE_TO_STORY,
   });
   return true;
@@ -583,7 +604,7 @@ const handleLiveComment = async (workspace, senderId, text, meta = {}) => {
     workspace,
     contact,
     conversation: conv,
-    text: matched.replyMessage,
+    text: matched.replyMessage || DEFAULT_MESSAGES.liveComment,
     triggerType: TRIGGERS.LIVE_COMMENT,
     keyword: matched.keyword,
   });
@@ -600,7 +621,7 @@ const handleAwayReply = async (workspace, contact, conv) => {
     workspace,
     contact,
     conversation: conv,
-    text: cfg.message,
+    text: cfg.message || DEFAULT_MESSAGES.away,
     triggerType: "away_reply",
   });
   return true;
@@ -766,7 +787,7 @@ const handleFallback = async (workspace, contact, conv) => {
     workspace,
     contact,
     conversation: conv,
-    text: cfg.message,
+    text: cfg.message || DEFAULT_MESSAGES.fallback,
     triggerType: TRIGGERS.FALLBACK,
   });
   return true;
