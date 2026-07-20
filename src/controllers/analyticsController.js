@@ -160,25 +160,29 @@ const getMessagesOverTime = asyncHandler(async (req, res) => {
   const workspaceId = req.workspace._id;
   const ch = channelFilters(req);
 
-  let groupFormat, startDate, numBuckets;
+  // Accept both the UI's names (week/month/3months) and legacy
+  // daily/weekly/monthly so the period toggle actually changes the range.
+  let groupFormat, startDate;
   switch (period) {
     case "daily":
       groupFormat = "%H:00";
       startDate = moment().startOf("day").toDate();
-      numBuckets = 24;
       break;
+    case "month":
     case "monthly":
       groupFormat = "%Y-%m-%d";
-      startDate = moment().startOf("month").toDate();
-      numBuckets = 30;
+      startDate = moment().subtract(30, "days").startOf("day").toDate();
       break;
-    default: // weekly
+    case "3months":
+      groupFormat = "%Y-%m-%d";
+      startDate = moment().subtract(90, "days").startOf("day").toDate();
+      break;
+    default: // week / weekly
       groupFormat = "%Y-%m-%d";
       startDate = moment().subtract(7, "days").startOf("day").toDate();
-      numBuckets = 7;
   }
 
-  const data = await Message.aggregate([
+  const raw = await Message.aggregate([
     { $match: { workspaceId, ...ch.msg, createdAt: { $gte: startDate } } },
     {
       $group: {
@@ -193,6 +197,15 @@ const getMessagesOverTime = asyncHandler(async (req, res) => {
     },
     { $sort: { _id: 1 } },
   ]);
+
+  // Normalize keys the chart expects: `date`, `count` (total), plus the
+  // inbound/outbound split for anyone who wants it.
+  const data = raw.map((d) => ({
+    date: d._id,
+    count: (d.inbound || 0) + (d.outbound || 0),
+    inbound: d.inbound || 0,
+    outbound: d.outbound || 0,
+  }));
 
   res.json({ success: true, data, period });
 });

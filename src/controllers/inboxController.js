@@ -313,15 +313,14 @@ const toggleBot = asyncHandler(async (req, res) => {
         const agentName = req.user.name || "our team";
         const systemMessage = `👋 ${agentName} is now handling your conversation. How can we help you?`;
 
-        // Send via Instagram
+        // Send via Instagram provider. Signature is
+        // sendDM(accountIdOrToken, recipientIgId, text, opts).
         const accessToken = decrypt(req.workspace.instagram.accessToken);
-        const igUserId = req.workspace.instagram.igUserId;
-        await ig.sendDM(
-          igUserId,
-          accessToken,
-          conv.contactId.instagramId,
-          systemMessage,
-        );
+        const recipientIgId =
+          conv.contactId.igUserId || conv.contactId.instagramId;
+        await ig.sendDM(accessToken, recipientIgId, systemMessage, {
+          conversationId: conv.providerConversationId || undefined,
+        });
 
         // Save message to database
         await Message.create({

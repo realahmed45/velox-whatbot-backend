@@ -25,28 +25,38 @@ const getContacts = asyncHandler(async (req, res) => {
   if (channel === "whatsapp") filter.phone = { $type: "string" };
   else if (channel === "instagram") filter.igUserId = { $type: "string" };
 
-  let query = Contact.find(filter)
-    .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
-    .limit(parseInt(limit))
-    .skip((parseInt(page) - 1) * parseInt(limit));
+  // Search at the DB level so ALL contacts are matched (not just the current
+  // page) and `total`/pagination stay correct. Escape regex specials first.
+  if (search && search.trim()) {
+    const safe = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp(safe, "i");
+    filter.$or = [
+      { name: rx },
+      { email: rx },
+      { phone: rx },
+      { igUsername: rx },
+    ];
+  }
+
+  const lim = Math.min(parseInt(limit) || 50, 200);
+  const skip = (Math.max(parseInt(page) || 1, 1) - 1) * lim;
 
   const [contacts, total] = await Promise.all([
-    query.exec(),
+    Contact.find(filter)
+      .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
+      .limit(lim)
+      .skip(skip)
+      .exec(),
     Contact.countDocuments(filter),
   ]);
 
-  let results = contacts;
-  if (search) {
-    const s = search.toLowerCase();
-    results = contacts.filter(
-      (c) =>
-        c.phone?.includes(s) ||
-        c.name?.toLowerCase().includes(s) ||
-        c.email?.toLowerCase().includes(s),
-    );
-  }
-
-  res.json({ success: true, contacts: results, total, page: parseInt(page) });
+  res.json({
+    success: true,
+    contacts,
+    total,
+    page: parseInt(page) || 1,
+    pages: Math.ceil(total / lim),
+  });
 });
 
 // @GET /api/contacts/:id — Get single contact with conversation history
