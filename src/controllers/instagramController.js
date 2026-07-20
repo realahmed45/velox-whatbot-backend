@@ -1545,6 +1545,20 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         });
         break;
       }
+      case "conversation.started":
+        // A brand-new conversation opened. Route it as a direct_message with no
+        // text so the engine's welcome handler greets them. The engine guards on
+        // botReplyCount, so this can't double-send if a message.received follows.
+        await handleWebhookEvent(target._id, {
+          type: "direct_message",
+          senderId,
+          senderUsername,
+          senderName,
+          providerConversationId:
+            evt.conversation?.id || msg.conversationId || null,
+          text: "",
+        });
+        break;
       case "comment.received":
       case "comment":
         await handleWebhookEvent(target._id, {

@@ -311,14 +311,17 @@ const subscribeWebhook = async (accountIdOrToken, webhookUrl) => {
     webhookUrl = `${base}/api/instagram/webhook/botlify`;
   }
   const accountId = stripPrefix(accountIdOrToken);
+  // Only Zernio-supported event names (per docs.zernio.com). Story replies,
+  // story mentions and shares arrive nested inside message.received and are
+  // detected from the message attachments by the webhook receiver.
   const { data } = await client().post("/webhooks/settings", {
     accountId,
     url: webhookUrl,
     events: [
       "message.received",
+      "conversation.started",
       "comment.received",
-      "story.mention",
-      "story.reply",
+      "reaction.received",
     ],
   });
   return data;
