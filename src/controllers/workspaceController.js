@@ -94,7 +94,6 @@ const updateWorkspace = asyncHandler(async (req, res) => {
   res.json({ success: true, workspace });
 });
 
-
 // @POST /api/workspaces/:workspaceId/members/invite — Invite team member
 const inviteMember = asyncHandler(async (req, res) => {
   if (req.workspaceRole !== "owner") {
@@ -169,7 +168,6 @@ const updateOnboardingStep = asyncHandler(async (req, res) => {
   });
   res.json({ success: true, step });
 });
-
 
 // @PUT /api/workspaces/:workspaceId/dm-messages — Save DM automation messages
 const saveDmMessages = asyncHandler(async (req, res) => {
@@ -522,7 +520,9 @@ const importKnowledgeDocument = asyncHandler(async (req, res) => {
       const cloudinary = require("../config/cloudinary");
       const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
       if (!cloudName) {
-        logger.warn("[knowledge] CLOUDINARY_CLOUD_NAME not set — image will save as text only");
+        logger.warn(
+          "[knowledge] CLOUDINARY_CLOUD_NAME not set — image will save as text only",
+        );
       }
       const dataUri = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
       const uploaded = await cloudinary.uploader.upload(dataUri, {
@@ -530,7 +530,9 @@ const importKnowledgeDocument = asyncHandler(async (req, res) => {
         resource_type: "image",
       });
       imageUrl = uploaded.secure_url || "";
-      logger.info(`[knowledge] image uploaded to Cloudinary: ${imageUrl.slice(0, 80)}`);
+      logger.info(
+        `[knowledge] image uploaded to Cloudinary: ${imageUrl.slice(0, 80)}`,
+      );
     } catch (e) {
       logger.warn(`[knowledge] image upload failed: ${e.message}`);
     }
@@ -596,13 +598,16 @@ const resyncKnowledgeSource = asyncHandler(async (req, res) => {
         decrypt(s.accessToken),
         100,
       );
-      const content = `Live Shopify catalog (${products.length} products):\n${products
-        .map((p) => {
-          const price = p.price ? `${p.currency || ""} ${p.price}`.trim() : "";
-          const stock = p.inStock ? "" : " (out of stock)";
-          return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
-        })
-        .join("\n")}`.slice(0, 16000);
+      const content =
+        `Live Shopify catalog (${products.length} products):\n${products
+          .map((p) => {
+            const price = p.price
+              ? `${p.currency || ""} ${p.price}`.trim()
+              : "";
+            const stock = p.inStock ? "" : " (out of stock)";
+            return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
+          })
+          .join("\n")}`.slice(0, 16000);
       src.content = content;
       src.charCount = content.length;
     } else {
@@ -639,7 +644,9 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
   const s = ws.integrations?.shopify;
   if (!s?.storeUrl) {
     res.status(400);
-    throw new Error("Connect your Shopify store first (Integrations → Shopify)");
+    throw new Error(
+      "Connect your Shopify store first (Integrations → Shopify)",
+    );
   }
 
   let products;
@@ -648,7 +655,11 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
     if (s.authMethod === "storefront" || !s.accessToken) {
       products = await shopify.listAllProductsStorefront(s.storeUrl, 1000);
     } else {
-      products = await shopify.listProducts(s.storeUrl, decrypt(s.accessToken), 250);
+      products = await shopify.listProducts(
+        s.storeUrl,
+        decrypt(s.accessToken),
+        250,
+      );
     }
   } catch (err) {
     res.status(422);
@@ -665,9 +676,10 @@ const syncShopifyKnowledge = asyncHandler(async (req, res) => {
     const desc = p.description ? ` — ${p.description.slice(0, 150)}` : "";
     return `- ${p.title}${price ? ` | ${price}` : ""} | ${stock}${desc} | ${p.url}`;
   });
-  const content = `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
-    "\n",
-  )}`.slice(0, 50000);
+  const content =
+    `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
+      "\n",
+    )}`.slice(0, 50000);
 
   ws.aiKnowledge = ws.aiKnowledge || {};
   ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(

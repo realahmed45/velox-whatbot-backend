@@ -88,7 +88,8 @@ const testStorefront = async (storeUrl) => {
     const status = err.response?.status;
     let error = err.message;
     if (status === 401 || status === 302) {
-      error = "This store is password-protected. Remove the password to connect.";
+      error =
+        "This store is password-protected. Remove the password to connect.";
     } else if (status === 404) {
       error = "Store not found. Check the store name and try again.";
     }
@@ -197,9 +198,7 @@ const lookupOrder = async (storeUrl, accessToken, { name, email } = {}) => {
   if (!orders.length) return null;
 
   const emailLower = email ? email.toLowerCase() : null;
-  const orderNum = name
-    ? `#${String(name).replace(/[^\d]/g, "")}`
-    : null;
+  const orderNum = name ? `#${String(name).replace(/[^\d]/g, "")}` : null;
 
   // Email provided — only return an order that belongs to that email.
   if (emailLower) {
@@ -231,20 +230,22 @@ const verifyScopes = async (storeUrl, accessToken) => {
   const scopes = { products: false, orders: false };
 
   try {
-    await axios.get(
-      `https://${host}/admin/api/${API_VERSION}/products.json`,
-      { params: { limit: 1 }, headers, timeout: 8000 },
-    );
+    await axios.get(`https://${host}/admin/api/${API_VERSION}/products.json`, {
+      params: { limit: 1 },
+      headers,
+      timeout: 8000,
+    });
     scopes.products = true;
   } catch (err) {
     if (![401, 403].includes(err.response?.status)) throw err;
   }
 
   try {
-    await axios.get(
-      `https://${host}/admin/api/${API_VERSION}/orders.json`,
-      { params: { status: "any", limit: 1 }, headers, timeout: 8000 },
-    );
+    await axios.get(`https://${host}/admin/api/${API_VERSION}/orders.json`, {
+      params: { status: "any", limit: 1 },
+      headers,
+      timeout: 8000,
+    });
     scopes.orders = true;
   } catch (err) {
     if (![401, 403].includes(err.response?.status)) throw err;
@@ -259,8 +260,11 @@ const verifyScopes = async (storeUrl, accessToken) => {
  */
 const searchProducts = async (storeUrl, accessToken, query, limit = 5) => {
   const all = await listProducts(storeUrl, accessToken, 100);
-  const words = (String(query || "").toLowerCase().match(/[a-z0-9]{3,}/g) || [])
-    .filter((w) => !["the", "and", "for", "you", "your", "have"].includes(w));
+  const words = (
+    String(query || "")
+      .toLowerCase()
+      .match(/[a-z0-9]{3,}/g) || []
+  ).filter((w) => !["the", "and", "for", "you", "your", "have"].includes(w));
   if (!words.length) return all.slice(0, limit);
   const scored = all
     .map((p) => {

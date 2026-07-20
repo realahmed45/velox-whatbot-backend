@@ -47,7 +47,11 @@ const getCreds = async (workspace) => {
   }
 
   try {
-    return { storeUrl: s.storeUrl, token: decrypt(token), authMethod: "manual" };
+    return {
+      storeUrl: s.storeUrl,
+      token: decrypt(token),
+      authMethod: "manual",
+    };
   } catch {
     return null;
   }
@@ -149,21 +153,35 @@ const buildContext = async (workspace, text, contact) => {
     try {
       const products =
         creds.authMethod === "storefront" || !creds.token
-          ? await shopify.listProductsStorefront(creds.storeUrl, 20).then((all) => {
-              // Simple title-based search for storefront results
-              const words = (String(text).toLowerCase().match(/[a-z0-9]{3,}/g) || [])
-                .filter((w) => !["the", "and", "for", "you", "your", "have"].includes(w));
-              if (!words.length) return all.slice(0, 5);
-              const scored = all
-                .map((p) => {
-                  const t = (p.title || "").toLowerCase();
-                  const score = words.reduce((n, w) => n + (t.includes(w) ? 1 : 0), 0);
-                  return { p, score };
-                })
-                .filter((x) => x.score > 0)
-                .sort((a, b) => b.score - a.score);
-              return (scored.length ? scored.map((x) => x.p) : all).slice(0, 5);
-            })
+          ? await shopify
+              .listProductsStorefront(creds.storeUrl, 20)
+              .then((all) => {
+                // Simple title-based search for storefront results
+                const words = (
+                  String(text)
+                    .toLowerCase()
+                    .match(/[a-z0-9]{3,}/g) || []
+                ).filter(
+                  (w) =>
+                    !["the", "and", "for", "you", "your", "have"].includes(w),
+                );
+                if (!words.length) return all.slice(0, 5);
+                const scored = all
+                  .map((p) => {
+                    const t = (p.title || "").toLowerCase();
+                    const score = words.reduce(
+                      (n, w) => n + (t.includes(w) ? 1 : 0),
+                      0,
+                    );
+                    return { p, score };
+                  })
+                  .filter((x) => x.score > 0)
+                  .sort((a, b) => b.score - a.score);
+                return (scored.length ? scored.map((x) => x.p) : all).slice(
+                  0,
+                  5,
+                );
+              })
           : await shopify.searchProducts(creds.storeUrl, creds.token, text, 5);
 
       if (products.length) blocks.push(formatProducts(products));

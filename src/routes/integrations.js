@@ -29,13 +29,6 @@ router.get("/mailchimp/lists", ext.listMailchimpAudiences);
 router.post("/mailchimp/subscribe", ext.mailchimpSubscribe);
 router.delete("/mailchimp", requireOwner, ext.disconnectMailchimp);
 
-// Make.com
-router.get("/make", ext.getMake);
-router.post("/make/connect", requireOwner, ext.connectMake);
-router.get("/make/scenarios", ext.listMakeScenarios);
-router.post("/make/link", requireOwner, ext.linkMakeScenario);
-router.delete("/make", requireOwner, ext.disconnectMake);
-
 // Generic webhooks (Zapier/Make/custom)
 router.get("/", c.list);
 router.post("/", requireOwner, c.create);

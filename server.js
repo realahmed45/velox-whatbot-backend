@@ -160,11 +160,7 @@ if (process.env.NODE_ENV !== "production") {
     try {
       const { sendVerificationEmail } = require("./src/services/emailService");
       const to = req.query.to || "realahmedali4@gmail.com";
-      await sendVerificationEmail({
-        to,
-        name: "Test User",
-        verificationUrl: `${process.env.CLIENT_URL}/verify-email?token=test123`,
-      });
+      await sendVerificationEmail({ to, name: "Test User", code: "1234" });
       res.json({ success: true, message: `Test email sent to ${to}` });
     } catch (err) {
       res
@@ -198,11 +194,6 @@ app.use("/api/bio", linkInBioRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/referral", referralRoutes);
 app.use("/api/webhooks", webhookRoutes);
-
-// ─── Version check (public) ────────────────────────────────
-app.get("/api/version", (req, res) => {
-  res.json({ version: "2.1.0", build: "2026-06-28-dm-events", features: ["dm.received", "mailchimp-auto-subscribe"] });
-});
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {

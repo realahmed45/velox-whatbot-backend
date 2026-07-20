@@ -47,22 +47,24 @@ const sendEmail = async ({ to, subject, html, text }) => {
 
 // ─── Email Templates ────────────────────────────────────────
 
-const sendVerificationEmail = async ({ to, name, verificationUrl }) => {
+const sendVerificationEmail = async ({ to, name, code }) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px;">
-      <div style="background: #25D366; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
-        <h1 style="color: white; margin: 0; font-size: 24px;">Velox-Whatbot</h1>
+      <div style="background: #FF6B2C; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">Botlify</h1>
       </div>
       <div style="background: white; padding: 30px; border-radius: 0 0 8px 8px;">
-        <h2 style="color: #333;">Verify Your Email, ${name}!</h2>
-        <p style="color: #666; line-height: 1.6;">You're one step away from automating your WhatsApp business. Click the button below to verify your email address.</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${verificationUrl}" style="background: #25D366; color: white; padding: 14px 32px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: bold; display: inline-block;">Verify Email Address</a>
+        <h2 style="color: #333;">Verify your email, ${name}!</h2>
+        <p style="color: #666; line-height: 1.6;">Use the code below to confirm your email address and finish setting up your account.</p>
+        <div style="text-align: center; margin: 32px 0;">
+          <div style="display: inline-block; background: #FFF3ED; border: 1px solid #FFD9C2; border-radius: 12px; padding: 18px 40px;">
+            <span style="font-size: 40px; font-weight: 800; letter-spacing: 12px; color: #FF6B2C; font-family: 'Courier New', monospace;">${code}</span>
+          </div>
         </div>
-        <p style="color: #999; font-size: 14px;">This link expires in 24 hours. If you didn't sign up, ignore this email.</p>
+        <p style="color: #999; font-size: 14px; text-align: center;">This code expires in 15 minutes. If you didn't sign up, you can safely ignore this email.</p>
       </div>
     </div>`;
-  return sendEmail({ to, subject: "Verify your Velox-Whatbot email", html });
+  return sendEmail({ to, subject: `${code} is your Botlify verification code`, html });
 };
 
 const sendWelcomeEmail = async ({ to, name }) => {

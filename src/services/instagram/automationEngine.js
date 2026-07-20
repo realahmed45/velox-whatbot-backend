@@ -28,36 +28,6 @@ const { planHasFeature, FEATURES } = require("../../config/plans");
 const ai = require("../ai");
 const legacyAi = require("../ai/openaiService"); // kept for transcribeAudio/captions only
 const { dispatchEvent } = require("../webhookDispatcher");
-const mailchimp = require("../mailchimpService");
-
-// ── Mailchimp auto-subscribe helper ─────────────────────────────────────────
-// Called non-blocking (fire-and-forget). Loads the workspace's Mailchimp
-// config, decrypts the API key, and subscribes the email address. Silently
-// swallows all errors so it never blocks or crashes the bot reply.
-const autoSubscribeToMailchimp = async (workspace, { email, firstName, lastName } = {}) => {
-  try {
-    // Re-fetch workspace with the encrypted apiKey (selected: false by default)
-    const ws = await Workspace.findById(workspace._id).select(
-      "+integrations.mailchimp.apiKey",
-    );
-    const m = ws?.integrations?.mailchimp;
-    if (!m?.apiKey || !m?.listId) return; // not configured — nothing to do
-
-    const result = await mailchimp.subscribe(
-      decrypt(m.apiKey),
-      m.serverPrefix,
-      m.listId,
-      { email, firstName, lastName, source: "Botlify/Instagram-DM" },
-    );
-    if (result.ok) {
-      logger.info(`[mailchimp] subscribed ${email} to list ${m.listId} (duplicate=${!!result.duplicate})`);
-    } else {
-      logger.warn(`[mailchimp] subscribe failed for ${email}: ${result.error}`);
-    }
-  } catch (err) {
-    logger.warn(`[mailchimp] autoSubscribe error: ${err.message}`);
-  }
-};
 
 const TRIGGERS = {
   POST_COMMENT: "post_comment",
@@ -303,11 +273,15 @@ const sendAndLog = async ({
   } else {
     const accessToken = decrypt(workspace.instagram.accessToken);
     const convId = conversation.metadata?.providerConversationId;
-    logger.info(`[sendDM] ws=${workspace._id} recipient=${contact.igUserId} convId=${convId || "none"} trigger=${triggerType}`);
+    logger.info(
+      `[sendDM] ws=${workspace._id} recipient=${contact.igUserId} convId=${convId || "none"} trigger=${triggerType}`,
+    );
     result = await sendDM(accessToken, contact.igUserId, finalText + brand, {
       conversationId: convId,
     });
-    logger.info(`[sendDM] result: success=${result.success} msgId=${result.messageId || "n/a"} err=${result.error || "none"}`);
+    logger.info(
+      `[sendDM] result: success=${result.success} msgId=${result.messageId || "n/a"} err=${result.error || "none"}`,
+    );
   }
 
   await Message.create({
@@ -382,16 +356,6 @@ const sendAndLog = async ({
   contact.lastTriggerType = triggerType;
   await contact.save();
 
-  // Dispatch dm.sent webhook event (non-blocking)
-  if (!simulate) {
-    dispatchEvent(workspace._id, "dm.sent", {
-      contactId: contact._id,
-      igUsername: contact.igUsername,
-      text: finalText,
-      triggerType,
-    }).catch(() => {});
-  }
-
   logger.info(
     `[Bot] ${triggerType} → @${contact.igUsername || contact.username} (ws=${workspace._id})`,
   );
@@ -431,7 +395,7 @@ const handlePostComment = async (
   const blocked = guardSend(workspace, contact, conv);
   if (blocked) return logger.debug(`[handlePostComment] blocked: ${blocked}`);
 
-  if (await recentlyTriggered(conv, TRIGGERS.POST_COMMENT, matched.keyword, 0.002))
+  if (await recentlyTriggered(conv, TRIGGERS.POST_COMMENT, matched.keyword, 24))
     return;
 
   let body = matched.replyMessage;
@@ -446,15 +410,6 @@ const handlePostComment = async (
     triggerType: TRIGGERS.POST_COMMENT,
     keyword: matched.keyword,
   });
-
-  // Dispatch comment.received webhook event (non-blocking)
-  dispatchEvent(workspace._id, "comment.received", {
-    contactId: contact._id,
-    igUsername: contact.igUsername || commentMeta.username,
-    text: commentText,
-    keyword: matched.keyword,
-    type: "post_comment",
-  }).catch(() => {});
 };
 
 const handleDMKeyword = async (workspace, contact, conv, text) => {
@@ -463,7 +418,7 @@ const handleDMKeyword = async (workspace, contact, conv, text) => {
     matchKeyword(text, t.keyword, t.matchType),
   );
   if (!matched) return false;
-  if (await recentlyTriggered(conv, TRIGGERS.DM_KEYWORD, matched.keyword, 0.002))
+  if (await recentlyTriggered(conv, TRIGGERS.DM_KEYWORD, matched.keyword, 1))
     return true;
 
   let body = matched.replyMessage;
@@ -500,7 +455,7 @@ const handleStoryReply = async (workspace, contact, conv, text) => {
   if (!cfg?.enabled) return false;
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_REPLY))
     return false;
-  if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 0.002)) return true;
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 6)) return true;
 
   let message = cfg.replyMessage;
   const routed = (cfg.keywords || []).find((k) =>
@@ -531,7 +486,7 @@ const handleStoryMention = async (workspace, senderId, meta = {}) => {
   const conv = await getOrCreateConversation(workspace, contact);
   const blocked = guardSend(workspace, contact, conv);
   if (blocked) return;
-  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 0.002)) return;
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 12)) return;
 
   await sendAndLog({
     workspace,
@@ -547,7 +502,7 @@ const handleShare = async (workspace, contact, conv) => {
   if (!cfg?.enabled) return false;
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.SHARE_TO_STORY))
     return false;
-  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 0.002))
+  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 6))
     return true;
 
   await sendAndLog({
@@ -696,7 +651,9 @@ const bumpAiStats = async (workspace, { faq, handoff, lead }) => {
 const handleAIReply = async (workspace, contact, conv, text) => {
   const plan = workspace.subscription?.plan || "free";
   if (!planHasFeature(plan, FEATURES.AI_BOT)) {
-    logger.info(`[AI] ws=${workspace._id} plan=${plan} has no AI_BOT feature — skip`);
+    logger.info(
+      `[AI] ws=${workspace._id} plan=${plan} has no AI_BOT feature — skip`,
+    );
     return false;
   }
   // Read v2 aiSettings first, fall back to legacy aiBot for older installs.
@@ -734,7 +691,9 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     logger.warn(`[IG flow] shopifyAssist failed: ${e.message}`);
   }
 
-  logger.info(`[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`);
+  logger.info(
+    `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
+  );
 
   const { reply, escalate, provider, imageUrls } = await ai.generateReply({
     workspace,
@@ -745,52 +704,21 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     channel: "instagram",
   });
 
-  logger.info(`[AI] ws=${workspace._id} reply="${(reply || "").slice(0, 80)}" provider=${provider} escalate=${!!escalate}`);
+  logger.info(
+    `[AI] ws=${workspace._id} reply="${(reply || "").slice(0, 80)}" provider=${provider} escalate=${!!escalate}`,
+  );
 
   if (escalate) {
     conv.status = "awaiting_human";
     await conv.save();
   }
 
-  // Track value metrics + Mailchimp auto-subscribe (skip in Bot Tester / simulate mode).
+  // Track value metrics (skip in Bot Tester / simulate mode).
   if (!workspace.__simulate) {
     const EMAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
     const PHONE_RE = /(\+?\d[\d\s\-()]{7,}\d)/;
-    const capturedEmail = (text.match(EMAIL_RE) || [])[0] || null;
     const isLead =
-      !!aiCfg.leadCapture && (!!capturedEmail || PHONE_RE.test(text));
-
-    // Persist captured email to the contact record (first time only)
-    if (capturedEmail && !contact.email) {
-      try {
-        contact.email = capturedEmail.toLowerCase();
-        await contact.save();
-        logger.info(`[AI] captured email ${capturedEmail} for contact ${contact._id}`);
-      } catch (err) {
-        logger.warn(`[AI] email save failed: ${err.message}`);
-      }
-    }
-
-    // Auto-forward email to Mailchimp audience (if connected)
-    if (capturedEmail) {
-      const nameParts = (contact.name || "").trim().split(" ");
-      autoSubscribeToMailchimp(workspace, {
-        email: capturedEmail,
-        firstName: nameParts[0] || "",
-        lastName: nameParts.slice(1).join(" ") || "",
-      }).catch(() => {});
-    }
-
-    // Dispatch lead.created webhook event when a lead is captured
-    if (isLead) {
-      dispatchEvent(workspace._id, "lead.created", {
-        contactId: contact._id,
-        igUsername: contact.igUsername,
-        email: capturedEmail || null,
-        hasPhone: PHONE_RE.test(text),
-      }).catch(() => {});
-    }
-
+      !!aiCfg.leadCapture && (EMAIL_RE.test(text) || PHONE_RE.test(text));
     bumpAiStats(workspace, {
       faq: provider === "faq",
       handoff: !!escalate,
@@ -992,7 +920,11 @@ const flowTriggerMatches = (node, { text, isFirstMessage }) => {
     nt === "direct_message"
   )
     return true;
-  if (nt === "keyword_trigger" || nt === "keyword_match" || nt === "keyword_dm") {
+  if (
+    nt === "keyword_trigger" ||
+    nt === "keyword_match" ||
+    nt === "keyword_dm"
+  ) {
     const kws = node.data?.keywords || [];
     const mt = node.data?.matchType || "contains";
     if (!kws.length) return false;
@@ -1125,18 +1057,14 @@ const executeFlowNode = async (flow, node, ctx) => {
     case "list_menu": {
       const body = renderVars(d.content || d.message || "", variables);
       const options = parseFlowOptions(d);
-      const menu = [
-        body,
-        ...options.map((o, i) => `${i + 1}. ${o.label}`),
-      ]
+      const menu = [body, ...options.map((o, i) => `${i + 1}. ${o.label}`)]
         .filter(Boolean)
         .join("\n");
       if (menu) await send(menu);
       return { await: { kind: "choice", nodeId: node.id } };
     }
     case "condition": {
-      const left =
-        variables[d.conditionVariable || d.variable] ?? "";
+      const left = variables[d.conditionVariable || d.variable] ?? "";
       const op = d.conditionOperator || d.operator || "equals";
       const right = d.conditionValue ?? d.value ?? "";
       const ok = evalCondition(left, op, right);
@@ -1191,17 +1119,6 @@ const executeFlow = async (flow, startNode, ctx) => {
     { _id: flow._id },
     { $inc: { "stats.completions": 1 } },
   ).catch(() => {});
-
-  // Dispatch flow.completed webhook event (non-blocking)
-  const { contact: _c, workspace: _ws } = ctx;
-  if (_ws && !_ws.__simulate) {
-    dispatchEvent(_ws._id, "flow.completed", {
-      flowId: String(flow._id),
-      flowName: flow.name || "",
-      contactId: _c?._id,
-      igUsername: _c?.igUsername,
-    }).catch(() => {});
-  }
 };
 
 // Resume a multi-step flow that was waiting for the contact's reply.
@@ -1242,7 +1159,8 @@ const resumePendingFlow = async (workspace, contact, conv, text) => {
   conv.markModified("metadata");
   await conv.save();
 
-  if (nextNode) await executeFlow(flow, nextNode, { workspace, contact, conv, variables });
+  if (nextNode)
+    await executeFlow(flow, nextNode, { workspace, contact, conv, variables });
   return true;
 };
 
@@ -1512,23 +1430,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
         // Try to enroll contact into a matching drip campaign
         tryEnrollDripByKeyword(workspace, contact, text).catch(() => {});
 
-        // Fire outbound webhook: dm.received (Make.com / Zapier)
-        dispatchEvent(workspace._id, "dm.received", {
+        // Fire outbound webhook: message.inbound
+        dispatchEvent(workspace._id, "message.inbound", {
           contactId: contact._id,
           igUsername: contact.igUsername,
           text,
           type,
         }).catch(() => {});
-
-        // Also fire comment.received for story replies so Make can distinguish
-        if (type === TRIGGERS.STORY_REPLY) {
-          dispatchEvent(workspace._id, "comment.received", {
-            contactId: contact._id,
-            igUsername: contact.igUsername,
-            text,
-            type: "story_reply",
-          }).catch(() => {});
-        }
       }
 
       logger.info(
@@ -1541,10 +1449,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
       if (
         conv.botReplyCount > 0 &&
         conv.lastBotMessageAt &&
-        Date.now() - new Date(conv.lastBotMessageAt).getTime() > 24 * 60 * 60 * 1000
+        Date.now() - new Date(conv.lastBotMessageAt).getTime() >
+          24 * 60 * 60 * 1000
       ) {
         conv.botReplyCount = 0;
-        logger.info(`[IG flow] ws=${workspace._id} botReplyCount reset (24h gap)`);
+        logger.info(
+          `[IG flow] ws=${workspace._id} botReplyCount reset (24h gap)`,
+        );
       }
 
       // 0. Resume a multi-step visual flow that's waiting on this reply.

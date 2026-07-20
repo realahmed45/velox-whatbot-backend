@@ -7,6 +7,8 @@ const {
   refreshToken,
   forgotPassword,
   resetPassword,
+  verifyEmailCode,
+  resendVerificationCode,
   getMe,
   googleAuth,
 } = require("../controllers/authController");
@@ -17,6 +19,8 @@ router.post("/login", authLimiter, login);
 router.post("/refresh", refreshToken);
 router.post("/forgot-password", authLimiter, forgotPassword);
 router.post("/reset-password", authLimiter, resetPassword);
+router.post("/verify-email", authLimiter, verifyEmailCode);
+router.post("/resend-verification", authLimiter, resendVerificationCode);
 router.get("/me", protect, getMe);
 router.post("/google", googleAuth);
 

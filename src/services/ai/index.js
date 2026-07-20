@@ -45,9 +45,35 @@ const fallbackReply = (contact) => {
 const pickAiCfg = (workspace) => workspace.aiSettings || workspace.aiBot || {};
 
 const STOP = new Set([
-  "the", "a", "an", "is", "are", "do", "you", "your", "i", "to", "of", "and",
-  "for", "in", "on", "it", "this", "that", "can", "how", "what", "when",
-  "where", "me", "my", "we", "with", "have", "has",
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "do",
+  "you",
+  "your",
+  "i",
+  "to",
+  "of",
+  "and",
+  "for",
+  "in",
+  "on",
+  "it",
+  "this",
+  "that",
+  "can",
+  "how",
+  "what",
+  "when",
+  "where",
+  "me",
+  "my",
+  "we",
+  "with",
+  "have",
+  "has",
 ]);
 const tokenize = (s) =>
   String(s || "")
@@ -61,7 +87,9 @@ const tokenize = (s) =>
  */
 const matchFaq = (faqs, message) => {
   if (!Array.isArray(faqs) || !faqs.length) return null;
-  const msgNorm = String(message || "").toLowerCase().trim();
+  const msgNorm = String(message || "")
+    .toLowerCase()
+    .trim();
   if (msgNorm.length < 2) return null;
   const msgTokens = new Set(tokenize(message));
   let best = null;
@@ -74,7 +102,10 @@ const matchFaq = (faqs, message) => {
     if (!qTokens.length) continue;
     const overlap = qTokens.filter((t) => msgTokens.has(t)).length;
     const score = overlap / qTokens.length;
-    if (score > bestScore) { bestScore = score; best = f; }
+    if (score > bestScore) {
+      bestScore = score;
+      best = f;
+    }
   }
   return bestScore >= 0.7 ? best : null;
 };
@@ -161,7 +192,11 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
       smartOrders.catalog.trim(),
     );
     if (smartOrders.paymentInstructions?.trim()) {
-      lines.push("", "PAYMENT INSTRUCTIONS:", smartOrders.paymentInstructions.trim());
+      lines.push(
+        "",
+        "PAYMENT INSTRUCTIONS:",
+        smartOrders.paymentInstructions.trim(),
+      );
     }
     lines.push(
       "",
@@ -176,7 +211,10 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
   }
 
   if (Array.isArray(ai.faqs) && ai.faqs.length) {
-    lines.push("", "QUICK ANSWERS — use these verbatim when the question matches:");
+    lines.push(
+      "",
+      "QUICK ANSWERS — use these verbatim when the question matches:",
+    );
     ai.faqs
       .filter((f) => f && f.question && f.answer)
       .slice(0, 30)
@@ -189,24 +227,31 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
   const GOAL_TEXT = {
     support: "Answer questions accurately and helpfully.",
     sales: "Recommend relevant products and gently guide toward a purchase.",
-    leads: "Spot genuine interest and turn the person into a lead. Be helpful first.",
+    leads:
+      "Spot genuine interest and turn the person into a lead. Be helpful first.",
     bookings: "Help the person book or schedule, collect the details needed.",
-    traffic: "When relevant, point to the right link instead of long explanations.",
+    traffic:
+      "When relevant, point to the right link instead of long explanations.",
   };
-  const goals = Array.isArray(v2.goals) && v2.goals.length ? v2.goals : ["support"];
+  const goals =
+    Array.isArray(v2.goals) && v2.goals.length ? v2.goals : ["support"];
   const goalLines = goals.map((g) => GOAL_TEXT[g]).filter(Boolean);
   if (goalLines.length) {
     lines.push("", "Your goals on every reply:");
     goalLines.forEach((g) => lines.push(`- ${g}`));
   }
   if (v2.leadCapture) {
-    lines.push("When someone shows real interest, naturally ask for name + contact (email or phone) to follow up. Ask once.");
+    lines.push(
+      "When someone shows real interest, naturally ask for name + contact (email or phone) to follow up. Ask once.",
+    );
   }
   if (v2.matchLanguage) {
     lines.push("Always reply in the same language the person wrote to you in.");
   }
   if (v2.engageBack) {
-    lines.push("End most replies with a short, friendly question or next step to keep the conversation going.");
+    lines.push(
+      "End most replies with a short, friendly question or next step to keep the conversation going.",
+    );
   }
   if (v2.ctaLink && String(v2.ctaLink).trim()) {
     lines.push(`When helpful, share this link: ${String(v2.ctaLink).trim()}`);
@@ -222,7 +267,8 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     );
   }
 
-  const handle = contact?.igUsername || contact?.username || contact?.phone || "user";
+  const handle =
+    contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `Customer identifier: ${handle}`);
   lines.push("Channel: Instagram DM");
   lines.push(
@@ -263,7 +309,9 @@ const generateReply = async ({
   // 1. Early escalation by keyword
   const escalateKw = ai.handoffKeywords || ["human", "agent", "support"];
   const lower = (userMessage || "").toLowerCase();
-  let escalate = escalateKw.some((kw) => lower.includes(String(kw).toLowerCase()));
+  let escalate = escalateKw.some((kw) =>
+    lower.includes(String(kw).toLowerCase()),
+  );
 
   // 2. Instant FAQ match (skip if live data or sendable images involved)
   const hasSendableImages = (workspace.aiKnowledge?.sources || []).some(
@@ -276,7 +324,12 @@ const generateReply = async ({
     const faqHit = matchFaq(ai.faqs, userMessage);
     if (faqHit) {
       logger.info(`[AI:generateReply] ws=${workspace?._id} → FAQ match`);
-      return { reply: faqHit.answer, escalate: false, tokens: 0, provider: "faq" };
+      return {
+        reply: faqHit.answer,
+        escalate: false,
+        tokens: 0,
+        provider: "faq",
+      };
     }
   }
 
@@ -292,7 +345,10 @@ const generateReply = async ({
     providerUsed = "openai";
   }
 
-  if (!client && (requested === "groq" || requested === "auto" || requested === "openai")) {
+  if (
+    !client &&
+    (requested === "groq" || requested === "auto" || requested === "openai")
+  ) {
     client = getGroqClient();
     model = "llama-3.3-70b-versatile";
     providerUsed = "groq";
@@ -301,15 +357,26 @@ const generateReply = async ({
   // Final fallback chain
   if (!client) {
     client = getOpenaiClient();
-    if (client) { model = "gpt-4o-mini"; providerUsed = "openai"; }
+    if (client) {
+      model = "gpt-4o-mini";
+      providerUsed = "openai";
+    }
   }
   if (!client) {
     client = getGroqClient();
-    if (client) { model = "llama-3.3-70b-versatile"; providerUsed = "groq"; }
+    if (client) {
+      model = "llama-3.3-70b-versatile";
+      providerUsed = "groq";
+    }
   }
 
   if (!client) {
-    return { reply: fallbackReply(contact), escalate: true, tokens: 0, provider: "none" };
+    return {
+      reply: fallbackReply(contact),
+      escalate: true,
+      tokens: 0,
+      provider: "none",
+    };
   }
 
   const systemPrompt = buildSystemPrompt(workspace, contact, extraContext);
@@ -332,12 +399,16 @@ const generateReply = async ({
 
     if (/^\s*ESCALATE\s*:/i.test(reply)) {
       escalate = true;
-      reply = reply.replace(/^\s*ESCALATE\s*:\s*/i, "").trim() || fallbackReply(contact);
+      reply =
+        reply.replace(/^\s*ESCALATE\s*:\s*/i, "").trim() ||
+        fallbackReply(contact);
     }
 
     // Extract <<SEND_IMAGE:url>> markers
     const imageUrls = [];
-    logger.info(`[AI:raw] ws=${workspace?._id} provider=${providerUsed} raw="${(reply || "").slice(0, 150).replace(/\n/g, "\\n")}"`);
+    logger.info(
+      `[AI:raw] ws=${workspace?._id} provider=${providerUsed} raw="${(reply || "").slice(0, 150).replace(/\n/g, "\\n")}"`,
+    );
     reply = reply
       .replace(/<<\s*SEND_IMAGE\s*:\s*([^>]+?)\s*>>/gi, (_, url) => {
         const clean = String(url).trim();
@@ -346,7 +417,9 @@ const generateReply = async ({
       })
       .trim();
 
-    logger.info(`[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length}`);
+    logger.info(
+      `[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length}`,
+    );
 
     return {
       reply,
@@ -356,7 +429,9 @@ const generateReply = async ({
       provider: providerUsed,
     };
   } catch (err) {
-    logger.error(`AI generateReply (${providerUsed}) failed`, { err: err.message });
+    logger.error(`AI generateReply (${providerUsed}) failed`, {
+      err: err.message,
+    });
     // Try Groq as emergency fallback if OpenAI failed
     if (providerUsed === "openai") {
       const groq = getGroqClient();
@@ -373,12 +448,26 @@ const generateReply = async ({
             temperature: 0.45,
             max_tokens: 600,
           });
-          const reply2 = r2.choices?.[0]?.message?.content?.trim() || fallbackReply(contact);
-          return { reply: reply2, escalate, imageUrls: [], tokens: r2.usage?.total_tokens || 0, provider: "groq-fallback" };
-        } catch { /* fall through */ }
+          const reply2 =
+            r2.choices?.[0]?.message?.content?.trim() || fallbackReply(contact);
+          return {
+            reply: reply2,
+            escalate,
+            imageUrls: [],
+            tokens: r2.usage?.total_tokens || 0,
+            provider: "groq-fallback",
+          };
+        } catch {
+          /* fall through */
+        }
       }
     }
-    return { reply: fallbackReply(contact), escalate: true, tokens: 0, provider: providerUsed };
+    return {
+      reply: fallbackReply(contact),
+      escalate: true,
+      tokens: 0,
+      provider: providerUsed,
+    };
   }
 };
 
@@ -389,7 +478,8 @@ const getAnyClient = () => {
   let client = getOpenaiClient();
   if (client) return { client, model: "gpt-4o-mini", provider: "openai" };
   client = getGroqClient();
-  if (client) return { client, model: "llama-3.3-70b-versatile", provider: "groq" };
+  if (client)
+    return { client, model: "llama-3.3-70b-versatile", provider: "groq" };
   return { client: null, model: null, provider: "none" };
 };
 

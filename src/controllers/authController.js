@@ -9,9 +9,13 @@ const {
 } = require("../utils/jwt");
 const { generateToken, hashToken } = require("../utils/crypto");
 const {
-  sendWelcomeEmail,
+  sendVerificationEmail,
   sendPasswordResetEmail,
 } = require("../services/emailService");
+
+// Generate a random 4-digit verification code as a string ("0000"–"9999").
+const generateVerificationCode = () =>
+  String(Math.floor(1000 + Math.random() * 9000));
 const logger = require("../utils/logger");
 const { OAuth2Client } = require("google-auth-library");
 
@@ -36,12 +40,22 @@ const register = asyncHandler(async (req, res) => {
     throw new Error("Email already registered");
   }
 
+  // Email/password signups must verify via a 4-digit code emailed to them.
+  const verificationCode = generateVerificationCode();
   const user = await User.create({
     name,
     email,
     password,
-    isEmailVerified: true,
+    isEmailVerified: false,
+    emailVerificationToken: hashToken(verificationCode),
+    emailVerificationExpires: Date.now() + 15 * 60 * 1000, // 15 minutes
   });
+
+  // Send the verification code (best-effort — failure shouldn't block signup;
+  // the user can request a resend from the verify screen).
+  await sendVerificationEmail({ to: user.email, name: user.name, code: verificationCode }).catch(
+    (err) => logger.error("[register] verification email failed", { err: err.message }),
+  );
 
   // Auto-create workspace so user lands directly on dashboard
   const workspace = await Workspace.create({
@@ -192,6 +206,72 @@ const resetPassword = asyncHandler(async (req, res) => {
   });
 });
 
+// @POST /api/auth/verify-email
+// Confirms the 4-digit code emailed at signup and marks the account verified.
+const verifyEmailCode = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    res.status(400);
+    throw new Error("Email and verification code are required");
+  }
+
+  const user = await User.findOne({ email }).select(
+    "+emailVerificationToken +emailVerificationExpires",
+  );
+  if (!user) {
+    res.status(404);
+    throw new Error("Account not found");
+  }
+  if (user.isEmailVerified) {
+    return res.json({ success: true, message: "Email already verified", user });
+  }
+  if (
+    !user.emailVerificationToken ||
+    !user.emailVerificationExpires ||
+    user.emailVerificationExpires.getTime() < Date.now()
+  ) {
+    res.status(400);
+    throw new Error("Code expired. Please request a new one.");
+  }
+  if (hashToken(String(code).trim()) !== user.emailVerificationToken) {
+    res.status(400);
+    throw new Error("Invalid verification code");
+  }
+
+  user.isEmailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpires = undefined;
+  await user.save();
+
+  res.json({ success: true, message: "Email verified successfully", user });
+});
+
+// @POST /api/auth/resend-verification
+// Issues a fresh 4-digit code. Enumeration-safe: always returns success.
+const resendVerificationCode = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+
+  if (user && !user.isEmailVerified) {
+    const verificationCode = generateVerificationCode();
+    user.emailVerificationToken = hashToken(verificationCode);
+    user.emailVerificationExpires = Date.now() + 15 * 60 * 1000;
+    await user.save();
+    await sendVerificationEmail({
+      to: user.email,
+      name: user.name,
+      code: verificationCode,
+    }).catch((err) =>
+      logger.error("[resendVerification] email failed", { err: err.message }),
+    );
+  }
+
+  res.json({
+    success: true,
+    message: "If that account exists and is unverified, a new code has been sent.",
+  });
+});
+
 // @GET /api/auth/me
 const getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id).populate(
@@ -279,8 +359,6 @@ const googleAuth = asyncHandler(async (req, res) => {
     user.workspaces = [workspace._id];
     user.activeWorkspace = workspace._id;
     await user.save();
-
-    await sendWelcomeEmail({ to: email, name }).catch(() => {});
   } else if (!user.googleId) {
     // Link Google to an existing email/password account.
     user.googleId = googleId;
@@ -309,6 +387,8 @@ module.exports = {
   refreshToken,
   forgotPassword,
   resetPassword,
+  verifyEmailCode,
+  resendVerificationCode,
   getMe,
   googleAuth,
 };
