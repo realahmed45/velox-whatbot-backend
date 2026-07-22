@@ -1462,6 +1462,59 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       continue;
     }
 
+    // ── Comments (comment.received) ──────────────────────────────────────────
+    // A comment's author lives inside the `comment` object (comment.from /
+    // comment.author / comment.user), NOT under the top-level sender fields the
+    // generic extractor below checks — so handle it here before that guard,
+    // otherwise every comment gets dropped and comment-to-DM never fires.
+    if (evtType === "comment.received" || evtType === "comment") {
+      const cm = evt.comment || evt.data?.comment || {};
+      const author = cm.from || cm.author || cm.user || cm.sender || {};
+      const commenterId =
+        author.id ||
+        author.userId ||
+        author.user_id ||
+        cm.fromId ||
+        cm.userId ||
+        cm.senderId ||
+        null;
+      const commenterUsername =
+        author.username || author.name || cm.username || null;
+      const commentText = cm.text || cm.message || cm.content || evt.text || "";
+      const postId =
+        evt.post?.id ||
+        evt.post?.mediaId ||
+        cm.postId ||
+        cm.mediaId ||
+        evt.postId ||
+        evt.mediaId ||
+        null;
+
+      logger.info(
+        `[BotlifyIG webhook] comment from=${commenterId} (@${commenterUsername}) text="${String(
+          commentText,
+        ).slice(0, 60)}" post=${postId} ws=${target._id}`,
+      );
+
+      if (!commenterId) {
+        logger.warn(
+          `[BotlifyIG webhook] comment.received had no author id — keys: evt=${Object.keys(
+            evt,
+          ).join(",")} comment=${Object.keys(cm).join(",")}`,
+        );
+        continue;
+      }
+
+      await handleWebhookEvent(target._id, {
+        type: "post_comment",
+        senderId: commenterId,
+        senderUsername: commenterUsername,
+        text: commentText,
+        postId,
+      });
+      continue;
+    }
+
     const senderId =
       msg.sender?.id ||
       evt.sender?.id ||
@@ -1514,25 +1567,43 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       case "message.received":
       case "message":
       case "dm": {
-        // Zernio delivers story-replies and shared-posts inside message.received.
-        // Detect the sub-type so the right automation handler runs.
+        // Zernio delivers story-replies, story-mentions and shared-posts nested
+        // inside message.received. Detect the sub-type from the attachments /
+        // reply-context so the right automation handler runs.
         const attachments = msg.attachments || evt.attachments || [];
-        const attachType = Array.isArray(attachments)
-          ? attachments[0]?.type
-          : attachments?.type;
+        const attArr = Array.isArray(attachments)
+          ? attachments
+          : attachments
+            ? [attachments]
+            : [];
+        const attTypes = attArr.map((a) => String(a?.type || "").toLowerCase());
+        const has = (t) => attTypes.some((x) => x.includes(t));
+
+        const replyStory =
+          msg.reply_to?.story ||
+          msg.replyTo?.story ||
+          msg.story ||
+          evt.reply_to?.story ||
+          msg.reply_to?.type === "story";
+
+        const isStoryMention = has("story_mention") || has("mention");
         const isStoryReply =
-          !!(msg.reply_to?.story || msg.replyTo?.story || msg.story) ||
-          attachType === "story_reply" ||
-          attachType === "story_mention";
+          !!replyStory || has("story_reply") || has("story");
         const isShare =
-          attachType === "share" ||
-          attachType === "story" ||
-          attachType === "template" ||
-          !!msg.shared_post;
+          has("share") || has("template") || !!msg.shared_post;
 
         let innerType = "direct_message";
-        if (isStoryReply) innerType = "story_reply";
+        if (isStoryMention) innerType = "story_mention";
+        else if (isStoryReply) innerType = "story_reply";
         else if (isShare) innerType = "share_to_story";
+
+        if (innerType !== "direct_message") {
+          logger.info(
+            `[BotlifyIG webhook] message sub-type=${innerType} attachTypes=[${attTypes.join(
+              ",",
+            )}] ws=${target._id}`,
+          );
+        }
 
         await handleWebhookEvent(target._id, {
           type: innerType,
@@ -1557,16 +1628,6 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           providerConversationId:
             evt.conversation?.id || msg.conversationId || null,
           text: "",
-        });
-        break;
-      case "comment.received":
-      case "comment":
-        await handleWebhookEvent(target._id, {
-          type: "post_comment",
-          senderId,
-          senderUsername,
-          text: evt.comment?.text || msg.text || evt.text || "",
-          postId: evt.post?.id || evt.postId || null,
         });
         break;
       case "story.mention":
