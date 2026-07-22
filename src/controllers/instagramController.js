@@ -1608,17 +1608,12 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
             msg.reply_to?.type === "story" ||
             has("story_reply"));
 
-        // Only a genuine share — i.e. a share attachment that is NOT actually a
-        // story mention/reply in disguise.
-        const isShare =
-          !isStoryMention &&
-          !isStoryReply &&
-          (has("share") || has("template") || !!msg.shared_post);
-
+        // Share-to-story is intentionally NOT handled: on Instagram/Zernio a
+        // share that tags you already arrives as a story_mention (handled
+        // above), and a plain share is treated as a normal DM.
         let innerType = "direct_message";
         if (isStoryMention) innerType = "story_mention";
         else if (isStoryReply) innerType = "story_reply";
-        else if (isShare) innerType = "share_to_story";
 
         if (innerType !== "direct_message") {
           logger.info(
