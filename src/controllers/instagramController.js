@@ -1568,10 +1568,14 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       case "message":
       case "dm": {
         // Zernio delivers story-replies, story-mentions and shared-posts nested
-        // inside message.received. The AUTHORITATIVE signal is evt.metadata:
-        // a story reply arrives as { metadata: { storyReply: { storyId, ... } } }
-        // and a mention as { metadata: { storyMention: {...} } }. Attachments /
-        // reply-context are kept as secondary fallbacks.
+        // inside message.received. Real signals observed in production:
+        //  - story reply:   metadata.storyReply = { storyId, storyUrl }
+        //  - story mention: metadata.isStoryMention = true, AND the attachment
+        //    arrives as { type: "share", originalType: "story_mention" }
+        //  - share:         attachment { type: "share" } with no story originalType
+        // So we must read attachment.originalType (not just .type) and the
+        // metadata flags, and check mention/reply BEFORE share (a mention looks
+        // like a share on `type` alone).
         const meta = evt.metadata || msg.metadata || {};
 
         const attachments = msg.attachments || evt.attachments || [];
@@ -1580,23 +1584,36 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           : attachments
             ? [attachments]
             : [];
-        const attTypes = attArr.map((a) => String(a?.type || "").toLowerCase());
+        // Consider both `type` and `originalType` — originalType carries the
+        // true sub-type for story mentions delivered as shares.
+        const attTypes = attArr.flatMap((a) => [
+          String(a?.type || "").toLowerCase(),
+          String(a?.originalType || "").toLowerCase(),
+        ]);
         const has = (t) => attTypes.some((x) => x.includes(t));
 
-        const replyStory =
-          !!meta.storyReply ||
-          msg.reply_to?.story ||
-          msg.replyTo?.story ||
-          msg.story ||
-          evt.reply_to?.story ||
-          msg.reply_to?.type === "story";
-
         const isStoryMention =
-          !!meta.storyMention || has("story_mention") || has("mention");
+          !!meta.isStoryMention ||
+          !!meta.storyMention ||
+          has("story_mention") ||
+          (has("mention") && !has("story_reply"));
+
         const isStoryReply =
-          !!replyStory || has("story_reply") || has("story");
+          !isStoryMention &&
+          (!!meta.storyReply ||
+            msg.reply_to?.story ||
+            msg.replyTo?.story ||
+            msg.story ||
+            evt.reply_to?.story ||
+            msg.reply_to?.type === "story" ||
+            has("story_reply"));
+
+        // Only a genuine share — i.e. a share attachment that is NOT actually a
+        // story mention/reply in disguise.
         const isShare =
-          !!meta.share || has("share") || has("template") || !!msg.shared_post;
+          !isStoryMention &&
+          !isStoryReply &&
+          (has("share") || has("template") || !!msg.shared_post);
 
         let innerType = "direct_message";
         if (isStoryMention) innerType = "story_mention";
@@ -1607,7 +1624,9 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           logger.info(
             `[BotlifyIG webhook] message sub-type=${innerType} metaKeys=[${Object.keys(
               meta,
-            ).join(",")}] attachTypes=[${attTypes.join(",")}] ws=${target._id}`,
+            ).join(",")}] attachTypes=[${attTypes
+              .filter(Boolean)
+              .join(",")}] ws=${target._id}`,
           );
         }
 
@@ -1619,7 +1638,8 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           providerConversationId:
             evt.conversation?.id || msg.conversationId || null,
           text: msg.text || msg.content || msg.body || evt.text || "",
-          storyId: meta.storyReply?.storyId || meta.storyMention?.storyId || null,
+          storyId:
+            meta.storyReply?.storyId || meta.storyMention?.storyId || null,
         });
         break;
       }
