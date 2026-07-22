@@ -496,9 +496,18 @@ const handleStoryReply = async (workspace, contact, conv, text) => {
 
 const handleStoryMention = async (workspace, senderId, meta = {}) => {
   const cfg = workspace.storyMentionTrigger;
-  if (!cfg?.enabled) return;
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_MENTION))
+  if (!cfg?.enabled) {
+    logger.info(
+      `[storyMention] skipped: trigger not enabled (cfg=${JSON.stringify(cfg || null)}) ws=${workspace._id}`,
+    );
     return;
+  }
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_MENTION)) {
+    logger.info(
+      `[storyMention] skipped: plan ${workspace.subscription?.plan} lacks STORY_MENTION ws=${workspace._id}`,
+    );
+    return;
+  }
 
   const contact = await upsertContact(workspace._id, senderId, {
     username: meta.username,
@@ -506,9 +515,18 @@ const handleStoryMention = async (workspace, senderId, meta = {}) => {
   });
   const conv = await getOrCreateConversation(workspace, contact);
   const blocked = guardSend(workspace, contact, conv);
-  if (blocked) return;
-  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 12)) return;
+  if (blocked) {
+    logger.info(`[storyMention] skipped: guardSend=${blocked} ws=${workspace._id}`);
+    return;
+  }
+  if (await recentlyTriggered(conv, TRIGGERS.STORY_MENTION, null, 12)) {
+    logger.info(
+      `[storyMention] skipped: already triggered within 12h ws=${workspace._id}`,
+    );
+    return;
+  }
 
+  logger.info(`[storyMention] sending reply ws=${workspace._id}`);
   await sendAndLog({
     workspace,
     contact,
