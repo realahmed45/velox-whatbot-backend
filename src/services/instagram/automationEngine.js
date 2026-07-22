@@ -538,12 +538,24 @@ const handleStoryMention = async (workspace, senderId, meta = {}) => {
 
 const handleShare = async (workspace, contact, conv) => {
   const cfg = workspace.shareToStoryTrigger;
-  if (!cfg?.enabled) return false;
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.SHARE_TO_STORY))
+  if (!cfg?.enabled) {
+    logger.info(
+      `[share] skipped: trigger not enabled (cfg=${JSON.stringify(cfg || null)}) ws=${workspace._id}`,
+    );
     return false;
-  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 6))
+  }
+  if (!planHasFeature(workspace.subscription?.plan, FEATURES.SHARE_TO_STORY)) {
+    logger.info(
+      `[share] skipped: plan ${workspace.subscription?.plan} lacks SHARE_TO_STORY ws=${workspace._id}`,
+    );
+    return false;
+  }
+  if (await recentlyTriggered(conv, TRIGGERS.SHARE_TO_STORY, null, 6)) {
+    logger.info(`[share] skipped: already triggered within 6h ws=${workspace._id}`);
     return true;
+  }
 
+  logger.info(`[share] sending reply ws=${workspace._id}`);
   await sendAndLog({
     workspace,
     contact,
