@@ -159,16 +159,11 @@ const flowSchema = new mongoose.Schema(
     priority: { type: Number, default: 0 },
     nodes: [flowNodeSchema],
     edges: [flowEdgeSchema],
+    // Which template/starter this flow came from (provenance label only —
+    // deliberately unconstrained so new starter packs never need a schema
+    // migration).
     template: {
       type: String,
-      enum: [
-        "restaurant",
-        "beauty_salon",
-        "retail",
-        "real_estate",
-        "general_faq",
-        null,
-      ],
       default: null,
     },
 
