@@ -10,6 +10,8 @@ const {
   duplicateFlow,
   getTemplates,
   createFromTemplate,
+  getStarters,
+  createFromStarter,
   updatePriority,
 } = require("../controllers/flowController");
 
@@ -18,6 +20,8 @@ router.use(requireWorkspace);
 
 router.get("/templates", getTemplates);
 router.post("/from-template", createFromTemplate);
+router.get("/starters", getStarters);
+router.post("/from-starter", createFromStarter);
 
 router.route("/").get(getFlows).post(createFlow);
 router.route("/:id").get(getFlow).put(updateFlow).delete(deleteFlow);

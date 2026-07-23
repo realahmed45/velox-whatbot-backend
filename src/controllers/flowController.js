@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const Flow = require("../models/Flow");
 const { FLOW_TEMPLATES } = require("../utils/flowTemplates");
+const { FLOW_STARTERS } = require("../utils/flowStarters");
 
 /**
  * Validate flow structure before activation
@@ -286,6 +287,60 @@ const updatePriority = asyncHandler(async (req, res) => {
   res.json({ success: true, flow });
 });
 
+// @GET /api/flows/starters — ready-made single flows for the builder gallery
+const getStarters = asyncHandler(async (req, res) => {
+  // Send metadata only (no node graphs) so the gallery stays light.
+  const starters = FLOW_STARTERS.map(
+    ({ key, name, description, icon, category, flow }) => ({
+      key,
+      name,
+      description,
+      icon,
+      category,
+      steps: flow.nodes.length,
+    }),
+  );
+  res.json({ success: true, starters });
+});
+
+// @POST /api/flows/from-starter — install one starter as an editable draft
+const createFromStarter = asyncHandler(async (req, res) => {
+  const { starterKey } = req.body;
+  const starter = FLOW_STARTERS.find((s) => s.key === starterKey);
+  if (!starter) {
+    res.status(404);
+    throw new Error("Starter flow not found");
+  }
+
+  // Fresh node/edge ids so installing the same starter twice never collides.
+  const idMap = new Map();
+  const uid = (old) => {
+    if (!idMap.has(old)) idMap.set(old, `${old}_${Date.now().toString(36)}`);
+    return idMap.get(old);
+  };
+  const nodes = starter.flow.nodes.map((n) => ({ ...n, id: uid(n.id) }));
+  const edges = starter.flow.edges.map((e) => ({
+    ...e,
+    id: `${e.id}_${Date.now().toString(36)}`,
+    source: uid(e.source),
+    target: uid(e.target),
+  }));
+
+  const flow = await Flow.create({
+    workspaceId: req.workspace._id,
+    name: starter.name,
+    description: starter.description,
+    nodes,
+    edges,
+    template: starter.key,
+    // Installed as a draft so the user reviews/edits before it goes live.
+    status: "draft",
+    createdBy: req.user._id,
+  });
+
+  res.status(201).json({ success: true, flow });
+});
+
 module.exports = {
   getFlows,
   getFlow,
@@ -295,5 +350,7 @@ module.exports = {
   duplicateFlow,
   getTemplates,
   createFromTemplate,
+  getStarters,
+  createFromStarter,
   updatePriority,
 };
