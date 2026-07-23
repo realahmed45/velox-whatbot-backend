@@ -984,17 +984,50 @@ const flowTriggerMatches = (node, { text, isFirstMessage }) => {
   return false;
 };
 
-const parseFlowOptions = (data = {}) => {
+/**
+ * Build the selectable options for a button/list menu node.
+ *
+ * Each option gets a `nextNodeId` so the user's choice routes to its OWN
+ * branch. Explicit per-option targets win; otherwise we fall back to the
+ * node's outgoing edges IN ORDER — option 1 follows the 1st edge, option 2
+ * the 2nd, and so on. That matches how the visual builder works (drag one
+ * edge per option), and is what makes menu branching function at all.
+ *
+ * `flow` + `nodeId` are optional so callers that only need labels still work.
+ */
+const parseFlowOptions = (data = {}, flow = null, nodeId = null) => {
+  // Outgoing edges in canvas order, preferring an explicit sourceHandle that
+  // names the option index (e.g. "1", "opt-2") when the builder emits one.
+  const outEdges =
+    flow && nodeId ? flow.edges.filter((e) => e.source === nodeId) : [];
+  const edgeTargetFor = (i, label) => {
+    if (!outEdges.length) return undefined;
+    const byHandle = outEdges.find((e) => {
+      const h = String(e.sourceHandle || e.label || "").toLowerCase();
+      if (!h) return false;
+      return (
+        h === String(i + 1) ||
+        h === `opt-${i + 1}` ||
+        h === `option-${i + 1}` ||
+        h === String(label || "").toLowerCase()
+      );
+    });
+    return (byHandle || outEdges[i])?.target;
+  };
+
   if (Array.isArray(data.buttons) && data.buttons.length) {
-    return data.buttons.map((b, i) => ({
-      label: b.label || b.title || `Option ${i + 1}`,
-      nextNodeId: b.nextNodeId,
-    }));
+    return data.buttons.map((b, i) => {
+      const label = b.label || b.title || `Option ${i + 1}`;
+      return { label, nextNodeId: b.nextNodeId || edgeTargetFor(i, label) };
+    });
   }
   if (Array.isArray(data.listSections) && data.listSections.length) {
     return data.listSections
       .flatMap((s) => s.rows || [])
-      .map((r) => ({ label: r.title, nextNodeId: r.nextNodeId }));
+      .map((r, i) => ({
+        label: r.title,
+        nextNodeId: r.nextNodeId || edgeTargetFor(i, r.title),
+      }));
   }
   const raw = data.buttonsJson || data.itemsJson;
   if (raw) {
@@ -1002,7 +1035,7 @@ const parseFlowOptions = (data = {}) => {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)
-      .map((label) => ({ label }));
+      .map((label, i) => ({ label, nextNodeId: edgeTargetFor(i, label) }));
   }
   return [];
 };
@@ -1036,7 +1069,7 @@ const evalCondition = (left, op, right) => {
 const executeFlowNode = async (flow, node, ctx) => {
   const { workspace, contact, conv, variables } = ctx;
   const d = node.data || {};
-  const send = (text) =>
+  const send = (text, imageUrls = []) =>
     sendAndLog({
       workspace,
       contact,
@@ -1044,6 +1077,7 @@ const executeFlowNode = async (flow, node, ctx) => {
       text,
       triggerType: "flow",
       keyword: String(flow._id),
+      imageUrls,
     });
 
   switch (node.nodeType) {
@@ -1053,22 +1087,30 @@ const executeFlowNode = async (flow, node, ctx) => {
       return { next: true };
     }
     case "send_image": {
-      const url = d.imageUrl || d.url;
+      // Send as a REAL image attachment (with the caption as the text body),
+      // not a URL pasted into the message.
+      const url = renderVars(d.imageUrl || d.url || "", variables);
       const caption = renderVars(d.caption || d.content || "", variables);
-      const text = [caption, url].filter(Boolean).join("\n");
-      if (text) await send(text);
+      if (url) await send(caption, [url]);
+      else if (caption) await send(caption);
       return { next: true };
     }
     case "send_file": {
-      const url = d.fileUrl || d.url;
-      const text = [renderVars(d.content || "", variables), url]
+      // Instagram DMs can't attach arbitrary documents, so a file is sent as a
+      // labelled link. Honour the fileName the builder collects.
+      const url = renderVars(d.fileUrl || d.url || "", variables);
+      const body = renderVars(d.content || d.message || "", variables);
+      const name = renderVars(d.fileName || "", variables);
+      const label = name ? `📎 ${name}` : "📎 File";
+      const text = [body, url ? `${label}: ${url}` : ""]
         .filter(Boolean)
         .join("\n");
       if (text) await send(text);
       return { next: true };
     }
     case "tag_contact": {
-      const tag = d.tagName || d.tag;
+      // Support {{answer}} style variables in tag names too.
+      const tag = renderVars(d.tagName || d.tag || "", variables).trim();
       if (tag) {
         contact.tags = Array.from(new Set([...(contact.tags || []), tag]));
         await contact.save();
@@ -1078,13 +1120,14 @@ const executeFlowNode = async (flow, node, ctx) => {
     case "assign_agent": {
       conv.status = "awaiting_human";
       conv.botEnabled = false;
-      await conv.save();
+      // Assign to the chosen teammate when the node specifies one.
+      if (d.agentId) conv.assignedTo = d.agentId;
       const note = renderVars(d.agentNote || "", variables);
       if (note) {
         conv.metadata = { ...(conv.metadata || {}), agentNote: note };
         conv.markModified("metadata");
-        await conv.save();
       }
+      await conv.save();
       return { next: true };
     }
     case "delay": {
@@ -1107,7 +1150,8 @@ const executeFlowNode = async (flow, node, ctx) => {
     case "button_menu":
     case "list_menu": {
       const body = renderVars(d.content || d.message || "", variables);
-      const options = parseFlowOptions(d);
+      // Pass flow + node id so each option resolves its own branch target.
+      const options = parseFlowOptions(d, flow, node.id);
       const menu = [body, ...options.map((o, i) => `${i + 1}. ${o.label}`)]
         .filter(Boolean)
         .join("\n");
@@ -1158,6 +1202,11 @@ const executeFlow = async (flow, startNode, ctx) => {
     }
     current = flowNextNode(flow, current.id, res.handle);
   }
+  if (guard >= 60) {
+    logger.warn(
+      `[flow] ${flow._id} hit the 60-node execution cap — possible loop; stopping.`,
+    );
+  }
   // Flow finished — clear resume state and bump completions.
   conv.metadata = {
     ...(conv.metadata || {}),
@@ -1196,23 +1245,67 @@ const resumePendingFlow = async (workspace, contact, conv, text) => {
     variables[af.variableName || "answer"] = text;
     nextNode = flowNextNode(flow, af.nodeId);
   } else if (af.awaiting === "choice") {
-    const options = parseFlowOptions(waitingNode?.data || {});
+    const d = waitingNode?.data || {};
+    const options = parseFlowOptions(d, flow, af.nodeId);
     const idx = parseInt(text, 10);
     let chosen;
     if (!isNaN(idx) && idx >= 1 && idx <= options.length)
       chosen = options[idx - 1];
     else chosen = options.find((o) => matchKeyword(text, o.label, "contains"));
-    if (chosen?.nextNodeId) nextNode = flowNodeById(flow, chosen.nextNodeId);
-    else nextNode = flowNextNode(flow, af.nodeId);
+
+    // Invalid pick → re-send the menu instead of silently taking a branch.
+    if (!chosen && options.length) {
+      const retries = Number(af.retries || 0);
+      if (retries < 2) {
+        const body = renderVars(d.content || d.message || "", variables);
+        const menu = [
+          `Sorry, I didn't catch that — please reply with a number (1-${options.length}).`,
+          body,
+          ...options.map((o, i) => `${i + 1}. ${o.label}`),
+        ]
+          .filter(Boolean)
+          .join("\n");
+        await sendAndLog({
+          workspace,
+          contact,
+          conversation: conv,
+          text: menu,
+          triggerType: "flow",
+          keyword: String(flow._id),
+        });
+        conv.metadata = {
+          ...(conv.metadata || {}),
+          variables,
+          activeFlow: { ...af, retries: retries + 1 },
+        };
+        conv.markModified("metadata");
+        await conv.save();
+        return true; // still waiting on a valid choice
+      }
+      // Too many bad tries — give up on the menu and continue the default path.
+      logger.info(`[flow] menu ${af.nodeId}: giving up after ${retries} retries`);
+    }
+
+    nextNode = chosen?.nextNodeId
+      ? flowNodeById(flow, chosen.nextNodeId)
+      : flowNextNode(flow, af.nodeId);
   }
 
   conv.metadata = { ...(conv.metadata || {}), activeFlow: null, variables };
   conv.markModified("metadata");
   await conv.save();
 
-  if (nextNode)
+  if (nextNode) {
     await executeFlow(flow, nextNode, { workspace, contact, conv, variables });
-  return true;
+    return true;
+  }
+
+  // Dead end: the waiting node has nothing wired after it. Don't swallow the
+  // customer's message — let the normal automation chain (AI / fallback) reply.
+  logger.info(
+    `[flow] ${flow._id} await node ${af.nodeId} has no next node — releasing to normal handling`,
+  );
+  return false;
 };
 
 // Match an inbound message against active flows; execute the first that fires.

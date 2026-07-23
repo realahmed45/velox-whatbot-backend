@@ -17,10 +17,36 @@ const validateFlow = (nodes, edges) => {
   }
 
   // Check for trigger node
-  const hasTrigger = nodes.some((n) => n.type === "trigger");
-  if (!hasTrigger) {
+  const triggers = nodes.filter((n) => n.type === "trigger");
+  if (!triggers.length) {
     errors.push("Flow must have a trigger node");
   }
+
+  // A keyword trigger with no keywords can never fire — catch it here rather
+  // than letting the user activate a flow that silently does nothing.
+  triggers.forEach((t) => {
+    const nt = t.nodeType;
+    if (nt === "keyword_trigger" || nt === "keyword_match" || nt === "keyword_dm") {
+      const kws = (t.data?.keywords || []).filter(
+        (k) => String(k || "").trim() !== "",
+      );
+      if (!kws.length) {
+        errors.push(
+          "Your keyword trigger has no keywords — add at least one word that should start this flow",
+        );
+      }
+    }
+  });
+
+  // Every trigger needs something wired after it, or the flow does nothing.
+  triggers.forEach((t) => {
+    const hasOutgoing = edges?.some((e) => e.source === t.id);
+    if (!hasOutgoing) {
+      errors.push(
+        "Your trigger isn't connected to anything — drag a line from it to your first step",
+      );
+    }
+  });
 
   // Build adjacency map for validation
   const nodeIds = new Set(nodes.map((n) => n.id));
@@ -40,13 +66,18 @@ const validateFlow = (nodes, edges) => {
     edgeMap.get(edge.source).push(edge.target);
   });
 
-  // Check for orphaned nodes (except trigger which starts the flow)
+  // Orphaned nodes. A node with NO edges at all is just an unfinished step the
+  // user hasn't wired yet — that shouldn't block activation (the engine simply
+  // never reaches it). What we do flag is a node that feeds others but has no
+  // way in, since that's a genuinely unreachable branch.
   nodes.forEach((node) => {
-    if (node.type !== "trigger") {
-      const hasIncomingEdge = edges?.some((e) => e.target === node.id);
-      if (!hasIncomingEdge) {
-        errors.push(`Node "${node.data?.label || node.id}" is disconnected`);
-      }
+    if (node.type === "trigger") return;
+    const hasIncoming = edges?.some((e) => e.target === node.id);
+    const hasOutgoing = edges?.some((e) => e.source === node.id);
+    if (!hasIncoming && hasOutgoing) {
+      errors.push(
+        `"${node.data?.label || node.id}" can never be reached — connect a step into it (or delete it)`,
+      );
     }
   });
 
