@@ -3,7 +3,7 @@ const Workspace = require("../models/Workspace");
 const User = require("../models/User");
 const { encrypt, decrypt } = require("../utils/encryption");
 const { sendTeamInviteEmail } = require("../services/emailService");
-const { generateToken } = require("../utils/crypto");
+const { generateToken, hashToken } = require("../utils/crypto");
 const logger = require("../utils/logger");
 
 // @POST /api/workspaces — Create workspace
@@ -107,10 +107,11 @@ const inviteMember = asyncHandler(async (req, res) => {
   }
 
   const workspace = req.workspace;
+  const normEmail = String(email).toLowerCase().trim();
   const inviteToken = generateToken();
 
   // Check if already a member
-  const existingUser = await User.findOne({ email });
+  const existingUser = await User.findOne({ email: normEmail });
   const isAlreadyMember =
     existingUser &&
     (workspace.owner.toString() === existingUser._id.toString() ||
@@ -122,15 +123,123 @@ const inviteMember = asyncHandler(async (req, res) => {
     throw new Error("User is already a member of this workspace");
   }
 
+  // Persist a pending invite (replacing any prior one for the same email) so
+  // the emailed link can actually be accepted later.
+  workspace.pendingInvites = (workspace.pendingInvites || []).filter(
+    (i) => i.email !== normEmail,
+  );
+  workspace.pendingInvites.push({
+    email: normEmail,
+    role: role === "owner" ? "agent" : role, // never invite straight to owner
+    tokenHash: hashToken(inviteToken),
+    invitedBy: req.user._id,
+    invitedAt: new Date(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+  });
+  await workspace.save();
+
   const inviteUrl = `${process.env.CLIENT_URL}/invite?token=${inviteToken}&workspace=${workspace._id}`;
   await sendTeamInviteEmail({
-    to: email,
+    to: normEmail,
     inviterName: req.user.name,
     workspaceName: workspace.name,
     inviteUrl,
-  });
+  }).catch(() => {});
 
-  res.json({ success: true, message: `Invitation sent to ${email}` });
+  res.json({ success: true, message: `Invitation sent to ${normEmail}` });
+});
+
+// @GET /api/workspaces/:workspaceId/invites — list outstanding invites (owner)
+const listInvites = asyncHandler(async (req, res) => {
+  const invites = (req.workspace.pendingInvites || []).map((i) => ({
+    email: i.email,
+    role: i.role,
+    invitedAt: i.invitedAt,
+    expiresAt: i.expiresAt,
+    expired: i.expiresAt && i.expiresAt.getTime() < Date.now(),
+  }));
+  res.json({ success: true, invites });
+});
+
+// @DELETE /api/workspaces/:workspaceId/invites/:email — revoke an invite (owner)
+const revokeInvite = asyncHandler(async (req, res) => {
+  if (req.workspaceRole !== "owner") {
+    res.status(403);
+    throw new Error("Only owners can revoke invites");
+  }
+  const email = decodeURIComponent(req.params.email || "").toLowerCase();
+  req.workspace.pendingInvites = (req.workspace.pendingInvites || []).filter(
+    (i) => i.email !== email,
+  );
+  await req.workspace.save();
+  res.json({ success: true, message: "Invite revoked" });
+});
+
+// @POST /api/workspaces/accept-invite — the invited (logged-in) user joins.
+// Body: { token, workspaceId }. Requires auth (they must have an account).
+const acceptInvite = asyncHandler(async (req, res) => {
+  const { token, workspaceId } = req.body;
+  if (!token || !workspaceId) {
+    res.status(400);
+    throw new Error("Invite token and workspace are required");
+  }
+
+  const Workspace = require("../models/Workspace");
+  const workspace = await Workspace.findById(workspaceId);
+  if (!workspace) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+
+  const th = hashToken(token);
+  const invite = (workspace.pendingInvites || []).find(
+    (i) => i.tokenHash === th,
+  );
+  if (!invite) {
+    res.status(400);
+    throw new Error("This invite is invalid or has already been used.");
+  }
+  if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) {
+    res.status(400);
+    throw new Error("This invite has expired. Ask the owner to resend it.");
+  }
+  // The signed-in user's email must match the invited email.
+  if (req.user.email.toLowerCase() !== invite.email) {
+    res.status(403);
+    throw new Error(
+      `This invite was sent to ${invite.email}. Sign in with that email to accept.`,
+    );
+  }
+
+  // Already a member? Just clear the invite.
+  const already =
+    workspace.owner.toString() === req.user._id.toString() ||
+    workspace.members.some((m) => m.user.toString() === req.user._id.toString());
+  if (!already) {
+    workspace.members.push({
+      user: req.user._id,
+      role: invite.role || "agent",
+      invitedAt: invite.invitedAt,
+      joinedAt: new Date(),
+    });
+  }
+  workspace.pendingInvites = workspace.pendingInvites.filter(
+    (i) => i.tokenHash !== th,
+  );
+  await workspace.save();
+
+  // Add the workspace to the user's list.
+  if (!req.user.workspaces?.some((w) => w.toString() === workspace._id.toString())) {
+    req.user.workspaces = [...(req.user.workspaces || []), workspace._id];
+    if (!req.user.activeWorkspace) req.user.activeWorkspace = workspace._id;
+    await req.user.save();
+  }
+
+  res.json({
+    success: true,
+    message: `You've joined ${workspace.name}!`,
+    workspaceId: workspace._id,
+  });
 });
 
 // @DELETE /api/workspaces/:workspaceId/members/:userId — Remove team member
@@ -789,6 +898,9 @@ module.exports = {
   getAutomationConfig,
   inviteMember,
   removeMember,
+  listInvites,
+  revokeInvite,
+  acceptInvite,
   completeOnboarding,
   updateOnboardingStep,
 };

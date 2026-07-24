@@ -40,6 +40,10 @@ router.use(protect);
 router.post("/", c.createWorkspace);
 router.get("/", c.getWorkspaces);
 
+// Accept a team invite — the invited user isn't a member yet, so this must sit
+// BEFORE the requireWorkspace guard (it only needs auth).
+router.post("/accept-invite", c.acceptInvite);
+
 router.use("/:workspaceId", requireWorkspace);
 router.get("/:workspaceId", c.getWorkspace);
 router.put("/:workspaceId", requireOwner, c.updateWorkspace);
@@ -79,6 +83,8 @@ router.put("/:workspaceId/smart-orders", requireOwner, c.updateSmartOrders);
 router.post("/:workspaceId/members/invite", requireOwner, c.inviteMember);
 router.delete("/:workspaceId/members/:userId", requireOwner, c.removeMember);
 router.post("/:workspaceId/invite", requireOwner, c.inviteMember);
+router.get("/:workspaceId/invites", requireOwner, c.listInvites);
+router.delete("/:workspaceId/invites/:email", requireOwner, c.revokeInvite);
 router.post("/:workspaceId/complete-onboarding", c.completeOnboarding);
 router.patch("/:workspaceId/onboarding-step", c.updateOnboardingStep);
 

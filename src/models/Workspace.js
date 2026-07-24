@@ -104,6 +104,18 @@ const workspaceSchema = new mongoose.Schema(
       },
     ],
 
+    // Outstanding team invites (email + hashed token) until accepted/revoked.
+    pendingInvites: [
+      {
+        email: { type: String, lowercase: true, trim: true },
+        role: { type: String, enum: ["owner", "agent"], default: "agent" },
+        tokenHash: String,
+        invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        invitedAt: { type: Date, default: Date.now },
+        expiresAt: Date,
+      },
+    ],
+
     // Instagram connection
     instagram: instagramConnectionSchema,
 
