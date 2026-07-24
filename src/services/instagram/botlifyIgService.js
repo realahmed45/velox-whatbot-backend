@@ -371,6 +371,9 @@ const publishPost = async (
       platforms: [{ platform: "instagram", accountId }],
       content: caption,
       mediaItems: [{ type: "image", url: imageUrl }],
+      // Required by Zernio to actually publish now — without it the post is
+      // created as a DRAFT and never reaches Instagram.
+      publishNow: true,
     });
     return { success: true, mediaId: data.id || data.postId };
   } catch (err) {
@@ -392,6 +395,7 @@ const publishStory = async (accountIdOrToken, _igUserId, imageUrl) => {
       platforms: [{ platform: "instagram", accountId }],
       contentType: "story",
       mediaItems: [{ type: "image", url: imageUrl }],
+      publishNow: true,
     });
     return { success: true, mediaId: data.id || data.postId };
   } catch (err) {

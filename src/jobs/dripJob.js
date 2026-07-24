@@ -68,7 +68,44 @@ const processDripEnrollments = async () => {
       }
 
       const text = personalize(step.message, contact);
-      await sendDM(token, contact.igUserId, text);
+      const sendResult = await sendDM(token, contact.igUserId, text);
+
+      // If the send failed, DO NOT advance the step — otherwise the message is
+      // silently skipped (this is what dropped "middle" drip messages). Retry:
+      //  - rate limit → back off 30 min
+      //  - 24h window / other → back off 1 hour, up to a few attempts
+      if (!sendResult || sendResult.success === false) {
+        enrollment.attempts = (enrollment.attempts || 0) + 1;
+        enrollment.lastError = sendResult?.error || "send failed";
+        if (enrollment.attempts >= 5) {
+          // Give up on this step after repeated failures; move on so the
+          // sequence isn't stuck forever (e.g. contact permanently unreachable).
+          logger.warn(
+            `[drip] enrollment ${enrollment._id} step ${enrollment.currentStep} giving up after ${enrollment.attempts} attempts: ${enrollment.lastError}`,
+          );
+          enrollment.currentStep += 1;
+          const skipNext = campaign.steps[enrollment.currentStep];
+          if (!skipNext) {
+            enrollment.status = "completed";
+            enrollment.nextRunAt = null;
+          } else {
+            enrollment.attempts = 0;
+            enrollment.nextRunAt = new Date(
+              Date.now() + (skipNext.delayMinutes || 0) * 60 * 1000,
+            );
+          }
+          await enrollment.save();
+          continue;
+        }
+        enrollment.nextRunAt = new Date(
+          Date.now() + (sendResult?.rateLimited ? 30 : 60) * 60 * 1000,
+        );
+        await enrollment.save();
+        logger.warn(
+          `[drip] enrollment ${enrollment._id} step ${enrollment.currentStep} send failed (attempt ${enrollment.attempts}), retrying: ${enrollment.lastError}`,
+        );
+        continue;
+      }
 
       // Log the outbound message
       const conv = await Conversation.findOneAndUpdate(
@@ -103,8 +140,9 @@ const processDripEnrollments = async () => {
         },
       });
 
-      // Advance
+      // Advance (send succeeded).
       enrollment.currentStep += 1;
+      enrollment.attempts = 0;
       const nextStep = campaign.steps[enrollment.currentStep];
       if (!nextStep) {
         enrollment.status = "completed";

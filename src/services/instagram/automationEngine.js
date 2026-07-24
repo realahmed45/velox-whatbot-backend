@@ -379,6 +379,16 @@ const sendAndLog = async ({
   logger.info(
     `[Bot] ${triggerType} → @${contact.igUsername || contact.username} (ws=${workspace._id})`,
   );
+
+  // Outbound webhook: a bot reply actually went out.
+  if (!simulate && result.success) {
+    dispatchEvent(workspace._id, "dm.sent", {
+      contactId: contact._id,
+      igUsername: contact.igUsername,
+      text: finalText,
+      triggerType,
+    }).catch(() => {});
+  }
   return { success: result.success };
 };
 
@@ -783,6 +793,19 @@ const handleAIReply = async (workspace, contact, conv, text) => {
       handoff: !!escalate,
       lead: isLead,
     }).catch(() => {});
+
+    // Outbound webhook: a new lead (email/phone captured in the DM).
+    if (isLead) {
+      const email = (text.match(EMAIL_RE) || [])[0] || null;
+      const phone = (text.match(PHONE_RE) || [])[0] || null;
+      dispatchEvent(workspace._id, "lead.created", {
+        contactId: contact._id,
+        igUsername: contact.igUsername,
+        name: contact.name,
+        email,
+        phone,
+      }).catch(() => {});
+    }
   }
 
   // Smart Orders — strip the hidden order block before sending

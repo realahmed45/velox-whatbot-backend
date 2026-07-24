@@ -65,6 +65,7 @@ const enrollmentSchema = new mongoose.Schema(
       index: true,
     },
     currentStep: { type: Number, default: 0 },
+    attempts: { type: Number, default: 0 }, // retries for the current step
     nextRunAt: { type: Date, index: true },
     status: {
       type: String,
