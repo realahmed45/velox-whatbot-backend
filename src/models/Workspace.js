@@ -4,6 +4,8 @@ const businessHoursSchema = new mongoose.Schema(
   {
     day: {
       type: String,
+      // Accept both full names and the UI's short keys so existing data (and
+      // any workspace.save() that re-validates it) never fails validation.
       enum: [
         "monday",
         "tuesday",
@@ -12,6 +14,13 @@ const businessHoursSchema = new mongoose.Schema(
         "friday",
         "saturday",
         "sunday",
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri",
+        "sat",
+        "sun",
       ],
     },
     isOpen: { type: Boolean, default: true },
