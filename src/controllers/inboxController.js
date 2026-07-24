@@ -17,7 +17,10 @@ const getConversations = asyncHandler(async (req, res) => {
   }
 
   let query = Conversation.find(filter)
-    .populate("contactId", "name phone tags")
+    .populate(
+      "contactId",
+      "name username igUsername igUserId phone tags avatar profilePicUrl",
+    )
     .populate("assignedTo", "name avatar")
     .sort({ lastMessageAt: -1 })
     .limit(parseInt(limit))
@@ -28,23 +31,52 @@ const getConversations = asyncHandler(async (req, res) => {
     Conversation.countDocuments(filter),
   ]);
 
-  // Search by contact name/phone
+  // Search by name/username/phone
   let results = conversations;
   if (search) {
     const s = search.toLowerCase();
     results = conversations.filter((c) => {
-      const contact = c.contactId;
+      const ct = c.contactId;
       return (
-        contact?.phone?.includes(s) ||
-        contact?.name?.toLowerCase().includes(s) ||
+        ct?.phone?.includes(s) ||
+        ct?.name?.toLowerCase().includes(s) ||
+        ct?.igUsername?.toLowerCase().includes(s) ||
+        ct?.username?.toLowerCase().includes(s) ||
         c.lastMessagePreview?.toLowerCase().includes(s)
       );
     });
   }
 
+  // Normalize each conversation so the client always gets a `contact` object
+  // with a resolved display name + username (the frontend reads `conv.contact`,
+  // and IG contacts often have only a username, not a name).
+  const shaped = results.map((c) => {
+    const obj = c.toObject();
+    const ct = obj.contactId || {};
+    const displayName =
+      ct.name ||
+      ct.igUsername ||
+      ct.username ||
+      obj.participantName ||
+      obj.participantUsername ||
+      "Instagram user";
+    obj.contact = {
+      _id: ct._id,
+      name: displayName,
+      username: ct.igUsername || ct.username || obj.participantUsername || "",
+      avatar: ct.avatar || ct.profilePicUrl || "",
+      tags: ct.tags || [],
+      igUserId: ct.igUserId,
+    };
+    obj.lastMessage = obj.lastMessage || {
+      text: obj.lastMessagePreview || "",
+    };
+    return obj;
+  });
+
   res.json({
     success: true,
-    conversations: results,
+    conversations: shaped,
     total,
     page: parseInt(page),
   });
