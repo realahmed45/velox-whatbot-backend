@@ -1449,6 +1449,54 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     ) {
       continue;
     }
+    // ── Scheduled-post publish outcome ───────────────────────────────────────
+    // We optimistically mark posts "published" when Zernio ACCEPTS them, but
+    // Zernio publishes asynchronously and reports the true result here. Reconcile
+    // the real status so the UI never shows a false "Published".
+    if (evtType && evtType.startsWith("post.")) {
+      try {
+        const ScheduledPost = require("../models/ScheduledPost");
+        const providerId =
+          evt.post?.id ||
+          evt.postId ||
+          evt.data?.post?.id ||
+          evt.data?.postId ||
+          evt.id ||
+          null;
+        const failed =
+          evtType === "post.failed" || evtType === "post.platform.failed";
+        const published =
+          evtType === "post.published" ||
+          evtType === "post.platform.published";
+        if (providerId && (failed || published)) {
+          const sp = await ScheduledPost.findOne({
+            workspaceId: target._id,
+            publishedPostId: String(providerId),
+          });
+          if (sp) {
+            if (failed) {
+              sp.status = "failed";
+              sp.errorMessage =
+                evt.error?.message ||
+                evt.reason ||
+                evt.data?.error ||
+                "Instagram rejected this post";
+            } else {
+              sp.status = "published";
+              sp.publishedAt = new Date();
+            }
+            await sp.save();
+            logger.info(
+              `[BotlifyIG webhook] scheduled post ${sp._id} → ${sp.status} (${evtType})`,
+            );
+          }
+        }
+      } catch (e) {
+        logger.warn(`[BotlifyIG webhook] post.* handling failed: ${e.message}`);
+      }
+      continue;
+    }
+
     if (
       evtType === "message.sent" ||
       evtType === "message.delivered" ||
@@ -1456,7 +1504,6 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       evtType === "message.failed" ||
       evtType === "message.edited" ||
       evtType === "message.deleted" ||
-      evtType?.startsWith("post.") ||
       evtType?.startsWith("review.")
     ) {
       continue;

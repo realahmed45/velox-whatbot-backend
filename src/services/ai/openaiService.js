@@ -18,6 +18,35 @@ const getClient = () => {
   }
 };
 
+// Groq fallback (same as the bot). Groq is OpenAI-API compatible, so we reuse
+// the OpenAI SDK pointed at Groq's endpoint. Utilities like hashtag research and
+// caption generation use this so they work whenever a GROQ_API_KEY is set even
+// if no OpenAI key is configured.
+let groqClient = null;
+const getGroqClient = () => {
+  if (groqClient) return groqClient;
+  if (!process.env.GROQ_API_KEY) return null;
+  try {
+    const OpenAI = require("openai");
+    groqClient = new OpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      baseURL: "https://api.groq.com/openai/v1",
+    });
+    return groqClient;
+  } catch {
+    return null;
+  }
+};
+
+// Prefer OpenAI; fall back to Groq. Returns { client, model } or null.
+const getUtilityClient = () => {
+  const oa = getClient();
+  if (oa) return { client: oa, model: "gpt-4o-mini" };
+  const gq = getGroqClient();
+  if (gq) return { client: gq, model: "llama-3.3-70b-versatile" };
+  return null;
+};
+
 /**
  * Generate an AI reply for a conversation.
  * @param {Object} opts
@@ -127,8 +156,8 @@ const generateCaption = async ({
   count = 3,
   language = "en",
 }) => {
-  const client = getClient();
-  if (!client) {
+  const svc = getUtilityClient();
+  if (!svc) {
     return {
       captions: [
         {
@@ -139,6 +168,7 @@ const generateCaption = async ({
       tokens: 0,
     };
   }
+  const { client, model } = svc;
 
   const langInstr =
     language === "ur"
@@ -163,7 +193,7 @@ Return as JSON: { "captions": [ { "text": "...", "hashtags": ["#tag1", "#tag2"] 
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       messages: [
         {
           role: "system",
@@ -319,17 +349,15 @@ const moderateComment = async (text, competitorNames = []) => {
  * Returns hashtags grouped by size: big (>1M), medium (100K-1M), niche (<100K).
  */
 const researchHashtags = async ({ topic, language = "en", count = 30 }) => {
-  const client = getClient();
-  if (!client || !topic) {
+  const svc = getUtilityClient();
+  if (!svc || !topic) {
     return {
-      hashtags: {
-        big: [],
-        medium: [],
-        niche: [],
-      },
+      hashtags: { big: [], medium: [], niche: [] },
       tokens: 0,
+      provider: "none",
     };
   }
+  const { client, model } = svc;
 
   try {
     const prompt = `Generate ${count} relevant Instagram hashtags for the topic: "${topic}".
@@ -343,7 +371,7 @@ Language: ${language === "ur" ? "Roman Urdu / English mix for Pakistani audience
 Return JSON: { "hashtags": { "big": ["#tag1",...], "medium": ["#tag2",...], "niche": ["#tag3",...] } }`;
 
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       messages: [
         {
           role: "system",

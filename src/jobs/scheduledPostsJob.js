@@ -12,6 +12,18 @@ const processScheduledPosts = async () => {
   const now = new Date();
 
   try {
+    // Fallback: posts accepted by the provider but never confirmed via a
+    // post.published/post.failed webhook within 10 minutes are promoted to
+    // "published" so they don't sit in "publishing" forever. (Zernio almost
+    // always publishes; a missing webhook shouldn't strand the post.)
+    await ScheduledPost.updateMany(
+      {
+        status: "publishing",
+        submittedAt: { $lte: new Date(now.getTime() - 10 * 60 * 1000) },
+      },
+      { $set: { status: "published", publishedAt: now } },
+    );
+
     // Find all posts that are:
     // - status: pending
     // - scheduledTime <= now (overdue or exactly on time)
@@ -66,12 +78,16 @@ const processScheduledPosts = async () => {
               );
 
         if (result.success) {
-          post.status = "published";
-          post.publishedAt = new Date();
+          // Zernio ACCEPTED the post but publishes to Instagram asynchronously.
+          // Mark it "publishing" (queued) and let the post.published / post.failed
+          // webhook flip it to the real final status. If no webhook arrives, a
+          // sweep below promotes long-pending ones to published as a fallback.
+          post.status = "publishing";
           post.publishedPostId = result.mediaId;
+          post.submittedAt = new Date();
           await post.save();
           logger.info(
-            `[ScheduledPosts] Post ${post._id} published successfully: ${result.mediaId}`,
+            `[ScheduledPosts] Post ${post._id} accepted by provider (queued): ${result.mediaId}`,
           );
 
           // If this was a recurring post, schedule the next occurrence

@@ -40,6 +40,7 @@ const scheduledPostSchema = new mongoose.Schema(
       index: true,
     },
     publishedAt: Date,
+    submittedAt: Date, // when we handed it to the provider (queued)
     publishedPostId: String, // Instagram media ID after successful publish
     errorMessage: String,
 

@@ -322,6 +322,11 @@ const subscribeWebhook = async (accountIdOrToken, webhookUrl) => {
       "conversation.started",
       "comment.received",
       "reaction.received",
+      // Scheduled-post publish outcomes — so we can reconcile the real status.
+      "post.published",
+      "post.failed",
+      "post.platform.published",
+      "post.platform.failed",
     ],
   });
   return data;
