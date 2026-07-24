@@ -430,6 +430,14 @@ const handlePostComment = async (
     triggerType: TRIGGERS.POST_COMMENT,
     keyword: matched.keyword,
   });
+
+  // Outbound webhook so user integrations receive comment events.
+  dispatchEvent(workspace._id, "comment.received", {
+    contactId: contact._id,
+    igUsername: contact.igUsername,
+    text: commentText,
+    keyword: matched.keyword,
+  }).catch(() => {});
 };
 
 const handleDMKeyword = async (workspace, contact, conv, text) => {
@@ -1219,6 +1227,16 @@ const executeFlow = async (flow, startNode, ctx) => {
     { _id: flow._id },
     { $inc: { "stats.completions": 1 } },
   ).catch(() => {});
+
+  // Outbound webhook so user integrations receive flow completions.
+  if (ctx.workspace?._id && ctx.contact?._id) {
+    dispatchEvent(ctx.workspace._id, "flow.completed", {
+      flowId: String(flow._id),
+      flowName: flow.name,
+      contactId: ctx.contact._id,
+      igUsername: ctx.contact.igUsername,
+    }).catch(() => {});
+  }
 };
 
 // Resume a multi-step flow that was waiting for the contact's reply.
@@ -1574,10 +1592,11 @@ const handleWebhookEvent = async (workspaceId, event) => {
         // Try to enroll contact into a matching drip campaign
         tryEnrollDripByKeyword(workspace, contact, text).catch(() => {});
 
-        // Fire outbound webhook: message.inbound
-        dispatchEvent(workspace._id, "message.inbound", {
+        // Fire outbound webhook (canonical UI event key so user webhooks match).
+        dispatchEvent(workspace._id, "dm.received", {
           contactId: contact._id,
           igUsername: contact.igUsername,
+          name: contact.name,
           text,
           type,
         }).catch(() => {});
