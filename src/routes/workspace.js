@@ -5,6 +5,7 @@ const {
   requireWorkspace,
   requireOwner,
 } = require("../middleware/auth");
+const { verifyTurnstile } = require("../middleware/turnstile");
 const { requireFeature } = require("../middleware/planGate");
 const { FEATURES } = require("../config/plans");
 const c = require("../controllers/workspaceController");
@@ -34,6 +35,12 @@ const docUpload = multer({
     );
   },
 });
+
+// ─── Public invite endpoints (no auth) ─────────────────────
+// Show invite details on the Join screen, and let a brand-new invitee create
+// their account + join in one step.
+router.get("/invite-info", c.getInviteInfo);
+router.post("/invite-signup", verifyTurnstile, c.registerAndAcceptInvite);
 
 router.use(protect);
 

@@ -4,6 +4,8 @@ const User = require("../models/User");
 const { encrypt, decrypt } = require("../utils/encryption");
 const { sendTeamInviteEmail } = require("../services/emailService");
 const { generateToken, hashToken } = require("../utils/crypto");
+const { generateAccessToken, generateRefreshToken } = require("../utils/jwt");
+const { validatePassword } = require("../utils/passwordPolicy");
 const {
   PERMISSION_LIST,
   DEFAULT_AGENT_PERMISSIONS,
@@ -279,6 +281,137 @@ const acceptInvite = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: `You've joined ${workspace.name}!`,
+    workspaceId: workspace._id,
+  });
+});
+
+// @GET /api/workspaces/invite-info?token=&workspace= — public.
+// Lets the Join screen show the workspace name + invited email (locked) without
+// requiring the visitor to be signed in first.
+const getInviteInfo = asyncHandler(async (req, res) => {
+  const { token, workspace: workspaceId } = req.query;
+  if (!token || !workspaceId) {
+    res.status(400);
+    throw new Error("Invite token and workspace are required");
+  }
+  const workspace = await Workspace.findById(workspaceId).populate(
+    "owner",
+    "name email",
+  );
+  if (!workspace) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const th = hashToken(token);
+  const invite = (workspace.pendingInvites || []).find(
+    (i) => i.tokenHash === th,
+  );
+  if (!invite) {
+    res.status(400);
+    throw new Error("This invite is invalid or has already been used.");
+  }
+  const expired = invite.expiresAt && invite.expiresAt.getTime() < Date.now();
+
+  // Does an account already exist for the invited email? Drives whether the
+  // Join screen shows "sign in" vs "create account".
+  const existingUser = await User.exists({
+    email: invite.email.toLowerCase(),
+  });
+
+  res.json({
+    success: true,
+    workspaceName: workspace.name,
+    ownerName: workspace.owner?.name || null,
+    email: invite.email,
+    role: invite.role || "agent",
+    expired,
+    hasAccount: !!existingUser,
+  });
+});
+
+// @POST /api/workspaces/invite-signup — public.
+// Creates a brand-new account for the invited email AND joins the workspace in
+// one step (or joins an existing verified account if the caller already has
+// one — but that path normally goes through /accept-invite). Requires the
+// standard password policy. Returns auth tokens so the client logs straight in.
+const registerAndAcceptInvite = asyncHandler(async (req, res) => {
+  const { token, workspaceId, name, password } = req.body;
+  if (!token || !workspaceId || !name || !password) {
+    res.status(400);
+    throw new Error("Name, password, token and workspace are required");
+  }
+
+  const workspace = await Workspace.findById(workspaceId);
+  if (!workspace) {
+    res.status(404);
+    throw new Error("Workspace not found");
+  }
+  const th = hashToken(token);
+  const invite = (workspace.pendingInvites || []).find(
+    (i) => i.tokenHash === th,
+  );
+  if (!invite) {
+    res.status(400);
+    throw new Error("This invite is invalid or has already been used.");
+  }
+  if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) {
+    res.status(400);
+    throw new Error("This invite has expired. Ask the owner to resend it.");
+  }
+
+  const email = invite.email.toLowerCase();
+
+  // If an account already exists for this email, don't silently overwrite it —
+  // send them to the login flow instead.
+  const existing = await User.findOne({ email });
+  if (existing) {
+    res.status(409);
+    throw new Error(
+      "An account already exists for this email. Please sign in to accept the invite.",
+    );
+  }
+
+  const pwCheck = validatePassword(password, { email, name });
+  if (!pwCheck.ok) {
+    res.status(400);
+    throw new Error(pwCheck.message);
+  }
+
+  // Create the account. Invited emails are considered verified — the owner
+  // vouched for them and the invite went to that inbox.
+  const user = await User.create({
+    name,
+    email,
+    password,
+    isEmailVerified: true,
+  });
+
+  // Join the inviting workspace as a member with the granted permissions.
+  workspace.members.push({
+    user: user._id,
+    role: invite.role || "agent",
+    permissions: sanitizePermissions(invite.permissions),
+    invitedAt: invite.invitedAt,
+    joinedAt: new Date(),
+  });
+  workspace.pendingInvites = workspace.pendingInvites.filter(
+    (i) => i.tokenHash !== th,
+  );
+  await workspace.save();
+
+  user.workspaces = [workspace._id];
+  user.activeWorkspace = workspace._id;
+  await user.save();
+
+  const accessToken = generateAccessToken(user._id);
+  const refreshTokenValue = generateRefreshToken(user._id);
+
+  res.status(201).json({
+    success: true,
+    message: `Welcome to ${workspace.name}!`,
+    token: accessToken,
+    refreshToken: refreshTokenValue,
+    user,
     workspaceId: workspace._id,
   });
 });
@@ -966,6 +1099,8 @@ module.exports = {
   listInvites,
   revokeInvite,
   acceptInvite,
+  getInviteInfo,
+  registerAndAcceptInvite,
   getPermissionCatalogue,
   updateMemberPermissions,
   completeOnboarding,

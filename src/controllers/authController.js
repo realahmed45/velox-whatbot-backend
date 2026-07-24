@@ -8,6 +8,7 @@ const {
   verifyRefreshToken,
 } = require("../utils/jwt");
 const { generateToken, hashToken } = require("../utils/crypto");
+const { validatePassword } = require("../utils/passwordPolicy");
 const {
   sendVerificationEmail,
   sendPasswordResetEmail,
@@ -29,9 +30,10 @@ const register = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Name, email, and password are required");
   }
-  if (password.length < 8) {
+  const pwCheck = validatePassword(password, { email, name });
+  if (!pwCheck.ok) {
     res.status(400);
-    throw new Error("Password must be at least 8 characters");
+    throw new Error(pwCheck.message);
   }
 
   const existing = await User.findOne({ email });
@@ -179,9 +181,10 @@ const resetPassword = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Token and new password required");
   }
-  if (password.length < 8) {
+  const pwCheck = validatePassword(password);
+  if (!pwCheck.ok) {
     res.status(400);
-    throw new Error("Password must be at least 8 characters");
+    throw new Error(pwCheck.message);
   }
 
   const hashedToken = hashToken(token);
@@ -274,11 +277,96 @@ const resendVerificationCode = asyncHandler(async (req, res) => {
 
 // @GET /api/auth/me
 const getMe = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).populate(
-    "activeWorkspace",
-    "name industry subscription usage instagram",
-  );
-  res.json({ success: true, user });
+  const user = await User.findById(req.user._id)
+    .select("+password")
+    .populate("activeWorkspace", "name industry subscription usage instagram");
+  const obj = user.toJSON();
+  // Tell the client whether a password is set (Google-only accounts have none),
+  // so the Security settings can offer "Set password" vs "Change password".
+  obj.hasPassword = !!user.password;
+  obj.hasGoogle = !!user.googleId;
+  res.json({ success: true, user: obj });
+});
+
+// @PUT /api/auth/password — change password (requires current password)
+const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!newPassword) {
+    res.status(400);
+    throw new Error("New password is required");
+  }
+
+  const user = await User.findById(req.user._id).select("+password");
+  if (!user) {
+    res.status(404);
+    throw new Error("Account not found");
+  }
+
+  // Security check: verify the current password before allowing a change.
+  if (user.password) {
+    if (!currentPassword) {
+      res.status(400);
+      throw new Error("Enter your current password to change it.");
+    }
+    const match = await user.comparePassword(currentPassword);
+    if (!match) {
+      res.status(401);
+      throw new Error("Current password is incorrect.");
+    }
+  }
+
+  const pwCheck = validatePassword(newPassword, {
+    email: user.email,
+    name: user.name,
+  });
+  if (!pwCheck.ok) {
+    res.status(400);
+    throw new Error(pwCheck.message);
+  }
+
+  // Reject "changing" to the same password.
+  if (user.password && (await user.comparePassword(newPassword))) {
+    res.status(400);
+    throw new Error("New password must be different from the current one.");
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  res.json({ success: true, message: "Password updated successfully." });
+});
+
+// @POST /api/auth/set-password — first-time password for Google-only accounts.
+// No current password exists, so we gate on the authenticated + verified session.
+const setPassword = asyncHandler(async (req, res) => {
+  const { newPassword } = req.body;
+  const user = await User.findById(req.user._id).select("+password");
+  if (!user) {
+    res.status(404);
+    throw new Error("Account not found");
+  }
+  if (user.password) {
+    res.status(400);
+    throw new Error(
+      "You already have a password. Use change password instead.",
+    );
+  }
+  const pwCheck = validatePassword(newPassword, {
+    email: user.email,
+    name: user.name,
+  });
+  if (!pwCheck.ok) {
+    res.status(400);
+    throw new Error(pwCheck.message);
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  res.json({
+    success: true,
+    message: "Password set. You can now sign in with your email and password.",
+  });
 });
 
 // @POST /api/auth/google
@@ -391,4 +479,6 @@ module.exports = {
   resendVerificationCode,
   getMe,
   googleAuth,
+  changePassword,
+  setPassword,
 };

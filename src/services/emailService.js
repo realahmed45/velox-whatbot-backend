@@ -7,6 +7,8 @@ const logger = require("../utils/logger");
 const BREVO_API_KEY = process.env.BREVO_API_KEY; // NEVER hardcode — set in .env
 const FROM_EMAIL = process.env.FROM_EMAIL || "realahmedali4@gmail.com";
 const FROM_NAME = "Botlify";
+// Where user replies to our emails should land.
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "botlify.support@gmail.com";
 
 logger.info("Email service init", {
   BREVO_API_KEY: BREVO_API_KEY
@@ -19,6 +21,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
     const toAddr = Array.isArray(to) ? to : [to];
     const payload = {
       sender: { name: FROM_NAME, email: FROM_EMAIL },
+      replyTo: { name: `${FROM_NAME} Support`, email: SUPPORT_EMAIL },
       to: toAddr.map((email) => ({ email })),
       subject,
       htmlContent: html || `<p>${text}</p>`,
