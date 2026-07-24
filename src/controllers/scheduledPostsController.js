@@ -175,32 +175,66 @@ exports.aiCaption = asyncHandler(async (req, res) => {
  * DELETE /api/scheduled-posts/:id
  * Cancel a scheduled post
  */
+// DELETE /api/scheduled-posts/:id — remove a post entirely.
+// Works for ANY status: pending/publishing posts are cancelled-and-removed,
+// published posts are removed from the list too (only deletes our record — it
+// does NOT unpublish from Instagram, which isn't possible via the API).
 exports.cancelScheduledPost = asyncHandler(async (req, res) => {
-  const workspaceId = req.headers["x-workspace-id"];
+  const workspaceId = req.workspace?._id || req.headers["x-workspace-id"];
   const { id } = req.params;
 
-  const post = await ScheduledPost.findOne({
-    _id: id,
-    workspaceId,
-  });
-
+  const post = await ScheduledPost.findOneAndDelete({ _id: id, workspaceId });
   if (!post) {
     return res.status(404).json({ message: "Scheduled post not found" });
   }
 
-  if (post.status === "published") {
-    return res
-      .status(400)
-      .json({ message: "Cannot cancel a post that's already published" });
-  }
-
-  post.status = "cancelled";
-  await post.save();
-
   res.json({
     success: true,
-    message: "Scheduled post cancelled",
+    message:
+      post.status === "published"
+        ? "Removed from your list (the live Instagram post is unaffected)"
+        : "Scheduled post deleted",
   });
+});
+
+// PUT /api/scheduled-posts/:id — edit a post that hasn't gone out yet.
+exports.updateScheduledPost = asyncHandler(async (req, res) => {
+  const workspaceId = req.workspace?._id || req.headers["x-workspace-id"];
+  const { id } = req.params;
+  const { imageUrl, caption, postType, scheduledTime } = req.body;
+
+  const post = await ScheduledPost.findOne({ _id: id, workspaceId });
+  if (!post) {
+    return res.status(404).json({ message: "Scheduled post not found" });
+  }
+
+  // Only editable before it's handed to Instagram.
+  if (!["pending", "failed"].includes(post.status)) {
+    return res.status(400).json({
+      message: `Can't edit a ${post.status} post. Delete it and create a new one instead.`,
+    });
+  }
+
+  if (imageUrl !== undefined) post.imageUrl = imageUrl;
+  if (caption !== undefined) post.caption = caption;
+  if (postType !== undefined) post.postType = postType;
+  if (scheduledTime !== undefined) {
+    const when = new Date(scheduledTime);
+    if (isNaN(when.getTime()) || when.getTime() < Date.now() + 60 * 1000) {
+      return res
+        .status(400)
+        .json({ message: "Publish time must be at least a minute from now" });
+    }
+    post.scheduledTime = when;
+  }
+  // Re-editing a failed post gives it another shot.
+  if (post.status === "failed") {
+    post.status = "pending";
+    post.errorMessage = undefined;
+  }
+  await post.save();
+
+  res.json({ success: true, post });
 });
 
 /**

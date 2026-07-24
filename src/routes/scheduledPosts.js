@@ -10,6 +10,7 @@ router.post("/", c.createScheduledPost);
 router.post("/bulk", c.bulkCreate);
 router.post("/ai-caption", c.aiCaption);
 router.get("/smart-timing", c.getSmartTiming);
+router.put("/:id", c.updateScheduledPost);
 router.delete("/:id", c.cancelScheduledPost);
 
 module.exports = router;
