@@ -65,6 +65,12 @@ const getWorkspaces = asyncHandler(async (req, res) => {
 
 // @GET /api/workspaces/:workspaceId — Get single workspace
 const getWorkspace = asyncHandler(async (req, res) => {
+  // Populate people so the Team page can show names/emails/avatars instead of
+  // raw ids (the requireWorkspace middleware loads the doc without populating).
+  await req.workspace.populate([
+    { path: "owner", select: "name email avatar" },
+    { path: "members.user", select: "name email avatar" },
+  ]);
   res.json({ success: true, workspace: req.workspace });
 });
 
@@ -424,13 +430,37 @@ const getBusinessHours = asyncHandler(async (req, res) => {
     schedule: ws?.businessHours || [],
   });
 });
+// Map the UI's short day keys to the schema's full names (both accepted).
+const DAY_MAP = {
+  mon: "monday",
+  tue: "tuesday",
+  wed: "wednesday",
+  thu: "thursday",
+  fri: "friday",
+  sat: "saturday",
+  sun: "sunday",
+};
+const normalizeDay = (d) => {
+  const s = String(d || "").toLowerCase();
+  return DAY_MAP[s] || DAY_MAP[s.slice(0, 3)] || s;
+};
+
 const setBusinessHours = asyncHandler(async (req, res) => {
   const { enabled, timezone, schedule } = req.body || {};
   const update = {};
   if (enabled !== undefined)
     update["settings.businessHoursEnabled"] = !!enabled;
   if (timezone !== undefined) update.timezone = String(timezone);
-  if (Array.isArray(schedule)) update.businessHours = schedule;
+  if (Array.isArray(schedule)) {
+    update.businessHours = schedule.map((s) => ({
+      ...s,
+      day: normalizeDay(s.day),
+      // Accept the UI's {start,end} too, mapping to schema's open/close.
+      openTime: s.openTime || s.start || "09:00",
+      closeTime: s.closeTime || s.end || "18:00",
+      isOpen: s.isOpen !== undefined ? s.isOpen : s.enabled !== false,
+    }));
+  }
   const ws = await Workspace.findByIdAndUpdate(
     req.workspace._id,
     { $set: update },
