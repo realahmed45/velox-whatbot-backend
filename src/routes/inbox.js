@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { protect, requireWorkspace } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 const {
   getConversations,
   getMessages,
@@ -18,6 +22,7 @@ const {
 
 router.use(protect);
 router.use(requireWorkspace);
+router.use(requirePermission("inbox"));
 
 router.get("/", getConversations);
 router.get("/quick-replies", getQuickReplies);

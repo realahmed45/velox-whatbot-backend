@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { protect, requireWorkspace } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 const {
   getFlows,
   getFlow,
@@ -17,6 +21,7 @@ const {
 
 router.use(protect);
 router.use(requireWorkspace);
+router.use(requirePermission("automations"));
 
 router.get("/templates", getTemplates);
 router.post("/from-template", createFromTemplate);

@@ -64,14 +64,16 @@ const requireWorkspace = asyncHandler(async (req, res, next) => {
 
   req.workspace = workspace;
 
-  // Attach user role in this workspace
+  // Attach user role + granted permissions for this workspace.
   if (isOwner) {
     req.workspaceRole = "owner";
+    req.workspacePermissions = null; // owner => all permissions
   } else {
     const member = workspace.members.find(
       (m) => m.user.toString() === req.user._id.toString(),
     );
     req.workspaceRole = member?.role || "agent";
+    req.workspacePermissions = member?.permissions || [];
   }
 
   next();
@@ -86,4 +88,24 @@ const requireOwner = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, requireWorkspace, requireOwner };
+/**
+ * Gate a route on a permission. Owners always pass; agents must have the key
+ * in their granted permissions. Use AFTER requireWorkspace.
+ *   router.post("/x", requireWorkspace, requirePermission("automations"), h)
+ */
+const requirePermission = (permission) => (req, res, next) => {
+  if (req.workspaceRole === "owner") return next();
+  const perms = req.workspacePermissions || [];
+  if (perms.includes(permission)) return next();
+  res.status(403);
+  throw new Error(
+    "You don't have permission to do this. Ask the workspace owner for access.",
+  );
+};
+
+module.exports = {
+  protect,
+  requireWorkspace,
+  requireOwner,
+  requirePermission,
+};

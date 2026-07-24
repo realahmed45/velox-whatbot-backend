@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { protect, requireWorkspace } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 const {
   getContacts,
   getContact,
@@ -18,6 +22,7 @@ const {
 
 router.use(protect);
 router.use(requireWorkspace);
+router.use(requirePermission("contacts"));
 
 router.get("/export", exportContacts);
 router.post("/import", importContacts);

@@ -1,9 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const c = require("../controllers/scheduledPostsController");
-const { protect } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 
 router.use(protect);
+router.use(requireWorkspace);
+router.use(requirePermission("content"));
 
 router.get("/", c.getScheduledPosts);
 router.post("/", c.createScheduledPost);

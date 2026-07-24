@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { protect, requireWorkspace } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 const {
   getOverview,
   getMessagesOverTime,
@@ -12,6 +16,7 @@ const { getRoiReport } = require("../controllers/roiController");
 
 router.use(protect);
 router.use(requireWorkspace);
+router.use(requirePermission("analytics"));
 
 router.get("/overview", getOverview);
 router.get("/messages-over-time", getMessagesOverTime);

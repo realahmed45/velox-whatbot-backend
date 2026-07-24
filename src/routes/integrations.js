@@ -4,6 +4,7 @@ const {
   protect,
   requireWorkspace,
   requireOwner,
+  requirePermission,
 } = require("../middleware/auth");
 const c = require("../controllers/webhookIntegrationController");
 const ext = require("../controllers/integrationsExtController");
@@ -13,6 +14,7 @@ const shopifyOAuth = require("../controllers/shopifyOAuthController");
 router.get("/shopify/callback", shopifyOAuth.oauthCallback);
 
 router.use(protect, requireWorkspace);
+router.use(requirePermission("integrations"));
 
 // Shopify
 router.get("/shopify", ext.getShopify);

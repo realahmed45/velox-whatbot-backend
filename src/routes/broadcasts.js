@@ -1,7 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const asyncHandler = require("express-async-handler");
-const { protect, requireWorkspace } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 const BroadcastCampaign = require("../models/BroadcastCampaign");
 const Contact = require("../models/Contact");
 const ig = require("../services/instagram");
@@ -10,6 +14,7 @@ const Workspace = require("../models/Workspace");
 
 router.use(protect);
 router.use(requireWorkspace);
+router.use(requirePermission("broadcasts"));
 
 // @GET /api/broadcasts
 router.get(

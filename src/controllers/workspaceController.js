@@ -4,6 +4,11 @@ const User = require("../models/User");
 const { encrypt, decrypt } = require("../utils/encryption");
 const { sendTeamInviteEmail } = require("../services/emailService");
 const { generateToken, hashToken } = require("../utils/crypto");
+const {
+  PERMISSION_LIST,
+  DEFAULT_AGENT_PERMISSIONS,
+  sanitizePermissions,
+} = require("../config/permissions");
 const logger = require("../utils/logger");
 
 // @POST /api/workspaces — Create workspace
@@ -106,11 +111,15 @@ const inviteMember = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error("Only owners can invite members");
   }
-  const { email, role = "agent" } = req.body;
+  const { email, role = "agent", permissions } = req.body;
   if (!email) {
     res.status(400);
     throw new Error("Email required");
   }
+  const grantedPermissions =
+    sanitizePermissions(permissions).length > 0
+      ? sanitizePermissions(permissions)
+      : DEFAULT_AGENT_PERMISSIONS;
 
   const workspace = req.workspace;
   const normEmail = String(email).toLowerCase().trim();
@@ -137,6 +146,7 @@ const inviteMember = asyncHandler(async (req, res) => {
   workspace.pendingInvites.push({
     email: normEmail,
     role: role === "owner" ? "agent" : role, // never invite straight to owner
+    permissions: grantedPermissions,
     tokenHash: hashToken(inviteToken),
     invitedBy: req.user._id,
     invitedAt: new Date(),
@@ -144,7 +154,7 @@ const inviteMember = asyncHandler(async (req, res) => {
   });
   await workspace.save();
 
-  const inviteUrl = `${process.env.CLIENT_URL}/invite?token=${inviteToken}&workspace=${workspace._id}`;
+  const inviteUrl = `${process.env.CLIENT_URL}/invite?token=${inviteToken}&workspace=${workspace._id}&email=${encodeURIComponent(normEmail)}`;
   await sendTeamInviteEmail({
     to: normEmail,
     inviterName: req.user.name,
@@ -155,11 +165,35 @@ const inviteMember = asyncHandler(async (req, res) => {
   res.json({ success: true, message: `Invitation sent to ${normEmail}` });
 });
 
+// @GET /api/workspaces/permissions — the catalogue for the invite UI.
+const getPermissionCatalogue = asyncHandler(async (req, res) => {
+  res.json({ success: true, permissions: PERMISSION_LIST });
+});
+
+// @PUT /api/workspaces/:workspaceId/members/:userId/permissions (owner)
+const updateMemberPermissions = asyncHandler(async (req, res) => {
+  if (req.workspaceRole !== "owner") {
+    res.status(403);
+    throw new Error("Only owners can change permissions");
+  }
+  const member = req.workspace.members.find(
+    (m) => String(m.user) === String(req.params.userId),
+  );
+  if (!member) {
+    res.status(404);
+    throw new Error("Member not found");
+  }
+  member.permissions = sanitizePermissions(req.body.permissions);
+  await req.workspace.save();
+  res.json({ success: true, permissions: member.permissions });
+});
+
 // @GET /api/workspaces/:workspaceId/invites — list outstanding invites (owner)
 const listInvites = asyncHandler(async (req, res) => {
   const invites = (req.workspace.pendingInvites || []).map((i) => ({
     email: i.email,
     role: i.role,
+    permissions: i.permissions || [],
     invitedAt: i.invitedAt,
     expiresAt: i.expiresAt,
     expired: i.expiresAt && i.expiresAt.getTime() < Date.now(),
@@ -225,6 +259,7 @@ const acceptInvite = asyncHandler(async (req, res) => {
     workspace.members.push({
       user: req.user._id,
       role: invite.role || "agent",
+      permissions: sanitizePermissions(invite.permissions),
       invitedAt: invite.invitedAt,
       joinedAt: new Date(),
     });
@@ -931,6 +966,8 @@ module.exports = {
   listInvites,
   revokeInvite,
   acceptInvite,
+  getPermissionCatalogue,
+  updateMemberPermissions,
   completeOnboarding,
   updateOnboardingStep,
 };

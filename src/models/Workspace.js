@@ -108,6 +108,8 @@ const workspaceSchema = new mongoose.Schema(
       {
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         role: { type: String, enum: ["owner", "agent"], default: "agent" },
+        // Granted areas for agents (owners implicitly have all).
+        permissions: [{ type: String }],
         invitedAt: Date,
         joinedAt: Date,
       },
@@ -118,6 +120,7 @@ const workspaceSchema = new mongoose.Schema(
       {
         email: { type: String, lowercase: true, trim: true },
         role: { type: String, enum: ["owner", "agent"], default: "agent" },
+        permissions: [{ type: String }],
         tokenHash: String,
         invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         invitedAt: { type: Date, default: Date.now },

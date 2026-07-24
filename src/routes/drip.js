@@ -1,9 +1,15 @@
 const express = require("express");
 const router = express.Router();
-const { protect, requireWorkspace, requireOwner } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requireOwner,
+  requirePermission,
+} = require("../middleware/auth");
 const c = require("../controllers/dripController");
 
 router.use(protect, requireWorkspace);
+router.use(requirePermission("broadcasts"));
 
 router.get("/", c.list);
 router.post("/", requireOwner, c.create);
