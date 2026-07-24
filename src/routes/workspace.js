@@ -45,6 +45,7 @@ router.post("/invite-signup", verifyTurnstile, c.registerAndAcceptInvite);
 router.use(protect);
 
 router.post("/", c.createWorkspace);
+router.post("/ensure", c.ensureOwnWorkspace);
 router.get("/", c.getWorkspaces);
 
 // Accept a team invite — the invited user isn't a member yet, so this must sit

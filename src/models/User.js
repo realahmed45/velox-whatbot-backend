@@ -49,6 +49,12 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Referral code captured at signup, applied when the user creates their
+    // first (owned) workspace during onboarding. Cleared once used.
+    pendingRef: {
+      type: String,
+      select: false,
+    },
     onboardingStep: {
       type: Number,
       default: 0,

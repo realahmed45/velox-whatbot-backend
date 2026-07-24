@@ -13,53 +13,111 @@ const {
 } = require("../config/permissions");
 const logger = require("../utils/logger");
 
-// @POST /api/workspaces — Create workspace
-const createWorkspace = asyncHandler(async (req, res) => {
-  const {
+const DEFAULT_BUSINESS_HOURS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+].map((day) => ({
+  day,
+  isOpen: !["saturday", "sunday"].includes(day),
+  openTime: "09:00",
+  closeTime: "18:00",
+}));
+
+/**
+ * Apply a user's stashed referral code (captured at signup) to a freshly
+ * created workspace, then clear it so it's only ever used once. Best-effort:
+ * a bad/unknown code just no-ops.
+ */
+async function applyPendingReferral(userId, workspace) {
+  const u = await User.findById(userId).select("+pendingRef");
+  const code = u?.pendingRef;
+  if (!code) return;
+  try {
+    const referrer = await Workspace.findOne({ "referral.code": code });
+    if (referrer && String(referrer._id) !== String(workspace._id)) {
+      workspace.referral.referredBy = referrer._id;
+      await workspace.save();
+      await Workspace.updateOne(
+        { _id: referrer._id },
+        { $inc: { "referral.signups": 1 } },
+      );
+    }
+  } catch (err) {
+    logger.warn("[referral] apply failed", { err: err.message });
+  }
+  u.pendingRef = undefined;
+  await u.save();
+}
+
+/**
+ * Create a workspace OWNED by `user` and switch them into it. Adds the owner as
+ * a member[] too so permission checks and the Team page stay consistent.
+ */
+async function createOwnedWorkspace(user, { name, industry, logo, timezone }) {
+  const workspace = await Workspace.create({
     name,
-    industry: industryField,
-    businessType,
+    industry: industry || "other",
     logo,
-    businessHours,
-    timezone,
-  } = req.body;
+    businessHours: DEFAULT_BUSINESS_HOURS,
+    timezone: timezone || "Asia/Karachi",
+    owner: user._id,
+    members: [{ user: user._id, role: "owner" }],
+  });
+  await User.findByIdAndUpdate(user._id, {
+    $addToSet: { workspaces: workspace._id },
+    activeWorkspace: workspace._id,
+  });
+  await applyPendingReferral(user._id, workspace);
+  return workspace;
+}
+
+// @POST /api/workspaces — Create workspace (deliberate, during onboarding)
+const createWorkspace = asyncHandler(async (req, res) => {
+  const { name, industry: industryField, businessType, logo, timezone } =
+    req.body;
   const industry = industryField || businessType;
-  if (!name || !industry) {
+  if (!name) {
     res.status(400);
-    throw new Error("Workspace name and industry are required");
+    throw new Error("Workspace name is required");
   }
 
-  const defaultHours = [
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-    "sunday",
-  ].map((day) => ({
-    day,
-    isOpen: !["saturday", "sunday"].includes(day),
-    openTime: "09:00",
-    closeTime: "18:00",
-  }));
-
-  const workspace = await Workspace.create({
+  const workspace = await createOwnedWorkspace(req.user, {
     name,
     industry,
     logo,
-    businessHours: businessHours || defaultHours,
-    timezone: timezone || "Asia/Karachi",
-    owner: req.user._id,
-  });
-
-  // Add workspace to user
-  await User.findByIdAndUpdate(req.user._id, {
-    $push: { workspaces: workspace._id },
-    activeWorkspace: workspace._id,
+    timezone,
   });
 
   res.status(201).json({ success: true, workspace });
+});
+
+// @POST /api/workspaces/ensure — idempotent: return the user's owned workspace,
+// creating a default one if they don't have any yet. Called at the start of
+// onboarding so the flow always has a workspace to attach Instagram to, WITHOUT
+// creating one at signup (agents who only join others never hit this).
+const ensureOwnWorkspace = asyncHandler(async (req, res) => {
+  let workspace = await Workspace.findOne({ owner: req.user._id });
+  let created = false;
+  if (!workspace) {
+    workspace = await createOwnedWorkspace(req.user, {
+      name: (req.body?.name || "").trim() || `${req.user.name}'s Workspace`,
+      industry: req.body?.industry,
+    });
+    created = true;
+  } else if (
+    String(req.user.activeWorkspace || "") !== String(workspace._id)
+  ) {
+    // Make sure it's their active workspace.
+    await User.findByIdAndUpdate(req.user._id, {
+      activeWorkspace: workspace._id,
+    });
+  }
+  res.status(created ? 201 : 200).json({ success: true, workspace, created });
 });
 
 // @GET /api/workspaces — List user's workspaces
@@ -1094,6 +1152,7 @@ const updateSmartOrders = asyncHandler(async (req, res) => {
 
 module.exports = {
   createWorkspace,
+  ensureOwnWorkspace,
   getWorkspaces,
   getWorkspace,
   updateWorkspace,

@@ -1,7 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const crypto = require("crypto");
 const User = require("../models/User");
-const Workspace = require("../models/Workspace");
 const {
   generateAccessToken,
   generateRefreshToken,
@@ -43,6 +42,10 @@ const register = asyncHandler(async (req, res) => {
   }
 
   // Email/password signups must verify via a 4-digit code emailed to them.
+  // NOTE: We create the ACCOUNT only — no workspace. A workspace is created
+  // later, deliberately, during onboarding (or never, if this person only ever
+  // joins someone else's workspace as an agent). Any referral code is stashed
+  // on the user and applied when they create their first workspace.
   const verificationCode = generateVerificationCode();
   const user = await User.create({
     name,
@@ -51,6 +54,9 @@ const register = asyncHandler(async (req, res) => {
     isEmailVerified: false,
     emailVerificationToken: hashToken(verificationCode),
     emailVerificationExpires: Date.now() + 15 * 60 * 1000, // 15 minutes
+    pendingRef: ref ? String(ref).toUpperCase().trim() : undefined,
+    // Remember what they typed as their business name for the onboarding step.
+    ...(businessName ? {} : {}),
   });
 
   // Send the verification code (best-effort — failure shouldn't block signup;
@@ -58,33 +64,6 @@ const register = asyncHandler(async (req, res) => {
   await sendVerificationEmail({ to: user.email, name: user.name, code: verificationCode }).catch(
     (err) => logger.error("[register] verification email failed", { err: err.message }),
   );
-
-  // Auto-create workspace so user lands directly on dashboard
-  const workspace = await Workspace.create({
-    name: businessName || `${name}'s Workspace`,
-    owner: user._id,
-    members: [{ user: user._id, role: "owner" }],
-    industry: "other",
-  });
-
-  // Referral tracking (G8): if a ref code was provided, link the new workspace
-  // to the referrer and bump their signup counter.
-  if (ref) {
-    const refCode = String(ref).toUpperCase().trim();
-    const referrer = await Workspace.findOne({ "referral.code": refCode });
-    if (referrer && String(referrer._id) !== String(workspace._id)) {
-      workspace.referral.referredBy = referrer._id;
-      await workspace.save();
-      await Workspace.updateOne(
-        { _id: referrer._id },
-        { $inc: { "referral.signups": 1 } },
-      );
-    }
-  }
-
-  user.workspaces = [workspace._id];
-  user.activeWorkspace = workspace._id;
-  await user.save();
 
   const accessToken = generateAccessToken(user._id);
   const refreshToken = generateRefreshToken(user._id);
@@ -415,38 +394,17 @@ const googleAuth = asyncHandler(async (req, res) => {
 
   if (!user) {
     isNew = true;
+    // Account only — no workspace. It's created deliberately at onboarding, or
+    // never for someone who only joins another workspace as an agent. Stash any
+    // referral code to apply when they create their first workspace.
     user = await User.create({
       googleId,
       email,
       name,
       avatar,
       isEmailVerified: true, // Google-verified emails are trusted
+      pendingRef: ref ? String(ref).toUpperCase().trim() : undefined,
     });
-
-    // Auto-create a workspace so the new user lands in onboarding cleanly.
-    const workspace = await Workspace.create({
-      name: `${name}'s Workspace`,
-      owner: user._id,
-      members: [{ user: user._id, role: "owner" }],
-      industry: "other",
-    });
-
-    if (ref) {
-      const refCode = String(ref).toUpperCase().trim();
-      const referrer = await Workspace.findOne({ "referral.code": refCode });
-      if (referrer && String(referrer._id) !== String(workspace._id)) {
-        workspace.referral.referredBy = referrer._id;
-        await workspace.save();
-        await Workspace.updateOne(
-          { _id: referrer._id },
-          { $inc: { "referral.signups": 1 } },
-        );
-      }
-    }
-
-    user.workspaces = [workspace._id];
-    user.activeWorkspace = workspace._id;
-    await user.save();
   } else if (!user.googleId) {
     // Link Google to an existing email/password account.
     user.googleId = googleId;
