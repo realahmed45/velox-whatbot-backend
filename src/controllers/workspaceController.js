@@ -217,6 +217,46 @@ const revokeInvite = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Invite revoked" });
 });
 
+/**
+ * Attach a user to a workspace as a joined member and switch them INTO it.
+ *
+ * Team members (agents) don't run their own onboarding — the owner already
+ * connected Instagram. So we:
+ *   1. add the workspace to the user's list (if missing),
+ *   2. make it their active workspace,
+ *   3. mark onboarding complete so RequireOnboarding never bounces them,
+ *   4. clean up a throwaway personal workspace they never set up — i.e. one
+ *      they own, that has no Instagram connected and no other members. This
+ *      avoids the confusing "empty second workspace" that was sending Google
+ *      invitees into onboarding.
+ */
+async function joinWorkspaceAsMember(user, workspaceId) {
+  const wsId = workspaceId.toString();
+
+  if (!user.workspaces?.some((w) => w.toString() === wsId)) {
+    user.workspaces = [...(user.workspaces || []), workspaceId];
+  }
+  user.activeWorkspace = workspaceId;
+  user.onboardingCompleted = true;
+
+  // Remove any empty personal workspace the user owns (auto-created at signup)
+  // so it can't hijack their active context or force onboarding.
+  const owned = await Workspace.find({ owner: user._id });
+  for (const w of owned) {
+    if (w._id.toString() === wsId) continue;
+    const noIg = w.instagram?.status !== "connected";
+    const soloMember = (w.members || []).length <= 1;
+    if (noIg && soloMember) {
+      await Workspace.deleteOne({ _id: w._id });
+      user.workspaces = (user.workspaces || []).filter(
+        (id) => id.toString() !== w._id.toString(),
+      );
+    }
+  }
+
+  await user.save();
+}
+
 // @POST /api/workspaces/accept-invite — the invited (logged-in) user joins.
 // Body: { token, workspaceId }. Requires auth (they must have an account).
 const acceptInvite = asyncHandler(async (req, res) => {
@@ -271,12 +311,11 @@ const acceptInvite = asyncHandler(async (req, res) => {
   );
   await workspace.save();
 
-  // Add the workspace to the user's list.
-  if (!req.user.workspaces?.some((w) => w.toString() === workspace._id.toString())) {
-    req.user.workspaces = [...(req.user.workspaces || []), workspace._id];
-    if (!req.user.activeWorkspace) req.user.activeWorkspace = workspace._id;
-    await req.user.save();
-  }
+  // Make the joined workspace the user's active one and switch them into the
+  // team context. Agents never run their own onboarding — the owner already set
+  // up Instagram, so we mark onboarding complete and drop them straight into the
+  // owner's dashboard with their granted permissions.
+  await joinWorkspaceAsMember(req.user, workspace._id);
 
   res.json({
     success: true,
@@ -399,9 +438,8 @@ const registerAndAcceptInvite = asyncHandler(async (req, res) => {
   );
   await workspace.save();
 
-  user.workspaces = [workspace._id];
-  user.activeWorkspace = workspace._id;
-  await user.save();
+  // Switch the new user into the owner's workspace and skip onboarding.
+  await joinWorkspaceAsMember(user, workspace._id);
 
   const accessToken = generateAccessToken(user._id);
   const refreshTokenValue = generateRefreshToken(user._id);
