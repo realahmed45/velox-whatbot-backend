@@ -261,7 +261,7 @@ const getContactsGrowth = asyncHandler(async (req, res) => {
   const ch = channelFilters(req);
   const thirtyDaysAgo = moment().subtract(30, "days").toDate();
 
-  const data = await Contact.aggregate([
+  const raw = await Contact.aggregate([
     {
       $match: {
         workspaceId,
@@ -278,6 +278,14 @@ const getContactsGrowth = asyncHandler(async (req, res) => {
     },
     { $sort: { _id: 1 } },
   ]);
+
+  // Normalize to { date, count } (+ running cumulative total) so the chart can
+  // read `date`/`count`/`total` directly without remapping `_id`.
+  let running = 0;
+  const data = raw.map((d) => {
+    running += d.count || 0;
+    return { date: d._id, count: d.count || 0, total: running };
+  });
 
   res.json({ success: true, data });
 });
