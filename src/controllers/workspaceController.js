@@ -136,7 +136,11 @@ const getWorkspace = asyncHandler(async (req, res) => {
     { path: "owner", select: "name email avatar" },
     { path: "members.user", select: "name email avatar" },
   ]);
-  res.json({ success: true, workspace: req.workspace });
+  // Include computed entitlement so the client paywall knows whether this
+  // workspace has an active/trialing paid plan.
+  const workspace = req.workspace.toObject();
+  workspace.entitled = req.workspace.isEntitled();
+  res.json({ success: true, workspace });
 });
 
 // @PUT /api/workspaces/:workspaceId — Update workspace settings

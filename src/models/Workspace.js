@@ -595,6 +595,19 @@ workspaceSchema.pre("save", async function (next) {
   next();
 });
 
+/**
+ * Is this workspace entitled to paid features? True only when it has a real
+ * paid plan AND the subscription is trialing or active (and not a dead state).
+ * A brand-new workspace (plan "free") is NOT entitled — it must start a trial.
+ */
+workspaceSchema.methods.isEntitled = function () {
+  const { resolvePlanId } = require("../config/plans");
+  const plan = resolvePlanId(this.subscription?.plan);
+  if (plan === "free") return false;
+  const status = this.subscription?.status || "trialing";
+  return status === "trialing" || status === "active" || status === "past_due";
+};
+
 // Plan limits — sourced from src/config/plans.js (single source of truth)
 workspaceSchema.methods.getPlanLimits = function () {
   const { getPlan } = require("../config/plans");

@@ -45,11 +45,16 @@ const baseIgFeatures = [
 ];
 
 const PLANS = {
-  // ─── Free trial / fallback ──────────────────────────────
+  // ─── "free" = NO active subscription ────────────────────
+  // Botlify has NO free tier. This entry represents a workspace that hasn't
+  // started a paid plan yet (or whose subscription ended). It grants NO
+  // features and near-zero limits so the app paywalls until the user starts a
+  // trial (card required). Actual feature access comes from ig_starter/ig_pro
+  // once their Lemon Squeezy trial/subscription is active.
   free: {
     id: "free",
-    name: "Free trial",
-    tagline: "3 days free — then pick a plan",
+    name: "No plan",
+    tagline: "Start a plan to unlock Botlify",
     channel: "both",
     priceMonthly: 0,
     priceAnnual: 0,
@@ -57,41 +62,15 @@ const PLANS = {
     usd: 0,
     trialDays: 3,
     limits: {
-      messages: 100,
-      contacts: 50,
-      flows: 1,
+      messages: 0,
+      contacts: 0,
+      flows: 0,
       teamSeats: 1,
-      aiRepliesPerDay: 25,
-      smartOrdersPerMonth: 5,
+      aiRepliesPerDay: 0,
+      smartOrdersPerMonth: 0,
     },
-    features: [
-      FEATURES.POST_COMMENT_KEYWORD,
-      FEATURES.DM_KEYWORD,
-      FEATURES.WELCOME_DM,
-      FEATURES.STORY_REPLY,
-      FEATURES.STORY_MENTION,
-      FEATURES.SHARE_TO_STORY,
-      FEATURES.REF_URL,
-      FEATURES.LIVE_COMMENT,
-      FEATURES.CONVERSATION_STARTERS,
-      FEATURES.FALLBACK_AUTO_REPLY,
-      FEATURES.BUSINESS_HOURS,
-      FEATURES.AI_BOT,
-      FEATURES.AI_PREMIUM,
-      FEATURES.BROADCAST,
-      FEATURES.DRIP_CAMPAIGNS,
-      FEATURES.ANALYTICS_ADVANCED,
-      FEATURES.TEAM_INBOX,
-      FEATURES.REMOVE_BRANDING,
-      FEATURES.CUSTOM_DOMAIN,
-      FEATURES.SMART_ORDERS,
-    ],
-    highlights: [
-      "Try every feature free for 3 days",
-      "Connect Instagram (full access)",
-      "AI replies — 25/day",
-      "Botlify branding",
-    ],
+    features: [],
+    highlights: ["Choose Basic or Pro to start your 3-day free trial"],
   },
 
   // ─── Instagram plans ────────────────────────────────────
