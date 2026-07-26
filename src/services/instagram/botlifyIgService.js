@@ -355,25 +355,48 @@ const subscribeWebhook = async (accountIdOrToken, webhookUrl) => {
     webhookUrl = `${base}/api/instagram/webhook/botlify`;
   }
   const accountId = stripPrefix(accountIdOrToken);
+
+  // Zernio's /webhooks/settings is profile-scoped and requires the profileId
+  // (like every other Zernio call). Omitting it was the "expected string,
+  // received undefined" validation error that blocked connect. Resolve it.
+  let profileId = null;
+  try {
+    profileId = await getDefaultProfileId();
+  } catch {
+    /* fall through — logged below if the call fails */
+  }
+
   // Only Zernio-supported event names (per docs.zernio.com). Story replies,
   // story mentions and shares arrive nested inside message.received and are
   // detected from the message attachments by the webhook receiver.
-  const { data } = await client().post("/webhooks/settings", {
-    accountId,
-    url: webhookUrl,
-    events: [
-      "message.received",
-      "conversation.started",
-      "comment.received",
-      "reaction.received",
-      // Scheduled-post publish outcomes — so we can reconcile the real status.
-      "post.published",
-      "post.failed",
-      "post.platform.published",
-      "post.platform.failed",
-    ],
-  });
-  return data;
+  const events = [
+    "message.received",
+    "conversation.started",
+    "comment.received",
+    "reaction.received",
+    // Scheduled-post publish outcomes — so we can reconcile the real status.
+    "post.published",
+    "post.failed",
+    "post.platform.published",
+    "post.platform.failed",
+  ];
+
+  const body = { profileId, accountId, url: webhookUrl, events };
+
+  try {
+    const { data } = await client().post("/webhooks/settings", body);
+    return data;
+  } catch (err) {
+    // Surface Zernio's exact validation message so we know which field it wants.
+    logger.error("[BotlifyIG] subscribeWebhook rejected by provider", {
+      status: err.response?.status,
+      providerError: err.response?.data,
+      sentKeys: Object.keys(body),
+      profileId,
+      accountId,
+    });
+    throw err;
+  }
 };
 
 const getSubscribedApps = async (accountIdOrToken) => {
