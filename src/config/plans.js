@@ -79,10 +79,10 @@ const PLANS = {
     name: "Basic — Instagram",
     tagline: "Instagram only · automate DMs and comments",
     channel: "instagram",
-    priceMonthly: 2240, // ≈ $8 @ 280 PKR/USD
-    priceAnnual: 2240 * 10, // 2 months free
+    priceMonthly: 2520, // ≈ $9 @ 280 PKR/USD
+    priceAnnual: 2520 * 10, // 2 months free
     currency: "PKR",
-    usd: 8,
+    usd: 9,
     trialDays: 3,
     limits: {
       messages: 1000,
@@ -196,7 +196,7 @@ const PLAN_PRICES = Object.fromEntries(
 // (2 months free), mirroring the PKR annual discount.
 const PLAN_USD_PRICES = {
   free: { monthly: 0, annual: 0 },
-  ig_starter: { monthly: 8, annual: 80 },
+  ig_starter: { monthly: 9, annual: 90 },
   ig_pro: { monthly: 19, annual: 190 },
 };
 
