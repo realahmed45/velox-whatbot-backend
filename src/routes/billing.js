@@ -18,6 +18,12 @@ const {
   createLemonCheckout,
   getBillingPortal,
   handleLemonSqueezyWebhook,
+  getPaddleCheckoutInfo,
+  getPaddlePortal,
+  handlePaddleWebhook,
+  createCreemCheckout,
+  getCreemPortal,
+  handleCreemWebhook,
 } = require("../controllers/billingController");
 
 // Public — no auth/workspace needed (used by the marketing pricing page)
@@ -31,6 +37,14 @@ router.post("/webhook/xendit", handleXenditWebhook);
 // The RAW body is required for the signature; server.js applies express.raw to
 // this exact path before express.json runs.
 router.post("/lemonsqueezy/webhook", handleLemonSqueezyWebhook);
+
+// Public — Paddle subscription webhooks (verified via Paddle-Signature). RAW
+// body required; server.js applies express.raw to this exact path.
+router.post("/paddle/webhook", handlePaddleWebhook);
+
+// Public — Creem subscription webhooks (verified via creem-signature HMAC over
+// RAW body; server.js applies express.raw to this exact path). ACTIVE provider.
+router.post("/creem/webhook", handleCreemWebhook);
 
 // Everything below requires an authenticated user + workspace
 router.use(protect);
@@ -50,5 +64,18 @@ router.post(
   createLemonCheckout,
 );
 router.get("/lemonsqueezy/portal", requireOwner, getBillingPortal);
+
+// Paddle (card subscriptions via Merchant-of-Record)
+router.post(
+  "/paddle/checkout-info",
+  requireOwner,
+  strictLimiter,
+  getPaddleCheckoutInfo,
+);
+router.get("/paddle/portal", requireOwner, getPaddlePortal);
+
+// Creem (card subscriptions via Merchant-of-Record) — ACTIVE provider
+router.post("/creem/checkout", requireOwner, strictLimiter, createCreemCheckout);
+router.get("/creem/portal", requireOwner, getCreemPortal);
 
 module.exports = router;

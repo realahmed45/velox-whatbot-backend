@@ -57,8 +57,26 @@ const subscriptionSchema = new mongoose.Schema(
     // Which gateway is managing this subscription.
     provider: {
       type: String,
-      enum: ["jazzcash", "easypaisa", "xendit", "lemonsqueezy", "manual"],
+      enum: [
+        "jazzcash",
+        "easypaisa",
+        "xendit",
+        "lemonsqueezy",
+        "paddle",
+        "creem",
+        "manual",
+      ],
     },
+    // Creem (Merchant-of-Record card subscriptions)
+    creemSubscriptionId: { type: String, index: true },
+    creemCustomerId: String,
+    creemProductId: String,
+    creemCheckoutId: String,
+    // Paddle (Merchant-of-Record card subscriptions)
+    paddleSubscriptionId: { type: String, index: true },
+    paddleCustomerId: String,
+    paddleTransactionId: String,
+    paddlePriceId: String,
     // Xendit recurring identifiers (card auto-renew)
     xenditReferenceId: { type: String, index: true },
     xenditPlanId: String,

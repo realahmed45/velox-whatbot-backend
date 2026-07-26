@@ -109,6 +109,10 @@ app.use(
 );
 // Lemon Squeezy needs the raw body to verify its HMAC signature.
 app.use("/api/billing/lemonsqueezy/webhook", express.raw({ type: "*/*" }));
+// Paddle needs the raw body to verify its Paddle-Signature.
+app.use("/api/billing/paddle/webhook", express.raw({ type: "*/*" }));
+// Creem needs the raw body to verify its creem-signature.
+app.use("/api/billing/creem/webhook", express.raw({ type: "*/*" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 

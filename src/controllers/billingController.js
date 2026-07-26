@@ -6,6 +6,10 @@ const easypaisaService = require("../services/payments/easypaisaService");
 const xenditService = require("../services/payments/xenditService");
 const lemonSqueezyService = require("../services/payments/lemonSqueezyService");
 const lsConfig = require("../config/lemonSqueezy");
+const paddleService = require("../services/payments/paddleService");
+const paddleConfig = require("../config/paddle");
+const creemService = require("../services/payments/creemService");
+const creemConfig = require("../config/creem");
 const { sendInvoiceEmail } = require("../services/emailService");
 const { v4: uuidv4 } = require("uuid");
 const moment = require("moment");
@@ -424,6 +428,20 @@ const cancelSubscription = asyncHandler(async (req, res) => {
       .cancelSubscription(sub.lemonSqueezySubscriptionId)
       .catch((e) => logger.warn("[LS] cancel API failed", { err: e.message }));
   }
+  if (sub?.provider === "paddle" && sub.paddleSubscriptionId) {
+    await paddleService
+      .cancelSubscription(sub.paddleSubscriptionId)
+      .catch((e) =>
+        logger.warn("[Paddle] cancel API failed", { err: e.message }),
+      );
+  }
+  if (sub?.provider === "creem" && sub.creemSubscriptionId) {
+    await creemService
+      .cancelSubscription(sub.creemSubscriptionId)
+      .catch((e) =>
+        logger.warn("[Creem] cancel API failed", { err: e.message }),
+      );
+  }
 
   await Subscription.findOneAndUpdate(
     { workspaceId: req.workspace._id },
@@ -691,6 +709,426 @@ const selectPlan = asyncHandler(async (req, res) => {
   });
 });
 
+// ─── Paddle (Merchant-of-Record, card subscriptions via Paddle.js) ──────────
+
+// @POST /api/billing/paddle/checkout-info — owner picks a plan; we return the
+// price id + client token + env so the frontend opens the Paddle.js overlay.
+// Checkout runs client-side, so there's no server-side redirect URL.
+const getPaddleCheckoutInfo = asyncHandler(async (req, res) => {
+  if (!paddleConfig.isConfigured()) {
+    res.status(503);
+    throw new Error("Card payments are not configured yet.");
+  }
+  const { plan, billingCycle = "monthly" } = req.body;
+  const planId = resolvePlanId(plan);
+  if (!PUBLIC_PLAN_IDS.includes(planId)) {
+    res.status(400);
+    throw new Error("Invalid plan");
+  }
+  const cycle = billingCycle === "annual" ? "annual" : "monthly";
+  const priceId = paddleConfig.getPriceId(planId, cycle);
+  if (!priceId) {
+    res.status(503);
+    throw new Error(
+      "This plan isn't available for checkout yet. Please contact support.",
+    );
+  }
+  res.json({
+    success: true,
+    priceId,
+    clientToken: paddleConfig.CLIENT_TOKEN,
+    environment: paddleConfig.ENVIRONMENT,
+    email: req.user.email,
+    customData: {
+      workspace_id: String(req.workspace._id),
+      user_id: String(req.user._id),
+      plan: planId,
+      cycle,
+    },
+  });
+});
+
+// @GET /api/billing/paddle/portal — owner opens the Paddle customer portal.
+const getPaddlePortal = asyncHandler(async (req, res) => {
+  const sub = await Subscription.findOne({ workspaceId: req.workspace._id });
+  if (!sub?.paddleCustomerId) {
+    res.status(404);
+    throw new Error("No active card subscription to manage.");
+  }
+  const url = await paddleService.createPortalSession(
+    sub.paddleCustomerId,
+    sub.paddleSubscriptionId,
+  );
+  if (!url) {
+    res.status(502);
+    throw new Error("Could not open the billing portal. Try again shortly.");
+  }
+  res.json({ success: true, url });
+});
+
+// @POST /api/billing/paddle/webhook — Paddle posts subscription lifecycle
+// events here. Public; verified via Paddle-Signature over the RAW body.
+const handlePaddleWebhook = asyncHandler(async (req, res) => {
+  const raw = req.body; // Buffer (express.raw applied in server.js)
+  const signature = req.headers["paddle-signature"];
+  if (!paddleService.verifyWebhookSignature(raw, signature)) {
+    logger.warn("[Paddle webhook] invalid signature — dropping");
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200); // ack fast
+
+  let payload;
+  try {
+    payload = JSON.parse(raw.toString("utf8"));
+  } catch {
+    logger.warn("[Paddle webhook] unparseable body");
+    return;
+  }
+
+  const eventType = payload?.event_type;
+  const data = payload?.data || {};
+  const custom = data.custom_data || {};
+  const workspaceId = custom.workspace_id;
+  const subId = data.id; // subscription id on subscription.* events
+  const customerId = data.customer_id;
+  // price id lives on the first subscription item
+  const item = (data.items && data.items[0]) || {};
+  const priceId = item.price?.id || item.price_id;
+
+  logger.info(
+    `[Paddle webhook] event=${eventType} ws=${workspaceId} sub=${subId}`,
+  );
+
+  if (!workspaceId && !subId) return;
+
+  const mapped = paddleConfig.planForPrice(priceId) || {};
+  const plan = resolvePlanId(custom.plan || mapped.plan || "");
+  const cycle = custom.cycle || mapped.cycle || "monthly";
+
+  // Resolve workspace by custom_data first, else by stored paddle subscription.
+  const findWs = async () => {
+    if (workspaceId) return workspaceId;
+    const s = await Subscription.findOne({ paddleSubscriptionId: subId });
+    return s?.workspaceId;
+  };
+
+  try {
+    switch (eventType) {
+      case "subscription.created":
+      case "subscription.updated":
+      case "subscription.resumed": {
+        const ws = await findWs();
+        if (!ws) return;
+        const status = data.status; // active | trialing | past_due | canceled | paused
+        if (["active", "trialing", "paused"].includes(status)) {
+          await activatePlan({
+            workspaceId: ws,
+            plan,
+            billingCycle: cycle,
+            paymentMethod: "card",
+            provider: "paddle",
+            txnRef: subId,
+            amount: PLAN_USD_PRICES[plan]?.[cycle] || 0,
+            currency: "USD",
+            resetUsage: eventType === "subscription.created",
+            extra: {
+              paddleSubscriptionId: subId,
+              paddleCustomerId: String(customerId || ""),
+              paddlePriceId: String(priceId || ""),
+              status: status === "trialing" ? "trialing" : "active",
+              trialEndsAt: data.next_billed_at
+                ? new Date(data.next_billed_at)
+                : undefined,
+            },
+          });
+          await Workspace.findByIdAndUpdate(ws, {
+            "subscription.status":
+              status === "trialing" ? "trialing" : "active",
+            "subscription.provider": "paddle",
+            "subscription.billingCycle": cycle,
+            "subscription.paddleSubscriptionId": subId,
+            "subscription.paddleCustomerId": String(customerId || ""),
+            "subscription.cancelAtPeriodEnd":
+              data.scheduled_change?.action === "cancel",
+            ...(data.current_billing_period?.ends_at
+              ? {
+                  "subscription.currentPeriodEnd": new Date(
+                    data.current_billing_period.ends_at,
+                  ),
+                }
+              : {}),
+            ...(status === "trialing" && data.next_billed_at
+              ? {
+                  "subscription.trialEndsAt": new Date(data.next_billed_at),
+                }
+              : {}),
+          });
+        } else if (status === "past_due") {
+          await Workspace.findByIdAndUpdate(ws, {
+            "subscription.status": "past_due",
+          });
+          await Subscription.findOneAndUpdate(
+            { workspaceId: ws },
+            { status: "past_due" },
+          );
+        } else if (["canceled"].includes(status)) {
+          await downgradeToTrial(ws, subId);
+        }
+        break;
+      }
+
+      case "subscription.canceled": {
+        const ws = await findWs();
+        if (ws) await downgradeToTrial(ws, subId);
+        break;
+      }
+
+      case "subscription.past_due":
+      case "transaction.payment_failed": {
+        const ws = await findWs();
+        if (ws) {
+          await Workspace.findByIdAndUpdate(ws, {
+            "subscription.status": "past_due",
+          });
+          await Subscription.findOneAndUpdate(
+            { workspaceId: ws },
+            { status: "past_due", lastPaymentStatus: "failed" },
+          );
+        }
+        break;
+      }
+
+      case "transaction.completed": {
+        // A successful charge/renewal. Mark last payment; find ws by sub id.
+        const sId = data.subscription_id;
+        const s = sId
+          ? await Subscription.findOne({ paddleSubscriptionId: sId })
+          : null;
+        const ws = s?.workspaceId || (await findWs());
+        if (ws) {
+          await Subscription.findOneAndUpdate(
+            { workspaceId: ws },
+            {
+              lastPaymentDate: new Date(),
+              lastPaymentStatus: "paid",
+              status: "active",
+            },
+          );
+        }
+        break;
+      }
+
+      default:
+        logger.info(`[Paddle webhook] ignored event ${eventType}`);
+    }
+  } catch (err) {
+    logger.error("[Paddle webhook] processing error", { err: err.message });
+  }
+});
+
+// ─── Creem (Merchant-of-Record, card subscriptions) — ACTIVE provider ───────
+
+// @POST /api/billing/creem/checkout — owner starts a subscription. Returns a
+// hosted checkout URL (redirect) with a 3-day trial + card upfront.
+const createCreemCheckout = asyncHandler(async (req, res) => {
+  if (!creemConfig.isConfigured()) {
+    res.status(503);
+    throw new Error("Card payments are not configured yet.");
+  }
+  const { plan, billingCycle = "monthly" } = req.body;
+  const planId = resolvePlanId(plan);
+  if (!PUBLIC_PLAN_IDS.includes(planId)) {
+    res.status(400);
+    throw new Error("Invalid plan");
+  }
+  const cycle = billingCycle === "annual" ? "annual" : "monthly";
+  const productId = creemConfig.getProductId(planId, cycle);
+  if (!productId) {
+    res.status(503);
+    throw new Error(
+      "This plan isn't available for checkout yet. Please contact support.",
+    );
+  }
+
+  const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
+  const url = await creemService.createCheckout({
+    productId,
+    email: req.user.email,
+    successUrl: `${clientUrl}/dashboard/billing?checkout=success`,
+    requestId: String(req.workspace._id),
+    metadata: {
+      workspace_id: String(req.workspace._id),
+      user_id: String(req.user._id),
+      plan: planId,
+      cycle,
+    },
+  });
+  res.json({ success: true, url });
+});
+
+// @GET /api/billing/creem/portal — owner opens the Creem customer portal.
+const getCreemPortal = asyncHandler(async (req, res) => {
+  const sub = await Subscription.findOne({ workspaceId: req.workspace._id });
+  if (!sub?.creemCustomerId) {
+    res.status(404);
+    throw new Error("No active card subscription to manage.");
+  }
+  const url = await creemService.getPortalLink(sub.creemCustomerId);
+  if (!url) {
+    res.status(502);
+    throw new Error("Could not open the billing portal. Try again shortly.");
+  }
+  res.json({ success: true, url });
+});
+
+// @POST /api/billing/creem/webhook — Creem posts subscription lifecycle events.
+// Public; verified via `creem-signature` HMAC over the RAW body.
+const handleCreemWebhook = asyncHandler(async (req, res) => {
+  const raw = req.body; // Buffer (express.raw applied in server.js)
+  const signature = req.headers["creem-signature"];
+  if (!creemService.verifyWebhookSignature(raw, signature)) {
+    logger.warn("[Creem webhook] invalid signature — dropping");
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200); // ack fast
+
+  let payload;
+  try {
+    payload = JSON.parse(raw.toString("utf8"));
+  } catch {
+    logger.warn("[Creem webhook] unparseable body");
+    return;
+  }
+
+  const eventType = payload?.eventType || payload?.event_type;
+  const obj = payload?.object || payload?.data || {};
+  // Metadata may sit on the object or on a nested order/subscription.
+  const meta = obj.metadata || obj.order?.metadata || {};
+  const workspaceId = meta.workspace_id;
+
+  // Subscription + customer + product ids across the various event shapes.
+  const subObj = obj.subscription || (obj.object === "subscription" ? obj : obj);
+  const subId =
+    (typeof subObj === "object" ? subObj.id : subObj) || obj.subscription_id;
+  const customer = obj.customer || subObj?.customer;
+  const customerId =
+    typeof customer === "object" ? customer.id : customer || obj.customer_id;
+  const product = obj.product || subObj?.product;
+  const productId =
+    (typeof product === "object" ? product.id : product) || obj.product_id;
+  const status = (typeof subObj === "object" && subObj.status) || obj.status;
+
+  logger.info(
+    `[Creem webhook] event=${eventType} ws=${workspaceId} sub=${subId} status=${status}`,
+  );
+
+  const mapped = creemConfig.planForProduct(productId) || {};
+  const plan = resolvePlanId(meta.plan || mapped.plan || "");
+  const cycle = meta.cycle || mapped.cycle || "monthly";
+
+  const findWs = async () => {
+    if (workspaceId) return workspaceId;
+    const s = await Subscription.findOne({ creemSubscriptionId: subId });
+    return s?.workspaceId;
+  };
+
+  const activate = async (ws, statusLabel, fresh) => {
+    await activatePlan({
+      workspaceId: ws,
+      plan,
+      billingCycle: cycle,
+      paymentMethod: "card",
+      provider: "creem",
+      txnRef: subId || obj.id,
+      amount: PLAN_USD_PRICES[plan]?.[cycle] || 0,
+      currency: "USD",
+      resetUsage: fresh,
+      extra: {
+        creemSubscriptionId: subId,
+        creemCustomerId: String(customerId || ""),
+        creemProductId: String(productId || ""),
+        status: statusLabel,
+      },
+    });
+    await Workspace.findByIdAndUpdate(ws, {
+      "subscription.status": statusLabel,
+      "subscription.provider": "creem",
+      "subscription.billingCycle": cycle,
+      "subscription.creemSubscriptionId": subId,
+      "subscription.creemCustomerId": String(customerId || ""),
+    });
+  };
+
+  try {
+    switch (eventType) {
+      case "checkout.completed":
+      case "subscription.paid":
+      case "subscription.active": {
+        const ws = await findWs();
+        if (ws) await activate(ws, "active", eventType === "checkout.completed");
+        break;
+      }
+      case "subscription.trialing": {
+        const ws = await findWs();
+        if (ws) {
+          await activate(ws, "trialing", true);
+          if (obj.next_transaction_date || subObj?.next_transaction_date) {
+            await Workspace.findByIdAndUpdate(ws, {
+              "subscription.trialEndsAt": new Date(
+                obj.next_transaction_date || subObj.next_transaction_date,
+              ),
+            });
+          }
+        }
+        break;
+      }
+      case "subscription.update": {
+        const ws = await findWs();
+        if (ws && ["active", "trialing"].includes(status)) {
+          await activate(ws, status === "trialing" ? "trialing" : "active", false);
+        }
+        break;
+      }
+      case "subscription.scheduled_cancel": {
+        const ws = await findWs();
+        if (ws) {
+          await Subscription.findOneAndUpdate(
+            { workspaceId: ws },
+            { cancelAtPeriodEnd: true, cancelledAt: new Date() },
+          );
+          await Workspace.findByIdAndUpdate(ws, {
+            "subscription.cancelAtPeriodEnd": true,
+          });
+        }
+        break;
+      }
+      case "subscription.canceled":
+      case "subscription.expired": {
+        const ws = await findWs();
+        if (ws) await downgradeToTrial(ws, subId);
+        break;
+      }
+      case "subscription.past_due": {
+        const ws = await findWs();
+        if (ws) {
+          await Workspace.findByIdAndUpdate(ws, {
+            "subscription.status": "past_due",
+          });
+          await Subscription.findOneAndUpdate(
+            { workspaceId: ws },
+            { status: "past_due", lastPaymentStatus: "failed" },
+          );
+        }
+        break;
+      }
+      default:
+        logger.info(`[Creem webhook] ignored event ${eventType}`);
+    }
+  } catch (err) {
+    logger.error("[Creem webhook] processing error", { err: err.message });
+  }
+});
+
 module.exports = {
   getPlans,
   getSubscription,
@@ -703,4 +1141,10 @@ module.exports = {
   createLemonCheckout,
   getBillingPortal,
   handleLemonSqueezyWebhook,
+  getPaddleCheckoutInfo,
+  getPaddlePortal,
+  handlePaddleWebhook,
+  createCreemCheckout,
+  getCreemPortal,
+  handleCreemWebhook,
 };
