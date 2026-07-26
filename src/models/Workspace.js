@@ -210,6 +210,10 @@ const workspaceSchema = new mongoose.Schema(
       activatedAt: Date,
       cancelAtPeriodEnd: { type: Boolean, default: false },
       billingCycleAnchor: Date,
+      // Lemon Squeezy subscription id (for portal / cancel) + last provider.
+      lemonSqueezySubscriptionId: String,
+      provider: String,
+      billingCycle: String,
     },
 
     // Usage tracking (resets monthly)

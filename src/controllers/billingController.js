@@ -4,6 +4,8 @@ const Subscription = require("../models/Subscription");
 const jazzcashService = require("../services/payments/jazzcashService");
 const easypaisaService = require("../services/payments/easypaisaService");
 const xenditService = require("../services/payments/xenditService");
+const lemonSqueezyService = require("../services/payments/lemonSqueezyService");
+const lsConfig = require("../config/lemonSqueezy");
 const { sendInvoiceEmail } = require("../services/emailService");
 const { v4: uuidv4 } = require("uuid");
 const moment = require("moment");
@@ -417,6 +419,11 @@ const cancelSubscription = asyncHandler(async (req, res) => {
   if (sub?.provider === "xendit" && sub.xenditPlanId) {
     await xenditService.deactivatePlan(sub.xenditPlanId).catch(() => {});
   }
+  if (sub?.provider === "lemonsqueezy" && sub.lemonSqueezySubscriptionId) {
+    await lemonSqueezyService
+      .cancelSubscription(sub.lemonSqueezySubscriptionId)
+      .catch((e) => logger.warn("[LS] cancel API failed", { err: e.message }));
+  }
 
   await Subscription.findOneAndUpdate(
     { workspaceId: req.workspace._id },
@@ -431,6 +438,229 @@ const cancelSubscription = asyncHandler(async (req, res) => {
       "Subscription will be cancelled at the end of your billing period.",
   });
 });
+
+// ─── Lemon Squeezy (Merchant-of-Record, card subscriptions) ─────────────────
+
+// @POST /api/billing/lemonsqueezy/checkout — owner starts a subscription.
+// Body: { plan, billingCycle }. Returns a hosted checkout URL to redirect to.
+const createLemonCheckout = asyncHandler(async (req, res) => {
+  if (!lsConfig.isConfigured()) {
+    res.status(503);
+    throw new Error("Card payments are not configured yet.");
+  }
+  const { plan, billingCycle = "monthly" } = req.body;
+  const planId = resolvePlanId(plan);
+  if (!PUBLIC_PLAN_IDS.includes(planId)) {
+    res.status(400);
+    throw new Error("Invalid plan");
+  }
+  const cycle = billingCycle === "annual" ? "annual" : "monthly";
+  const variantId = lsConfig.getVariantId(planId, cycle);
+  if (!variantId) {
+    res.status(503);
+    throw new Error(
+      "This plan isn't available for checkout yet. Please contact support.",
+    );
+  }
+
+  const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
+  const url = await lemonSqueezyService.createCheckout({
+    variantId,
+    email: req.user.email,
+    name: req.user.name,
+    workspaceId: req.workspace._id,
+    userId: req.user._id,
+    plan: planId,
+    cycle,
+    redirectUrl: `${clientUrl}/dashboard/billing?checkout=success`,
+  });
+
+  res.json({ success: true, url });
+});
+
+// @GET /api/billing/lemonsqueezy/portal — owner opens the LS customer portal
+// (update card, cancel, download invoices).
+const getBillingPortal = asyncHandler(async (req, res) => {
+  const sub = await Subscription.findOne({ workspaceId: req.workspace._id });
+  if (!sub?.lemonSqueezySubscriptionId) {
+    res.status(404);
+    throw new Error("No active card subscription to manage.");
+  }
+  const url = await lemonSqueezyService.getCustomerPortalUrl(
+    sub.lemonSqueezySubscriptionId,
+  );
+  if (!url) {
+    res.status(502);
+    throw new Error("Could not open the billing portal. Try again shortly.");
+  }
+  res.json({ success: true, url });
+});
+
+// @POST /api/billing/lemonsqueezy/webhook — LS posts subscription lifecycle
+// events here. Public; verified via HMAC signature over the RAW body.
+// req.body is a Buffer (express.raw is applied to this path in server.js).
+const handleLemonSqueezyWebhook = asyncHandler(async (req, res) => {
+  const raw = req.body; // Buffer
+  const signature = req.headers["x-signature"];
+  if (!lemonSqueezyService.verifyWebhookSignature(raw, signature)) {
+    logger.warn("[LS webhook] invalid signature — dropping");
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200); // ack fast; process below
+
+  let payload;
+  try {
+    payload = JSON.parse(raw.toString("utf8"));
+  } catch {
+    logger.warn("[LS webhook] unparseable body");
+    return;
+  }
+
+  const eventName = payload?.meta?.event_name;
+  const custom = payload?.meta?.custom_data || {};
+  const attrs = payload?.data?.attributes || {};
+  const subId = payload?.data?.id;
+  const workspaceId = custom.workspace_id;
+  const variantId = attrs.variant_id || attrs.first_subscription_item?.variant_id;
+
+  logger.info(`[LS webhook] event=${eventName} ws=${workspaceId} sub=${subId}`);
+
+  if (!workspaceId) {
+    logger.warn("[LS webhook] no workspace_id in custom_data — skipping");
+    return;
+  }
+
+  // Figure out which plan/cycle this is (prefer explicit custom_data).
+  const mapped = lsConfig.planForVariant(variantId) || {};
+  const plan = resolvePlanId(custom.plan || mapped.plan || "");
+  const variantName = (attrs.variant_name || "").toLowerCase();
+  const cycle =
+    custom.cycle ||
+    mapped.cycle ||
+    (variantName.includes("year") || variantName.includes("annual")
+      ? "annual"
+      : "monthly");
+
+  try {
+    switch (eventName) {
+      case "subscription_created":
+      case "subscription_updated":
+      case "subscription_resumed":
+      case "subscription_unpaused": {
+        const status = attrs.status; // active | on_trial | paused | cancelled | expired | past_due | unpaid
+        if (["active", "on_trial", "paused"].includes(status)) {
+          await activatePlan({
+            workspaceId,
+            plan,
+            billingCycle: cycle,
+            paymentMethod: "card",
+            provider: "lemonsqueezy",
+            txnRef: subId,
+            amount: PLAN_USD_PRICES[plan]?.[cycle] || 0,
+            currency: "USD",
+            resetUsage: eventName === "subscription_created",
+            extra: {
+              lemonSqueezySubscriptionId: subId,
+              lemonSqueezyCustomerId: String(attrs.customer_id || ""),
+              lemonSqueezyOrderId: String(attrs.order_id || ""),
+              lemonSqueezyVariantId: String(variantId || ""),
+              status: status === "on_trial" ? "trialing" : "active",
+              trialEndsAt: attrs.trial_ends_at
+                ? new Date(attrs.trial_ends_at)
+                : undefined,
+            },
+          });
+          // Mirror trial/renewal dates + LS id + status onto the workspace.
+          await Workspace.findByIdAndUpdate(workspaceId, {
+            "subscription.status":
+              status === "on_trial" ? "trialing" : "active",
+            "subscription.provider": "lemonsqueezy",
+            "subscription.billingCycle": cycle,
+            "subscription.lemonSqueezySubscriptionId": subId,
+            "subscription.cancelAtPeriodEnd": !!attrs.cancelled,
+            ...(attrs.trial_ends_at
+              ? { "subscription.trialEndsAt": new Date(attrs.trial_ends_at) }
+              : {}),
+            ...(attrs.renews_at
+              ? { "subscription.currentPeriodEnd": new Date(attrs.renews_at) }
+              : {}),
+          });
+        } else if (["cancelled", "expired", "unpaid"].includes(status)) {
+          await downgradeToTrial(workspaceId, subId);
+        } else if (status === "past_due") {
+          await Workspace.findByIdAndUpdate(workspaceId, {
+            "subscription.status": "past_due",
+          });
+          await Subscription.findOneAndUpdate(
+            { workspaceId },
+            { status: "past_due" },
+          );
+        }
+        break;
+      }
+
+      case "subscription_cancelled": {
+        // Cancelled but usually still active until period end.
+        await Subscription.findOneAndUpdate(
+          { workspaceId },
+          { cancelAtPeriodEnd: true, cancelledAt: new Date() },
+        );
+        await Workspace.findByIdAndUpdate(workspaceId, {
+          "subscription.cancelAtPeriodEnd": true,
+        });
+        break;
+      }
+
+      case "subscription_expired": {
+        await downgradeToTrial(workspaceId, subId);
+        break;
+      }
+
+      case "subscription_payment_success": {
+        await Subscription.findOneAndUpdate(
+          { workspaceId },
+          {
+            lastPaymentDate: new Date(),
+            lastPaymentStatus: "paid",
+            status: "active",
+          },
+        );
+        break;
+      }
+
+      case "subscription_payment_failed": {
+        await Subscription.findOneAndUpdate(
+          { workspaceId },
+          { lastPaymentStatus: "failed", status: "past_due" },
+        );
+        await Workspace.findByIdAndUpdate(workspaceId, {
+          "subscription.status": "past_due",
+        });
+        break;
+      }
+
+      default:
+        logger.info(`[LS webhook] ignored event ${eventName}`);
+    }
+  } catch (err) {
+    logger.error("[LS webhook] processing error", { err: err.message });
+  }
+});
+
+// When a subscription truly ends, drop the workspace back to the (locked) trial
+// state so paid features gate off.
+async function downgradeToTrial(workspaceId, subId) {
+  await Workspace.findByIdAndUpdate(workspaceId, {
+    "subscription.plan": "free",
+    "subscription.status": "cancelled",
+    "subscription.cancelAtPeriodEnd": false,
+  });
+  await Subscription.findOneAndUpdate(
+    { workspaceId, ...(subId ? { lemonSqueezySubscriptionId: subId } : {}) },
+    { status: "cancelled", cancelledAt: new Date() },
+  );
+  logger.info(`[LS] workspace ${workspaceId} downgraded (subscription ended)`);
+}
 
 // @POST /api/billing/select-plan — Directly activate a plan (no payment required).
 // Used during testing / manual upgrades before card payment is live.
@@ -470,4 +700,7 @@ module.exports = {
   cancelSubscription,
   selectPlan,
   handleXenditWebhook,
+  createLemonCheckout,
+  getBillingPortal,
+  handleLemonSqueezyWebhook,
 };

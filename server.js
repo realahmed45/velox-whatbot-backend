@@ -107,6 +107,8 @@ app.use(
   ["/api/instagram/webhook", "/api/instagram/webhook/botlify"],
   express.raw({ type: "*/*" }), // match any content-type Zernio may send
 );
+// Lemon Squeezy needs the raw body to verify its HMAC signature.
+app.use("/api/billing/lemonsqueezy/webhook", express.raw({ type: "*/*" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
