@@ -1168,7 +1168,8 @@ exports.getBotlifyOAuthUrl = asyncHandler(async (req, res) => {
 // GET /api/instagram/connect/callback-botlify
 // Provider redirects user back here with ?accountId=xxx (or ?code=xxx) + state.
 exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
-  const { ws, accountId, state, error, error_description } = req.query;
+  const { ws, accountId, username, state, error, error_description } =
+    req.query;
   if (error) {
     logger.warn("[BotlifyIG] connect cancelled", { error, error_description });
     return res.redirect(`${process.env.CLIENT_URL}/dashboard?error=cancelled`);
@@ -1211,8 +1212,22 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
 
     const { accountId: acc, info } = await botlifyIg.exchangeCallback({
       accountId,
+      username, // used to build a minimal record if the account list lags
       excludeAccountIds,
     });
+
+    logger.info("[BotlifyIG] callback resolved account", {
+      workspaceId,
+      resolvedAccountId: acc,
+      username: info?.username,
+      userId: info?.user_id,
+    });
+
+    if (!acc) {
+      // Should never happen (exchangeCallback throws otherwise) but guard so we
+      // never store a broken "connected" state with an undefined account id.
+      throw new Error("Could not resolve the connected Instagram account id");
+    }
 
     // Subscribe the IG account to our webhook on the provider side.
     let webhookSubscribed = false;
@@ -1345,20 +1360,29 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     const evtType = evt.type || evt.event || evt.eventType || null;
     const msg = evt.message || {};
 
+    // Zernio identifies the IG account by `accountId`. On some payloads it's
+    // top-level, on others (e.g. account.connected) it's nested under `account`
+    // as `account.accountId`. Read accountId FIRST from every known location;
+    // only fall back to profileId as a last resort (profileId is the Zernio
+    // profile, NOT the IG account we store, so matching on it fails).
     const accountId =
       evt.accountId ||
       evt.account_id ||
+      evt.account?.accountId ||
       evt.account?.id ||
+      evt.data?.accountId ||
+      evt.data?.account?.accountId ||
+      msg.accountId ||
+      msg.account?.accountId ||
+      msg.account?.id ||
       evt.recipient?.id ||
       evt.igAccountId ||
       evt.instagramAccountId ||
-      evt.profileId ||
-      evt.account?.profileId ||
-      evt.data?.accountId ||
-      msg.accountId ||
-      msg.account?.id ||
       evt.platformMessagingId ||
       evt.platformMessageId ||
+      // Last resort — some events only carry the profile id.
+      evt.profileId ||
+      evt.account?.profileId ||
       null;
     if (!accountId) {
       logger.warn(

@@ -131,38 +131,82 @@ const createHostedAuthLink = async ({ state, callbackUrl }) => {
  * Exchange the provider's callback `code` (or `accountId` directly) for an
  * account record we persist on the workspace.
  */
-const exchangeCallback = async ({ accountId, excludeAccountIds = [] }) => {
+const exchangeCallback = async ({
+  accountId,
+  username,
+  excludeAccountIds = [],
+}) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  // If we already know the accountId (e.g. from webhook), look it up directly.
-  const accounts = await listInstagramAccounts();
-  if (!accounts.length) {
-    throw new Error("No Instagram account found after OAuth");
+
+  // FAST PATH: Zernio includes the connected account's id in the redirect
+  // (?accountId=...). Trust it as the source of truth — the /accounts list can
+  // lag a second or two right after connect, so matching against it is racy and
+  // was returning an undefined account. Fetch this account's profile directly.
+  const provided = stripPrefix(accountId);
+  if (provided) {
+    try {
+      const info = await getAccountInfo(provided);
+      if (info) return { accountId: provided, info };
+    } catch (err) {
+      logger.warn(
+        "[BotlifyIG] exchangeCallback: direct account lookup failed, will try list then fall back",
+        { accountId: provided, err: err.response?.data || err.message },
+      );
+    }
+  }
+
+  // Try the account list next.
+  let accounts = [];
+  try {
+    accounts = await listInstagramAccounts();
+  } catch (err) {
+    logger.warn("[BotlifyIG] exchangeCallback: listInstagramAccounts failed", {
+      err: err.response?.data || err.message,
+    });
   }
 
   let acc;
-  if (accountId) {
-    acc = accounts.find((a) => a.accountId === stripPrefix(accountId));
+  if (provided && accounts.length) {
+    acc = accounts.find((a) => a.accountId === provided);
   }
-  // Otherwise pick the IG account not already claimed by another workspace.
-  if (!acc) {
+  if (!acc && accounts.length && !provided) {
+    // No accountId in the callback — pick the newest unclaimed IG account.
     const exclude = new Set(excludeAccountIds);
     const unclaimed = accounts.filter((a) => !exclude.has(a.accountId));
     const pool = unclaimed.length ? unclaimed : accounts;
-    // newest first
     pool.sort(
       (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
     );
     acc = pool[0];
   }
+  if (acc?.accountId) return { accountId: acc.accountId, info: acc };
 
-  if (!acc?.accountId)
-    throw new Error("No Instagram account found after OAuth");
-  return {
-    accountId: acc.accountId,
-    info: acc,
-  };
+  // LAST RESORT: we have a trusted accountId from the callback but the provider
+  // hasn't surfaced it in its API yet (eventual consistency right after
+  // connect). Save a minimal record now; the account.connected webhook + later
+  // fetches will backfill the rest. This is what keeps the connect from looping.
+  if (provided) {
+    logger.warn(
+      "[BotlifyIG] exchangeCallback: using minimal record from callback (account not yet in provider API)",
+      { accountId: provided, username },
+    );
+    return {
+      accountId: provided,
+      info: {
+        accountId: provided,
+        user_id: provided,
+        username: username || null,
+        name: username || null,
+        profile_picture_url: null,
+        followers_count: 0,
+        account_type: "BUSINESS",
+      },
+    };
+  }
+
+  throw new Error("No Instagram account found after OAuth");
 };
 
 // ── Account lookup ───────────────────────────────────────────────────────────
