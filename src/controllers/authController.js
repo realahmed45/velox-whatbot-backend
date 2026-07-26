@@ -132,33 +132,68 @@ const refreshToken = asyncHandler(async (req, res) => {
 });
 
 // @POST /api/auth/forgot-password
+// Emails a 4-digit reset code (same UX as signup verification). We store the
+// HASH of the code in passwordResetToken so the plaintext never touches the DB.
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
   const user = await User.findOne({ email });
 
-  // Always return success to prevent email enumeration
+  // Always return success to prevent email enumeration.
   if (user) {
-    const resetToken = generateToken();
-    user.passwordResetToken = hashToken(resetToken);
-    user.passwordResetExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+    const code = generateVerificationCode(); // 4-digit
+    user.passwordResetToken = hashToken(code);
+    user.passwordResetExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
     await user.save();
 
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${resetToken}`;
-    await sendPasswordResetEmail({ to: user.email, name: user.name, resetUrl });
+    await sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      code,
+    }).catch((err) =>
+      logger.error("[forgotPassword] email failed", { err: err.message }),
+    );
   }
 
   res.json({
     success: true,
-    message: "If that email is registered, a reset link has been sent.",
+    message: "If that email is registered, a reset code has been sent.",
   });
 });
 
-// @POST /api/auth/reset-password
-const resetPassword = asyncHandler(async (req, res) => {
-  const { token, password } = req.body;
-  if (!token || !password) {
+// @POST /api/auth/verify-reset-code
+// Optional pre-check so the UI can confirm the code before asking for the new
+// password. Enumeration-safe on the "no user" path.
+const verifyResetCode = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
     res.status(400);
-    throw new Error("Token and new password required");
+    throw new Error("Email and code are required");
+  }
+  const user = await User.findOne({ email }).select(
+    "+passwordResetToken +passwordResetExpires",
+  );
+  const valid =
+    user &&
+    user.passwordResetToken &&
+    user.passwordResetExpires &&
+    user.passwordResetExpires.getTime() > Date.now() &&
+    hashToken(String(code).trim()) === user.passwordResetToken;
+
+  if (!valid) {
+    res.status(400);
+    throw new Error("Invalid or expired code");
+  }
+  res.json({ success: true, message: "Code verified" });
+});
+
+// @POST /api/auth/reset-password
+// Accepts { email, code, password } (4-digit code flow). Falls back to the
+// legacy { token, password } link flow if a token is supplied instead.
+const resetPassword = asyncHandler(async (req, res) => {
+  const { email, code, token, password } = req.body;
+  if (!password || (!code && !token)) {
+    res.status(400);
+    throw new Error("Code and new password are required");
   }
   const pwCheck = validatePassword(password);
   if (!pwCheck.ok) {
@@ -166,15 +201,25 @@ const resetPassword = asyncHandler(async (req, res) => {
     throw new Error(pwCheck.message);
   }
 
-  const hashedToken = hashToken(token);
-  const user = await User.findOne({
-    passwordResetToken: hashedToken,
+  // The stored value is hashToken(code) for the code flow, or hashToken(token)
+  // for the legacy link flow — both compare the same way.
+  const provided = code ? String(code).trim() : token;
+  const hashedProvided = hashToken(provided);
+
+  const query = {
+    passwordResetToken: hashedProvided,
     passwordResetExpires: { $gt: Date.now() },
-  }).select("+passwordResetToken +passwordResetExpires");
+  };
+  // Scope by email when we have it (code flow) — harmless for the token flow.
+  if (email) query.email = String(email).toLowerCase();
+
+  const user = await User.findOne(query).select(
+    "+passwordResetToken +passwordResetExpires",
+  );
 
   if (!user) {
     res.status(400);
-    throw new Error("Invalid or expired reset token");
+    throw new Error("Invalid or expired code");
   }
 
   user.password = password;
@@ -432,6 +477,7 @@ module.exports = {
   login,
   refreshToken,
   forgotPassword,
+  verifyResetCode,
   resetPassword,
   verifyEmailCode,
   resendVerificationCode,

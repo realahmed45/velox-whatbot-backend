@@ -98,22 +98,28 @@ const sendWelcomeEmail = async ({ to, name }) => {
   });
 };
 
-const sendPasswordResetEmail = async ({ to, name, resetUrl }) => {
+const sendPasswordResetEmail = async ({ to, name, code }) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background: #333; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+      <div style="background: #111827; padding: 24px; text-align: center; border-radius: 12px 12px 0 0;">
         <h1 style="color: white; margin: 0;">Botlify</h1>
       </div>
-      <div style="background: white; padding: 30px; border-radius: 0 0 8px 8px;">
-        <h2>Reset Your Password</h2>
-        <p style="color: #666;">Hi ${name}, you requested a password reset. Click the button to set a new password.</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${resetUrl}" style="background: #FF4444; color: white; padding: 14px 32px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">Reset Password</a>
+      <div style="background: white; padding: 32px; border-radius: 0 0 12px 12px;">
+        <h2 style="color: #333;">Reset your password, ${name}!</h2>
+        <p style="color: #666; line-height: 1.6;">Use the code below to reset your Botlify password.</p>
+        <div style="text-align: center; margin: 32px 0;">
+          <div style="display: inline-block; background: #FFF3ED; border: 1px solid #FFD9C2; border-radius: 12px; padding: 18px 40px;">
+            <span style="font-size: 40px; font-weight: 800; letter-spacing: 12px; color: #FF6B2C; font-family: 'Courier New', monospace;">${code}</span>
+          </div>
         </div>
-        <p style="color: #999; font-size: 14px;">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
+        <p style="color: #999; font-size: 14px; text-align: center;">This code expires in 15 minutes. If you didn't request a reset, you can safely ignore this email.</p>
       </div>
     </div>`;
-  return sendEmail({ to, subject: "Reset your Botlify password", html });
+  return sendEmail({
+    to,
+    subject: `${code} is your Botlify password reset code`,
+    html,
+  });
 };
 
 const sendUsageAlertEmail = async ({
