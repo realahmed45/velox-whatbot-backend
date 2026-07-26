@@ -453,14 +453,25 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
   // We always 200 to Meta even on signature mismatch — returning 4xx puts our
   // endpoint into Meta's bad list. Just log and drop the event.
   const sig = req.headers["x-hub-signature-256"];
-  let signatureValid = true;
-  if (sig && IG_APP_SECRET) {
-    const expected =
-      "sha256=" +
-      crypto.createHmac("sha256", IG_APP_SECRET).update(rawBody).digest("hex");
-    if (sig !== expected) {
-      logger.warn("Instagram webhook signature mismatch — dropping");
-      signatureValid = false;
+  // Fail CLOSED: when the app secret is configured, a valid signature is
+  // REQUIRED. A missing or mismatched signature is dropped (prevents forged
+  // events). Only when no secret is configured (dev) do we skip verification.
+  let signatureValid = !IG_APP_SECRET;
+  if (IG_APP_SECRET) {
+    if (!sig) {
+      logger.warn("Instagram webhook missing signature — dropping");
+    } else {
+      const expected =
+        "sha256=" +
+        crypto
+          .createHmac("sha256", IG_APP_SECRET)
+          .update(rawBody)
+          .digest("hex");
+      if (sig === expected) {
+        signatureValid = true;
+      } else {
+        logger.warn("Instagram webhook signature mismatch — dropping");
+      }
     }
   }
 

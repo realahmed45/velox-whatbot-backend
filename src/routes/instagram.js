@@ -5,7 +5,7 @@
 const express = require("express");
 const router = express.Router();
 const igCtrl = require("../controllers/instagramController");
-const { protect } = require("../middleware/auth");
+const { protect, requireWorkspace } = require("../middleware/auth");
 
 // ── OAuth Connect ─────────────────────────────────────────────────────────────
 // Step 1: Redirect user to Meta OAuth (auto-switches to hosted provider when configured)
@@ -41,17 +41,18 @@ router.post("/webhook", igCtrl.receiveWebhook);
 router.post("/webhook/botlify", igCtrl.receiveBotlifyWebhook);
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-router.get("/settings", protect, igCtrl.getSettings);
-router.put("/settings", protect, igCtrl.updateSettings);
+router.get("/settings", protect, requireWorkspace, igCtrl.getSettings);
+router.put("/settings", protect, requireWorkspace, igCtrl.updateSettings);
 
-// ── Debug / Test (protected) ──────────────────────────────────────────────────
-// Manually fire a trigger for testing
-router.post("/test/trigger", protect, igCtrl.testTrigger);
+// ── Diagnostics (protected — must be a member of the workspace) ────────────────
 // Health check — "why isn't my automation working?"
-router.get("/diagnose", protect, igCtrl.diagnose);
-// Reveal decrypted IG identity for Postman webhook simulation
-router.get("/debug/identity", protect, igCtrl.debugIdentity);
-// Force re-subscribe to Meta webhook fields
-router.post("/webhook/resubscribe", protect, igCtrl.resubscribeWebhook);
+router.get("/diagnose", protect, requireWorkspace, igCtrl.diagnose);
+// Force re-subscribe to the provider webhook
+router.post(
+  "/webhook/resubscribe",
+  protect,
+  requireWorkspace,
+  igCtrl.resubscribeWebhook,
+);
 
 module.exports = router;

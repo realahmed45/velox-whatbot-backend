@@ -8,21 +8,9 @@ const {
 } = require("../middleware/auth");
 const c = require("../controllers/webhookIntegrationController");
 const ext = require("../controllers/integrationsExtController");
-const shopifyOAuth = require("../controllers/shopifyOAuthController");
-
-// Public — Shopify redirects here after merchant approves
-router.get("/shopify/callback", shopifyOAuth.oauthCallback);
 
 router.use(protect, requireWorkspace);
 router.use(requirePermission("integrations"));
-
-// Shopify
-router.get("/shopify", ext.getShopify);
-router.get("/shopify/oauth-url", requireOwner, shopifyOAuth.getOAuthUrl);
-router.post("/shopify/storefront", requireOwner, ext.connectShopifyStorefront);
-router.post("/shopify", requireOwner, ext.connectShopify);
-router.get("/shopify/products", ext.listShopifyProducts);
-router.delete("/shopify", requireOwner, ext.disconnectShopify);
 
 // Mailchimp
 router.get("/mailchimp", ext.getMailchimp);

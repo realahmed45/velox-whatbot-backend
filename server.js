@@ -23,7 +23,6 @@ const workspaceRoutes = require("./src/routes/workspace");
 const flowRoutes = require("./src/routes/flows");
 const inboxRoutes = require("./src/routes/inbox");
 const contactRoutes = require("./src/routes/contacts");
-const orderRoutes = require("./src/routes/orders");
 const analyticsRoutes = require("./src/routes/analytics");
 const billingRoutes = require("./src/routes/billing");
 const instagramRoutes = require("./src/routes/instagram");
@@ -33,13 +32,7 @@ const planRoutes = require("./src/routes/plans");
 const scheduledPostsRoutes = require("./src/routes/scheduledPosts");
 const aiRoutes = require("./src/routes/ai");
 const dripRoutes = require("./src/routes/drip");
-const giveawayRoutes = require("./src/routes/giveaways");
-const competitorRoutes = require("./src/routes/competitors");
 const integrationRoutes = require("./src/routes/integrations");
-const linkInBioRoutes = require("./src/routes/linkInBio");
-const publicRoutes = require("./src/routes/publicRoutes");
-const referralRoutes = require("./src/routes/referral");
-const webhookRoutes = require("./src/routes/webhooks");
 
 const app = express();
 const server = http.createServer(app);
@@ -164,29 +157,12 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ─── Email Debug (dev only) ───────────────────────────────
-if (process.env.NODE_ENV !== "production") {
-  app.get("/api/debug/test-email", async (req, res) => {
-    try {
-      const { sendVerificationEmail } = require("./src/services/emailService");
-      const to = req.query.to || "realahmedali4@gmail.com";
-      await sendVerificationEmail({ to, name: "Test User", code: "1234" });
-      res.json({ success: true, message: `Test email sent to ${to}` });
-    } catch (err) {
-      res
-        .status(500)
-        .json({ success: false, error: err.message, code: err.code });
-    }
-  });
-}
-
 // ─── API Routes ────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/flows", flowRoutes);
 app.use("/api/inbox", inboxRoutes);
 app.use("/api/contacts", contactRoutes);
-app.use("/api/orders", orderRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/billing", billingRoutes);
 app.use("/api/instagram", instagramRoutes);
@@ -197,13 +173,7 @@ app.use("/api/scheduled-posts", scheduledPostsRoutes);
 app.use("/api/workspaces/:workspaceId/ai", aiRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/drip-campaigns", dripRoutes);
-app.use("/api/giveaways", giveawayRoutes);
-app.use("/api/competitors", competitorRoutes);
 app.use("/api/integrations", integrationRoutes);
-app.use("/api/bio", linkInBioRoutes);
-app.use("/api/public", publicRoutes);
-app.use("/api/referral", referralRoutes);
-app.use("/api/webhooks", webhookRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
@@ -217,13 +187,10 @@ app.use(errorHandler);
 initSocket(server);
 
 // ─── Background Jobs ───────────────────────────────────────
-initQueues();
-
-// ─── Smart Orders Cron Jobs ────────────────────────────────
 try {
-  require("./src/jobs/smartOrdersCron").startCrons();
+  initQueues();
 } catch (err) {
-  console.warn(`[smartOrders] cron init failed: ${err.message}`);
+  logger.warn(`initQueues failed: ${err.message} — continuing without queues`);
 }
 
 // ─── Instagram Cron Jobs ───────────────────────────────────
@@ -256,14 +223,6 @@ cron.schedule("*/1 * * * *", () => {
   );
 });
 
-// Close expired giveaways every 5 minutes
-const { processExpiredGiveaways } = require("./src/jobs/giveawayJob");
-cron.schedule("*/5 * * * *", () => {
-  processExpiredGiveaways().catch((e) =>
-    logger.warn("[Cron] processExpiredGiveaways error: " + e.message),
-  );
-});
-
 // Poll follower counts every 6 hours (IG has no follow webhook)
 const { pollFollowers } = require("./src/jobs/followerPollingJob");
 cron.schedule("0 */6 * * *", () => {
@@ -281,7 +240,7 @@ cron.schedule("0 3 * * *", () => {
 });
 
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), giveaways (5min), followers (6h)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily)",
 );
 
 // ─── Start Server ──────────────────────────────────────────

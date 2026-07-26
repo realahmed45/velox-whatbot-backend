@@ -992,31 +992,6 @@ const resyncKnowledgeSource = asyncHandler(async (req, res) => {
       src.content = r.content;
       src.charCount = r.charCount;
       src.label = r.title || src.label;
-    } else if (src.type === "shopify") {
-      const shopify = require("../services/shopifyService");
-      const { decrypt } = require("../utils/encryption");
-      const s = ws.integrations?.shopify;
-      if (!s?.storeUrl || !s?.accessToken) {
-        res.status(400);
-        throw new Error("Shopify is no longer connected");
-      }
-      const products = await shopify.listProducts(
-        s.storeUrl,
-        decrypt(s.accessToken),
-        100,
-      );
-      const content =
-        `Live Shopify catalog (${products.length} products):\n${products
-          .map((p) => {
-            const price = p.price
-              ? `${p.currency || ""} ${p.price}`.trim()
-              : "";
-            const stock = p.inStock ? "" : " (out of stock)";
-            return `- ${p.title}${price ? ` — ${price}` : ""}${stock} · ${p.url}`;
-          })
-          .join("\n")}`.slice(0, 16000);
-      src.content = content;
-      src.charCount = content.length;
     } else {
       res.status(400);
       throw new Error("This source can't be re-synced");
@@ -1031,84 +1006,6 @@ const resyncKnowledgeSource = asyncHandler(async (req, res) => {
   ws.aiKnowledge.lastUpdatedAt = new Date();
   await ws.save();
   res.json({ success: true, source: src });
-});
-
-// @POST /api/workspaces/:workspaceId/ai-knowledge/sync-shopify
-// Pull the live Shopify catalog and store it as a knowledge source so the bot
-// can quote real products + prices. Replaces any previous Shopify source.
-const syncShopifyKnowledge = asyncHandler(async (req, res) => {
-  const Workspace = require("../models/Workspace");
-  const shopify = require("../services/shopifyService");
-  const { decrypt } = require("../utils/encryption");
-
-  const ws = await Workspace.findById(req.workspace._id).select(
-    "+integrations.shopify.accessToken",
-  );
-  if (!ws) {
-    res.status(404);
-    throw new Error("Workspace not found");
-  }
-  const s = ws.integrations?.shopify;
-  if (!s?.storeUrl) {
-    res.status(400);
-    throw new Error(
-      "Connect your Shopify store first (Integrations → Shopify)",
-    );
-  }
-
-  let products;
-  try {
-    // Storefront (tokenless) connections — use public REST with full pagination
-    if (s.authMethod === "storefront" || !s.accessToken) {
-      products = await shopify.listAllProductsStorefront(s.storeUrl, 1000);
-    } else {
-      products = await shopify.listProducts(
-        s.storeUrl,
-        decrypt(s.accessToken),
-        250,
-      );
-    }
-  } catch (err) {
-    res.status(422);
-    throw new Error(`Couldn't fetch Shopify products: ${err.message || ""}`);
-  }
-  if (!products.length) {
-    res.status(422);
-    throw new Error("No products found in your Shopify store");
-  }
-
-  const catalogLines = products.map((p) => {
-    const price = p.price ? `${p.currency || ""} ${p.price}`.trim() : "";
-    const stock = p.inStock ? "in stock" : "out of stock";
-    const desc = p.description ? ` — ${p.description.slice(0, 150)}` : "";
-    return `- ${p.title}${price ? ` | ${price}` : ""} | ${stock}${desc} | ${p.url}`;
-  });
-  const content =
-    `Live Shopify catalog (${products.length} products):\n${catalogLines.join(
-      "\n",
-    )}`.slice(0, 50000);
-
-  ws.aiKnowledge = ws.aiKnowledge || {};
-  ws.aiKnowledge.sources = (ws.aiKnowledge.sources || []).filter(
-    (x) => x.type !== "shopify",
-  );
-  ws.aiKnowledge.enabled = true;
-  ws.aiKnowledge.sources.push({
-    type: "shopify",
-    label: `Shopify · ${s.storeUrl}`,
-    url: `https://${s.storeUrl}`,
-    content,
-    status: "ready",
-    charCount: content.length,
-    addedAt: new Date(),
-    syncedAt: new Date(),
-  });
-  ws.aiKnowledge.lastUpdatedAt = new Date();
-  ws.set("aiSettings.enabled", true);
-  await ws.save();
-
-  const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];
-  res.json({ success: true, source, productCount: products.length });
 });
 
 // @DELETE /api/workspaces/:workspaceId/ai-knowledge/sources/:sourceId
@@ -1129,30 +1026,6 @@ const deleteKnowledgeSource = asyncHandler(async (req, res) => {
   res.json({ success: true, sources: ws.aiKnowledge.sources });
 });
 
-// @PUT /api/workspaces/:workspaceId/smart-orders — catalog + payment instructions
-const updateSmartOrders = asyncHandler(async (req, res) => {
-  const Workspace = require("../models/Workspace");
-  const ws = await Workspace.findById(req.workspace._id);
-  if (!ws) {
-    res.status(404);
-    throw new Error("Workspace not found");
-  }
-  const { enabled, catalog, paymentInstructions, notifyPhone } = req.body || {};
-  ws.smartOrders = ws.smartOrders || {};
-  if (typeof enabled === "boolean") ws.smartOrders.enabled = enabled;
-  if (typeof catalog === "string") {
-    ws.smartOrders.catalog = catalog.slice(0, 5000);
-  }
-  if (typeof paymentInstructions === "string") {
-    ws.smartOrders.paymentInstructions = paymentInstructions.slice(0, 1000);
-  }
-  if (typeof notifyPhone === "string") {
-    ws.smartOrders.notifyPhone = notifyPhone.trim().slice(0, 32);
-  }
-  ws.smartOrders.lastUpdatedAt = new Date();
-  await ws.save();
-  res.json({ success: true, smartOrders: ws.smartOrders });
-});
 
 module.exports = {
   createWorkspace,
@@ -1165,9 +1038,7 @@ module.exports = {
   importKnowledgeSource,
   importKnowledgeDocument,
   resyncKnowledgeSource,
-  syncShopifyKnowledge,
   deleteKnowledgeSource,
-  updateSmartOrders,
   saveDmMessages,
   saveAutomationSettings,
   getKeywordTriggers,

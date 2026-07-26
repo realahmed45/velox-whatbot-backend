@@ -73,11 +73,6 @@ router.post(
   c.importKnowledgeDocument,
 );
 router.post(
-  "/:workspaceId/ai-knowledge/sync-shopify",
-  requireOwner,
-  c.syncShopifyKnowledge,
-);
-router.post(
   "/:workspaceId/ai-knowledge/sources/:sourceId/resync",
   requireOwner,
   c.resyncKnowledgeSource,
@@ -87,7 +82,6 @@ router.delete(
   requireOwner,
   c.deleteKnowledgeSource,
 );
-router.put("/:workspaceId/smart-orders", requireOwner, c.updateSmartOrders);
 
 // Team / onboarding
 router.post("/:workspaceId/members/invite", requireOwner, c.inviteMember);

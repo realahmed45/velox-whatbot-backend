@@ -19,7 +19,6 @@ const Contact = require("../../models/Contact");
 const Conversation = require("../../models/Conversation");
 const Message = require("../../models/Message");
 const { DripCampaign, DripEnrollment } = require("../../models/DripCampaign");
-const Giveaway = require("../../models/Giveaway");
 const Flow = require("../../models/Flow");
 const { sendDM } = require(".");
 const { decrypt } = require("../../utils/encryption");
@@ -751,14 +750,7 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     }))
     .filter((m) => m.content);
 
-  // Pull live Shopify data (order status / matching products) for this message.
-  let extraContext = null;
-  try {
-    const shopifyAssist = require("../integrations/shopifyAssist");
-    extraContext = await shopifyAssist.buildContext(workspace, text, contact);
-  } catch (e) {
-    logger.warn(`[IG flow] shopifyAssist failed: ${e.message}`);
-  }
+  const extraContext = null;
 
   logger.info(
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
@@ -808,30 +800,11 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     }
   }
 
-  // Smart Orders — strip the hidden order block before sending
-  let outboundText = reply;
-  try {
-    const smartOrders = require("../smartOrders");
-    const parsed = smartOrders.parseAiOrderBlock(reply);
-    outboundText = parsed.cleanReply || reply;
-    if (parsed.orderData) {
-      await smartOrders.persistOrder({
-        workspace,
-        contact,
-        conversation: conv,
-        channel: "instagram",
-        orderData: parsed.orderData,
-      });
-    }
-  } catch (_) {
-    /* never block reply on order parsing */
-  }
-
   await sendAndLog({
     workspace,
     contact,
     conversation: conv,
-    text: outboundText,
+    text: reply,
     triggerType: TRIGGERS.AI_REPLY,
     imageUrls: imageUrls || [],
   });
@@ -892,47 +865,6 @@ const tryEnrollDripByKeyword = async (workspace, contact, text) => {
     }
   } catch (err) {
     logger.warn(`[drip] enroll error: ${err.message}`);
-  }
-};
-
-// ── Giveaway participant tracking ───────────────────────────────────────────
-const trackGiveawayEntry = async (
-  workspace,
-  postId,
-  senderId,
-  username,
-  commentText,
-  commentId,
-) => {
-  if (!postId) return;
-  try {
-    const active = await Giveaway.find({
-      workspaceId: workspace._id,
-      postId,
-      status: "active",
-      endsAt: { $gt: new Date() },
-    });
-    for (const g of active) {
-      // Keyword filter if set
-      if (
-        g.entryKeyword &&
-        !commentText?.toLowerCase().includes(g.entryKeyword.toLowerCase())
-      ) {
-        continue;
-      }
-      // Skip duplicates
-      if (g.participants.some((p) => p.igUserId === senderId)) continue;
-      g.participants.push({
-        igUserId: senderId,
-        igUsername: username,
-        commentId,
-        commentText,
-        commentedAt: new Date(),
-      });
-      await g.save();
-    }
-  } catch (err) {
-    logger.warn(`[giveaway] entry tracking error: ${err.message}`);
   }
 };
 
@@ -1449,17 +1381,6 @@ const handleWebhookEvent = async (workspaceId, event) => {
     } catch {}
 
     if (type === TRIGGERS.POST_COMMENT) {
-      // Track giveaway entries (if any active on this post)
-      if (event.postId) {
-        await trackGiveawayEntry(
-          workspace,
-          event.postId,
-          senderId,
-          senderUsername,
-          text,
-          event.commentId,
-        );
-      }
       // Hide negative comments (if enabled)
       if (workspace.hideNegativeComments?.enabled && event.commentId) {
         try {
