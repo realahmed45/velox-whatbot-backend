@@ -1,4 +1,5 @@
 const logger = require("../utils/logger");
+const { captureError } = require("../utils/errorMonitor");
 
 // eslint-disable-next-line no-unused-vars
 const errorHandler = (err, req, res, next) => {
@@ -40,6 +41,16 @@ const errorHandler = (err, req, res, next) => {
     logger.error(
       `${statusCode} - ${message} - ${req.method} ${req.originalUrl}`,
     );
+    // Report genuine server faults (5xx) to the error monitor — skip expected
+    // 4xx client errors so we don't drown real bugs in validation noise.
+    if (statusCode >= 500) {
+      captureError(err, {
+        route: `${req.method} ${req.originalUrl}`,
+        statusCode,
+        userId: req.user?._id?.toString(),
+        workspaceId: req.headers["x-workspace-id"],
+      });
+    }
   }
 
   res.status(statusCode).json({

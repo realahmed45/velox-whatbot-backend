@@ -12,6 +12,10 @@ const { initQueues } = require("./src/jobs");
 const errorHandler = require("./src/middleware/errorHandler");
 const rateLimiter = require("./src/middleware/rateLimiter");
 const logger = require("./src/utils/logger");
+const errorMonitor = require("./src/utils/errorMonitor");
+
+// Initialize error monitoring first so startup faults are captured too.
+errorMonitor.init();
 
 // ─── Route Imports ─────────────────────────────────────────
 const authRoutes = require("./src/routes/auth");

@@ -1,5 +1,5 @@
 const { Queue, Worker } = require("bullmq");
-const { getRedisClient } = require("../config/redis");
+const { createRedisConnection } = require("../config/redis");
 const logger = require("../utils/logger");
 
 let broadcastQueue = null;
@@ -16,18 +16,15 @@ const WORKER_DEFAULTS = {
 
 const initQueues = () => {
   try {
-    const redisClient = getRedisClient();
-    if (!redisClient) {
-      logger.warn("Redis not available — background jobs disabled");
+    // Build a validated, dedicated connection for BullMQ. A malformed
+    // REDIS_URL now yields null (handled below) instead of throwing.
+    const connection = createRedisConnection({ enableOfflineQueue: false });
+    if (!connection) {
+      logger.warn(
+        "Redis not configured/invalid — background jobs run via cron fallback",
+      );
       return;
     }
-
-    const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
-    const connection = new (require("ioredis"))(redisUrl, {
-      maxRetriesPerRequest: null,
-      enableOfflineQueue: false,
-      tls: redisUrl.startsWith("rediss://") ? {} : undefined,
-    });
 
     broadcastQueue = new Queue("broadcasts", { connection });
     usageResetQueue = new Queue("usage-reset", { connection });

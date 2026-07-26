@@ -4,6 +4,7 @@
  */
 const crypto = require("crypto");
 const { Queue, Worker } = require("bullmq");
+const { createRedisConnection } = require("../config/redis");
 const logger = require("../utils/logger");
 const WebhookIntegration = require("../models/WebhookIntegration");
 
@@ -16,12 +17,11 @@ let webhookWorker = null;
 
 const initWebhookQueue = (workerDefaults = {}) => {
   try {
-    const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
-    const connection = new (require("ioredis"))(redisUrl, {
-      maxRetriesPerRequest: null,
-      enableOfflineQueue: false,
-      tls: redisUrl.startsWith("rediss://") ? {} : undefined,
-    });
+    const connection = createRedisConnection({ enableOfflineQueue: false });
+    if (!connection) {
+      logger.warn("[webhook] Redis not configured — retry queue disabled");
+      return;
+    }
 
     webhookQueue = new Queue("webhook-delivery", { connection });
 
