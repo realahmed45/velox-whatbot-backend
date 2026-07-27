@@ -1,20 +1,16 @@
 /**
  * Botlify — Unified AI provider abstraction.
  *
- * Provider priority (first available wins):
- *   1. OpenAI  gpt-4o-mini              — if OPENAI_API_KEY set (paid, top tier)
- *   2. Gemini  gemini-2.0-flash         — if GEMINI_API_KEY set (free, accurate)
- *   3. Groq    llama-3.3-70b-versatile  — if GROQ_API_KEY set (free, fast)
+ * Primary:  Google Gemini 2.0 Flash — multimodal, high accuracy, free tier.
+ * Fallback: Groq  llama-3.3-70b     — free/fast, used only if no Gemini key.
  *
- * All three speak the OpenAI chat-completions format (Gemini via Google's
+ * Both speak the OpenAI chat-completions format (Gemini via Google's
  * OpenAI-compatible endpoint), so we reuse the single `openai` SDK for each —
- * no extra dependency. Switching providers is purely a matter of which API key
- * is set in the environment.
+ * no extra dependency. Provider is chosen by which API key is set.
  */
 const logger = require("../../utils/logger");
 
 let groqClient = null;
-let openaiClient = null;
 let geminiClient = null;
 
 const GEMINI_MODEL = "gemini-2.0-flash";
@@ -35,19 +31,8 @@ const getGroqClient = () => {
   }
 };
 
-const getOpenaiClient = () => {
-  if (openaiClient) return openaiClient;
-  if (!process.env.OPENAI_API_KEY) return null;
-  try {
-    const OpenAI = require("openai");
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    return openaiClient;
-  } catch {
-    return null;
-  }
-};
-
-// Google Gemini via its OpenAI-compatible endpoint. Free tier, high accuracy.
+// Google Gemini via its OpenAI-compatible endpoint. Free tier, high accuracy,
+// natively multimodal. This is Botlify's primary AI provider.
 const getGeminiClient = () => {
   if (geminiClient) return geminiClient;
   if (!process.env.GEMINI_API_KEY) return null;
@@ -337,7 +322,7 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
 
 /**
  * Generate a chatbot reply.
- * Provider priority: openai (gpt-4o-mini) → groq (fallback)
+ * Provider priority: gemini (gemini-2.0-flash) → groq (fallback)
  */
 const generateReply = async ({
   workspace,
@@ -345,6 +330,7 @@ const generateReply = async ({
   userMessage,
   contact,
   extraContext = null,
+  incomingImageUrl = null,
 }) => {
   const ai = {
     ...(workspace.aiBot || {}),
@@ -367,7 +353,9 @@ const generateReply = async ({
   logger.info(
     `[AI:generateReply] ws=${workspace?._id} msg="${(userMessage || "").slice(0, 60)}" hasSendableImages=${hasSendableImages}`,
   );
-  if (!escalate && !extraContext && !hasSendableImages) {
+  // Skip the instant-FAQ shortcut when the customer sent an image — a photo
+  // needs the vision model to actually look at it.
+  if (!escalate && !extraContext && !hasSendableImages && !incomingImageUrl) {
     const faqHit = matchFaq(ai.faqs, userMessage);
     if (faqHit) {
       logger.info(`[AI:generateReply] ws=${workspace?._id} → FAQ match`);
@@ -380,26 +368,16 @@ const generateReply = async ({
     }
   }
 
-  // 3. Determine provider by which API key is set (priority: OpenAI → Gemini →
-  // Groq). Set the key for the provider you want; the switch needs no code
-  // change. Recommended free launch: GEMINI_API_KEY (accurate + free).
-  let client = getOpenaiClient();
-  let model = "gpt-4o-mini";
-  let providerUsed = "openai";
+  // 3. Determine provider. Gemini 2.0 Flash is primary (set GEMINI_API_KEY);
+  // Groq (Llama 3.3 70B) is a free fallback if no Gemini key is configured.
+  let client = getGeminiClient();
+  let model = GEMINI_MODEL;
+  let providerUsed = "gemini";
 
   if (!client) {
-    client = getGeminiClient();
-    if (client) {
-      model = GEMINI_MODEL;
-      providerUsed = "gemini";
-    }
-  }
-  if (!client) {
     client = getGroqClient();
-    if (client) {
-      model = "llama-3.3-70b-versatile";
-      providerUsed = "groq";
-    }
+    model = "llama-3.3-70b-versatile";
+    providerUsed = "groq";
   }
 
   if (!client) {
@@ -413,13 +391,31 @@ const generateReply = async ({
 
   const systemPrompt = buildSystemPrompt(workspace, contact, extraContext);
 
+  // If the customer sent a photo, build a multimodal user turn so the vision
+  // model actually looks at it. Falls back to a plain text turn otherwise.
+  const userTurn = incomingImageUrl
+    ? {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              userMessage && userMessage.trim()
+                ? userMessage
+                : "The customer sent this image. Look at it and reply helpfully about our business.",
+          },
+          { type: "image_url", image_url: { url: incomingImageUrl } },
+        ],
+      }
+    : { role: "user", content: userMessage || "" };
+
   try {
     const response = await client.chat.completions.create({
       model,
       messages: [
         { role: "system", content: systemPrompt },
         ...history.slice(-12),
-        { role: "user", content: userMessage || "" },
+        userTurn,
       ],
       temperature: typeof ai.temperature === "number" ? ai.temperature : 0.45,
       max_tokens: ai.maxTokens || 600,
@@ -464,8 +460,9 @@ const generateReply = async ({
     logger.error(`AI generateReply (${providerUsed}) failed`, {
       err: err.message,
     });
-    // Try Groq as emergency fallback if OpenAI failed
-    if (providerUsed === "openai") {
+    // If the primary (Gemini) errored mid-call, try Groq so the bot still
+    // replies instead of going silent.
+    if (providerUsed !== "groq") {
       const groq = getGroqClient();
       if (groq) {
         try {
@@ -504,12 +501,10 @@ const generateReply = async ({
 };
 
 /**
- * Return the first available chat client (OpenAI preferred, Groq fallback).
+ * Return the first available chat client (Gemini preferred, Groq fallback).
  */
 const getAnyClient = () => {
-  let client = getOpenaiClient();
-  if (client) return { client, model: "gpt-4o-mini", provider: "openai" };
-  client = getGeminiClient();
+  let client = getGeminiClient();
   if (client) return { client, model: GEMINI_MODEL, provider: "gemini" };
   client = getGroqClient();
   if (client)
@@ -560,14 +555,15 @@ const completeVision = async ({
   instruction,
   maxTokens = 1500,
 }) => {
-  const groq = getGroqClient();
-  const oai = getOpenaiClient();
-  const client = groq || oai;
+  // Gemini is natively multimodal — use it first for vision; Groq's vision
+  // model is the fallback. Both accept base64 data URLs in OpenAI format.
+  const gemini = getGeminiClient();
+  const groq = gemini ? null : getGroqClient();
+  const client = gemini || groq;
   if (!client) return null;
-  // Groq + OpenAI both accept base64 data URLs on a vision-capable model.
-  const model = groq
-    ? "meta-llama/llama-4-scout-17b-16e-instruct"
-    : "gpt-4o-mini";
+  const model = gemini
+    ? GEMINI_MODEL
+    : "meta-llama/llama-4-scout-17b-16e-instruct";
   const dataUrl = `data:${mimetype};base64,${buffer.toString("base64")}`;
   try {
     const r = await client.chat.completions.create({

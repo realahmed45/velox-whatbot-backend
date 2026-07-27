@@ -4,24 +4,28 @@
  */
 const logger = require("../../utils/logger");
 
-let openaiClient = null;
-const getClient = () => {
-  if (openaiClient) return openaiClient;
-  if (!process.env.OPENAI_API_KEY) return null;
+const GEMINI_MODEL = "gemini-2.0-flash";
+
+// Google Gemini via its OpenAI-compatible endpoint — Botlify's primary AI.
+let geminiClient = null;
+const getGeminiClient = () => {
+  if (geminiClient) return geminiClient;
+  if (!process.env.GEMINI_API_KEY) return null;
   try {
     const OpenAI = require("openai");
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    return openaiClient;
-  } catch (e) {
-    logger.warn("OpenAI SDK not installed: run `npm install openai`");
+    geminiClient = new OpenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    });
+    return geminiClient;
+  } catch {
+    logger.warn("openai SDK not installed: run `npm install openai`");
     return null;
   }
 };
 
-// Groq fallback (same as the bot). Groq is OpenAI-API compatible, so we reuse
-// the OpenAI SDK pointed at Groq's endpoint. Utilities like hashtag research and
-// caption generation use this so they work whenever a GROQ_API_KEY is set even
-// if no OpenAI key is configured.
+// Groq fallback. Groq is OpenAI-API compatible, so we reuse the OpenAI SDK
+// pointed at Groq's endpoint. Used when no GEMINI_API_KEY is configured.
 let groqClient = null;
 const getGroqClient = () => {
   if (groqClient) return groqClient;
@@ -38,10 +42,10 @@ const getGroqClient = () => {
   }
 };
 
-// Prefer OpenAI; fall back to Groq. Returns { client, model } or null.
+// Prefer Gemini; fall back to Groq. Returns { client, model } or null.
 const getUtilityClient = () => {
-  const oa = getClient();
-  if (oa) return { client: oa, model: "gpt-4o-mini" };
+  const gm = getGeminiClient();
+  if (gm) return { client: gm, model: GEMINI_MODEL };
   const gq = getGroqClient();
   if (gq) return { client: gq, model: "llama-3.3-70b-versatile" };
   return null;
@@ -62,13 +66,14 @@ const generateReply = async ({
   userMessage,
   contact,
 }) => {
-  const client = getClient();
+  const svc = getUtilityClient();
+  const client = svc?.client || null;
   const cfg = workspace.aiBot || {};
   const personality =
     cfg.personality ||
     "You are a friendly, professional assistant for our Instagram business.";
   const businessInfo = cfg.businessInfo || "";
-  const model = cfg.model || "gpt-4o-mini";
+  const model = svc?.model || "gemini-2.0-flash";
   const escalateKeywords = cfg.escalateOnKeywords || [
     "human",
     "agent",
@@ -227,7 +232,7 @@ const suggestReplies = async ({
   userMessage,
   contact,
 }) => {
-  const client = getClient();
+  const client = getUtilityClient()?.client || null;
   if (!client) {
     return {
       suggestions: [
@@ -248,7 +253,7 @@ Return JSON: { "suggestions": ["...", "...", "..."] }`;
 
   try {
     const response = await client.chat.completions.create({
-      model: cfg.model || "gpt-4o-mini",
+      model: getUtilityClient()?.model || "gemini-2.0-flash",
       messages: [
         { role: "system", content: sys },
         ...history.slice(-8),
@@ -274,7 +279,8 @@ Return JSON: { "suggestions": ["...", "...", "..."] }`;
  * Returns: { sentiment: 'positive'|'neutral'|'negative'|'angry', intent, confidence, urgency }
  */
 const analyzeSentiment = async (text) => {
-  const client = getClient();
+  const svc = getUtilityClient();
+  const client = svc?.client || null;
   if (!client || !text) {
     return {
       sentiment: "neutral",
@@ -286,7 +292,7 @@ const analyzeSentiment = async (text) => {
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: svc?.model || "gemini-2.0-flash",
       messages: [
         {
           role: "system",
@@ -315,12 +321,11 @@ const analyzeSentiment = async (text) => {
  * Moderate a comment — detect profanity, spam, competitor mention, toxicity.
  */
 const moderateComment = async (text, competitorNames = []) => {
-  const client = getClient();
-  if (!client || !text) {
-    return { hide: false, reason: null };
-  }
+  if (!text) return { hide: false, reason: null };
 
-  // Quick local check first (cheap)
+  // Quick local check (cheap, provider-independent). This is the primary
+  // moderation path now that we run on Gemini — the OpenAI moderations
+  // endpoint below is used only if an OpenAI-compatible client exposes it.
   const lower = text.toLowerCase();
   const profanity = ["fuck", "shit", "bitch", "asshole", "dick", "bastard"];
   if (profanity.some((w) => lower.includes(w))) {
@@ -330,6 +335,10 @@ const moderateComment = async (text, competitorNames = []) => {
     return { hide: true, reason: "competitor_mention" };
   }
 
+  const client = getUtilityClient()?.client || null;
+  if (!client || typeof client.moderations?.create !== "function") {
+    return { hide: false, reason: null };
+  }
   try {
     const response = await client.moderations.create({ input: text });
     const flagged = response.results?.[0]?.flagged;
@@ -408,8 +417,12 @@ Return JSON: { "hashtags": { "big": ["#tag1",...], "medium": ["#tag2",...], "nic
  * @returns {Promise<{text:string, error?:string}>}
  */
 const transcribeAudio = async ({ url }) => {
-  const client = getClient();
-  if (!client) return { text: "", error: "OpenAI not configured" };
+  // Voice-note transcription used OpenAI Whisper, which we no longer configure.
+  // Degrade gracefully — callers already handle an empty transcript.
+  const client = getUtilityClient()?.client || null;
+  if (!client || typeof client.audio?.transcriptions?.create !== "function") {
+    return { text: "", error: "audio transcription not available" };
+  }
   try {
     const axios = require("axios");
     const { data } = await axios.get(url, {

@@ -652,6 +652,14 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
           }
         }
 
+        // Image support: if the customer sent a photo, capture its URL so the
+        // AI bot can look at it (Gemini is multimodal). Passed through to the
+        // engine as incomingImageUrl.
+        const imageAttachment = attachments.find(
+          (a) => a.type === "image" && a.payload?.url,
+        );
+        const incomingImageUrl = imageAttachment?.payload?.url || null;
+
         const igProfile = await lookupIgProfile(ws, senderId);
         await handleWebhookEvent(ws._id, {
           type: "direct_message",
@@ -660,6 +668,7 @@ exports.receiveWebhook = asyncHandler(async (req, res) => {
           senderName: igProfile.name,
           senderProfilePic: igProfile.profilePic,
           text: messageText,
+          incomingImageUrl,
         });
       }
 
@@ -1759,6 +1768,17 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           );
         }
 
+        // Image support: if the customer sent a photo, capture its URL so the
+        // AI bot can look at it (Gemini is multimodal).
+        const imageAtt = attArr.find(
+          (a) =>
+            String(a?.type || "")
+              .toLowerCase()
+              .includes("image") && (a?.payload?.url || a?.url),
+        );
+        const incomingImageUrl =
+          imageAtt?.payload?.url || imageAtt?.url || null;
+
         await handleWebhookEvent(target._id, {
           type: innerType,
           senderId,
@@ -1767,6 +1787,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           providerConversationId:
             evt.conversation?.id || msg.conversationId || null,
           text: msg.text || msg.content || msg.body || evt.text || "",
+          incomingImageUrl,
           storyId:
             meta.storyReply?.storyId || meta.storyMention?.storyId || null,
         });

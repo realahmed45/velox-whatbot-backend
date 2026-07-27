@@ -737,7 +737,8 @@ const bumpAiStats = async (workspace, { faq, handoff, lead }) => {
   );
 };
 
-const handleAIReply = async (workspace, contact, conv, text) => {
+const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
+  const { incomingImageUrl = null } = opts;
   const plan = workspace.subscription?.plan || "free";
   if (!planHasFeature(plan, FEATURES.AI_BOT)) {
     logger.info(
@@ -784,6 +785,7 @@ const handleAIReply = async (workspace, contact, conv, text) => {
     contact,
     extraContext,
     channel: "instagram",
+    incomingImageUrl,
   });
 
   logger.info(
@@ -1363,7 +1365,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
     }
 
     if (!workspace.__simulate) {
-      if (workspace.instagram?.status !== "connected") {
+      // Allow both "connected" and "error" (credentials kept on a provider
+      // blip) so the bot keeps replying until the user truly disconnects.
+      if (!["connected", "error"].includes(workspace.instagram?.status)) {
         logger.info(
           `[IG flow] ws=${workspaceId} not connected (status=${workspace.instagram?.status})`,
         );
@@ -1385,6 +1389,7 @@ const handleWebhookEvent = async (workspaceId, event) => {
       senderProfilePic,
       providerConversationId,
       text,
+      incomingImageUrl,
     } = event;
     if (!senderId) return;
     logger.info(
@@ -1639,7 +1644,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
         logger.info(`[IG flow] handled by WELCOME`);
         return;
       }
-      if (text && (await handleAIReply(workspace, contact, conv, text))) {
+      // Fire the AI on text OR an incoming image (Gemini can read the photo).
+      if (
+        (text || incomingImageUrl) &&
+        (await handleAIReply(workspace, contact, conv, text, {
+          incomingImageUrl,
+        }))
+      ) {
         logger.info(`[IG flow] handled by AI_REPLY`);
         return;
       }
