@@ -13,17 +13,10 @@ const {
   sendPasswordResetEmail,
   sendSignupNotification,
 } = require("../services/emailService");
-const { EARLY_BIRD_LIMIT } = require("../config/earlyBird");
 
-// Decide a new user's join order + early-bird eligibility. Called right before
-// User.create. Uses the current user count as the (0-based) index, so the very
-// first user is signupNumber 1. Not perfectly race-proof under a stampede, but
-// fine at our scale and never over-grants beyond a small margin.
-const computeEarlyBird = async () => {
-  const count = await User.countDocuments();
-  const signupNumber = count + 1;
-  return { signupNumber, earlyBird: signupNumber <= EARLY_BIRD_LIMIT };
-};
+// A new user's 1-based join order, computed right before User.create from the
+// current user count. Purely informational (shown in the admin panel).
+const nextSignupNumber = async () => (await User.countDocuments()) + 1;
 
 // Fire-and-forget: email the admin that a new user just joined. Never blocks or
 // fails signup.
@@ -33,7 +26,6 @@ const notifyAdminOfSignup = (user, method) => {
     email: user.email,
     method,
     signupNumber: user.signupNumber,
-    earlyBird: user.earlyBird,
   }).catch((err) =>
     logger.error("[signup] admin notification failed", { err: err.message }),
   );
@@ -73,7 +65,7 @@ const register = asyncHandler(async (req, res) => {
   // joins someone else's workspace as an agent). Any referral code is stashed
   // on the user and applied when they create their first workspace.
   const verificationCode = generateVerificationCode();
-  const { signupNumber, earlyBird } = await computeEarlyBird();
+  const signupNumber = await nextSignupNumber();
   const user = await User.create({
     name,
     email,
@@ -83,7 +75,6 @@ const register = asyncHandler(async (req, res) => {
     emailVerificationExpires: Date.now() + 15 * 60 * 1000, // 15 minutes
     pendingRef: ref ? String(ref).toUpperCase().trim() : undefined,
     signupNumber,
-    earlyBird,
     // Remember what they typed as their business name for the onboarding step.
     ...(businessName ? {} : {}),
   });
@@ -472,7 +463,7 @@ const googleAuth = asyncHandler(async (req, res) => {
     // Account only — no workspace. It's created deliberately at onboarding, or
     // never for someone who only joins another workspace as an agent. Stash any
     // referral code to apply when they create their first workspace.
-    const { signupNumber, earlyBird } = await computeEarlyBird();
+    const signupNumber = await nextSignupNumber();
     user = await User.create({
       googleId,
       email,
@@ -481,7 +472,6 @@ const googleAuth = asyncHandler(async (req, res) => {
       isEmailVerified: true, // Google-verified emails are trusted
       pendingRef: ref ? String(ref).toUpperCase().trim() : undefined,
       signupNumber,
-      earlyBird,
     });
     notifyAdminOfSignup(user, "google");
   } else if (!user.googleId) {

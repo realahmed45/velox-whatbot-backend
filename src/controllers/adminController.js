@@ -14,7 +14,6 @@ const {
   signAdminToken,
   isAdminConfigured,
 } = require("../middleware/adminAuth");
-const { EARLY_BIRD_LIMIT } = require("../config/earlyBird");
 
 // @POST /api/admin/login  { email, password } -> { token }
 const login = asyncHandler(async (req, res) => {
@@ -43,7 +42,6 @@ const overview = asyncHandler(async (req, res) => {
     usersToday,
     usersThisWeek,
     verifiedUsers,
-    earlyBirdUsers,
     totalWorkspaces,
     connectedWorkspaces,
     activeSubs,
@@ -53,7 +51,6 @@ const overview = asyncHandler(async (req, res) => {
     User.countDocuments({ createdAt: { $gte: dayAgo } }),
     User.countDocuments({ createdAt: { $gte: weekAgo } }),
     User.countDocuments({ isEmailVerified: true }),
-    User.countDocuments({ earlyBird: true }),
     Workspace.countDocuments(),
     Workspace.countDocuments({ "instagram.status": "connected" }),
     Workspace.countDocuments({ "subscription.status": "active" }),
@@ -77,9 +74,6 @@ const overview = asyncHandler(async (req, res) => {
       today: usersToday,
       thisWeek: usersThisWeek,
       verified: verifiedUsers,
-      earlyBird: earlyBirdUsers,
-      earlyBirdLimit: EARLY_BIRD_LIMIT,
-      earlyBirdRemaining: Math.max(0, EARLY_BIRD_LIMIT - earlyBirdUsers),
     },
     workspaces: {
       total: totalWorkspaces,
@@ -112,7 +106,7 @@ const listUsers = asyncHandler(async (req, res) => {
   const [users, total] = await Promise.all([
     User.find(filter)
       .select(
-        "name email isEmailVerified earlyBird signupNumber role createdAt lastLogin",
+        "name email isEmailVerified signupNumber role createdAt lastLogin",
       )
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
