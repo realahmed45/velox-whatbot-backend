@@ -10,6 +10,7 @@ const {
   handleWebhookEvent,
 } = require("../services/instagram/automationEngine");
 const { encrypt, decrypt } = require("../utils/encryption");
+const { hashToken } = require("../utils/crypto");
 const logger = require("../utils/logger");
 
 const IG_APP_ID = process.env.IG_APP_ID;
@@ -285,6 +286,7 @@ exports.disconnect = asyncHandler(async (req, res) => {
       "instagram.pageId": 1,
       "instagram.sessionCookie": 1,
       "instagram.botlifyAccountId": 1,
+      "instagram.igAccountHash": 1,
     },
     "instagram.status": "disconnected",
   });
@@ -339,6 +341,7 @@ exports.deauthorize = asyncHandler(async (req, res) => {
             "instagram.accessToken": 1,
             "instagram.pageId": 1,
             "instagram.sessionCookie": 1,
+            "instagram.igAccountHash": 1,
           },
           "instagram.status": "disconnected",
           "instagram.webhookSubscribed": false,
@@ -378,6 +381,7 @@ exports.dataDeletion = asyncHandler(async (req, res) => {
             "instagram.username": 1,
             "instagram.displayName": 1,
             "instagram.profilePicture": 1,
+            "instagram.igAccountHash": 1,
           },
           "instagram.status": "disconnected",
           "instagram.webhookSubscribed": false,
@@ -1240,6 +1244,26 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
       throw new Error("Could not resolve the connected Instagram account id");
     }
 
+    // SECURITY: one Instagram account may only be connected to one workspace.
+    // Hash the resolved account id and check whether ANOTHER workspace already
+    // owns it. If so, refuse — don't let a second user hijack the same account.
+    const igAccountHash = hashToken(String(acc));
+    const conflict = await Workspace.findOne({
+      "instagram.igAccountHash": igAccountHash,
+      "instagram.status": "connected",
+      _id: { $ne: workspaceId },
+    }).select("_id");
+    if (conflict) {
+      logger.warn("[BotlifyIG] duplicate connect blocked", {
+        workspaceId,
+        conflictWorkspace: String(conflict._id),
+        igUsername: info?.username,
+      });
+      return res.redirect(
+        `${process.env.CLIENT_URL}/dashboard?error=already_connected`,
+      );
+    }
+
     // Subscribe the IG account to our webhook on the provider side.
     let webhookSubscribed = false;
     let webhookError = null;
@@ -1263,6 +1287,7 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
       "instagram.igUserId": encrypt(String(info.user_id || acc)),
       "instagram.accessToken": encrypt(wrappedToken),
       "instagram.botlifyAccountId": encrypt(acc),
+      "instagram.igAccountHash": igAccountHash,
       "instagram.username": info.username,
       "instagram.displayName": info.name || info.username,
       "instagram.profilePicture": info.profile_picture_url,
@@ -1462,6 +1487,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           $unset: {
             "instagram.accessToken": 1,
             "instagram.botlifyAccountId": 1,
+            "instagram.igAccountHash": 1,
           },
         },
       ).catch(() => {});

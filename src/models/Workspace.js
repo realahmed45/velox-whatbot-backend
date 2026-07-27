@@ -60,6 +60,12 @@ const instagramConnectionSchema = new mongoose.Schema(
       enum: ["meta_oauth", "session_cookie", "botlify_oauth"],
       default: "meta_oauth",
     },
+    // Deterministic SHA-256 of the connected IG/Zernio account id. Unlike the
+    // encrypted id fields (random output, can't be indexed for uniqueness),
+    // this hash is stable, so a sparse UNIQUE index on it guarantees one IG
+    // account can only be connected to ONE workspace at a time. Set on connect,
+    // cleared on disconnect. See models index below.
+    igAccountHash: { type: String, default: null },
     connectedAt: Date,
     tokenExpiresAt: Date,
     lastMessageAt: Date,
@@ -587,6 +593,20 @@ const workspaceSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+  },
+);
+
+// One Instagram account can only be connected to ONE workspace. The hash is a
+// stable SHA-256 of the account id (the encrypted id fields can't be uniquely
+// indexed). Sparse so the many workspaces with no connection (null) don't
+// collide; partial so only real connections are constrained.
+workspaceSchema.index(
+  { "instagram.igAccountHash": 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      "instagram.igAccountHash": { $type: "string" },
+    },
   },
 );
 
