@@ -1,14 +1,14 @@
 /**
  * Botlify — early-bird founding-users program.
  *
- * The first EARLY_BIRD_LIMIT users to sign up get a permanent DISCOUNT_PERCENT
- * off Basic & Pro, for the lifetime of their subscription.
+ * The first EARLY_BIRD_LIMIT users to sign up get DISCOUNT_PERCENT off Basic &
+ * Pro for their first 3 months.
  *
  * The discount itself is applied at Creem checkout via a coupon code that you
  * create in the Creem dashboard (percentage = DISCOUNT_PERCENT, duration =
- * "forever"), then set as CREEM_EARLY_BIRD_CODE in the backend env. Eligibility
- * is decided here at signup (see authController); checkout passes the code only
- * for eligible users.
+ * "repeating" for 3 months), then set as CREEM_EARLY_BIRD_CODE in the backend
+ * env. Eligibility is decided here at signup (see authController); checkout
+ * passes the code only for eligible users.
  */
 
 const EARLY_BIRD_LIMIT = Number(process.env.EARLY_BIRD_LIMIT || 100);

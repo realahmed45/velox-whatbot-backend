@@ -976,8 +976,8 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
     );
   }
 
-  // Early-bird founding users get their permanent discount applied at checkout
-  // via the Creem coupon code (if one is configured). Everyone else pays full.
+  // Early-bird founding users get their first-3-months discount applied at
+  // checkout via the Creem coupon code (if configured). Everyone else pays full.
   const earlyBirdCode =
     req.user.earlyBird && CREEM_EARLY_BIRD_CODE ? CREEM_EARLY_BIRD_CODE : null;
 
