@@ -49,6 +49,12 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Early-bird program: the first N users (see EARLY_BIRD_LIMIT) get a
+    // permanent discount. signupNumber is their 1-based join order; earlyBird
+    // is true if that number is within the limit at signup time. Set once, on
+    // account creation, and never changes afterwards.
+    signupNumber: { type: Number },
+    earlyBird: { type: Boolean, default: false },
     // Referral code captured at signup, applied when the user creates their
     // first (owned) workspace during onboarding. Cleared once used.
     pendingRef: {

@@ -10,6 +10,7 @@ const paddleService = require("../services/payments/paddleService");
 const paddleConfig = require("../config/paddle");
 const creemService = require("../services/payments/creemService");
 const creemConfig = require("../config/creem");
+const { CREEM_EARLY_BIRD_CODE } = require("../config/earlyBird");
 const { sendInvoiceEmail } = require("../services/emailService");
 const { v4: uuidv4 } = require("uuid");
 const moment = require("moment");
@@ -975,17 +976,24 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
     );
   }
 
+  // Early-bird founding users get their permanent discount applied at checkout
+  // via the Creem coupon code (if one is configured). Everyone else pays full.
+  const earlyBirdCode =
+    req.user.earlyBird && CREEM_EARLY_BIRD_CODE ? CREEM_EARLY_BIRD_CODE : null;
+
   const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
   const url = await creemService.createCheckout({
     productId,
     email: req.user.email,
     successUrl: `${clientUrl}/dashboard/billing?checkout=success`,
     requestId: String(req.workspace._id),
+    discountCode: earlyBirdCode,
     metadata: {
       workspace_id: String(req.workspace._id),
       user_id: String(req.user._id),
       plan: planId,
       cycle,
+      ...(earlyBirdCode ? { early_bird: "true" } : {}),
     },
   });
   res.json({ success: true, url });

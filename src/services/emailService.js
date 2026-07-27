@@ -227,6 +227,40 @@ const sendTeamInviteEmail = async ({
   });
 };
 
+// Notify the platform admin that a new user just signed up. Sent to
+// ADMIN_NOTIFY_EMAIL (falls back to a sensible default). Best-effort.
+const sendSignupNotification = async ({
+  name,
+  email,
+  method,
+  signupNumber,
+  earlyBird,
+}) => {
+  const to = process.env.ADMIN_NOTIFY_EMAIL || "realahmedali4@gmail.com";
+  const badge = earlyBird
+    ? `<span style="display:inline-block;background:#FFF3ED;color:#FF6B2C;border:1px solid #FFD9C2;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;">⭐ Early-bird user #${signupNumber}</span>`
+    : `<span style="color:#888;font-size:13px;">User #${signupNumber || "?"}</span>`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto;">
+      <div style="background:#0f172a;padding:18px 24px;border-radius:8px 8px 0 0;">
+        <h2 style="color:#fff;margin:0;font-size:18px;">🎉 New Botlify signup</h2>
+      </div>
+      <div style="background:#fff;border:1px solid #eee;border-top:none;padding:22px 24px;border-radius:0 0 8px 8px;">
+        <table style="width:100%;font-size:14px;color:#333;border-collapse:collapse;">
+          <tr><td style="padding:6px 0;color:#888;width:120px;">Name</td><td style="padding:6px 0;font-weight:600;">${name || "—"}</td></tr>
+          <tr><td style="padding:6px 0;color:#888;">Email</td><td style="padding:6px 0;font-weight:600;">${email}</td></tr>
+          <tr><td style="padding:6px 0;color:#888;">Method</td><td style="padding:6px 0;">${method === "google" ? "Google" : "Email + password"}</td></tr>
+          <tr><td style="padding:6px 0;color:#888;">Position</td><td style="padding:6px 0;">${badge}</td></tr>
+        </table>
+      </div>
+    </div>`;
+  return sendEmail({
+    to,
+    subject: `🎉 New signup: ${name || email}${earlyBird ? ` (early-bird #${signupNumber})` : ""}`,
+    html,
+  });
+};
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
@@ -235,4 +269,5 @@ module.exports = {
   sendUsageAlertEmail,
   sendInvoiceEmail,
   sendTeamInviteEmail,
+  sendSignupNotification,
 };

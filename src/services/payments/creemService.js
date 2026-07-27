@@ -35,6 +35,7 @@ async function createCheckout({
   successUrl,
   metadata,
   requestId,
+  discountCode,
 }) {
   if (!isConfigured()) throw new Error("Creem is not configured");
   if (!productId) throw new Error("Missing Creem product id for plan");
@@ -45,6 +46,9 @@ async function createCheckout({
     metadata: metadata || {},
     ...(requestId ? { request_id: requestId } : {}),
     ...(email ? { customer: { email } } : {}),
+    // Early-bird / promo coupon created in the Creem dashboard. Applied only
+    // when the caller passes it (e.g. for eligible founding users).
+    ...(discountCode ? { discount_code: discountCode } : {}),
   };
 
   const resp = await fetch(`${API_BASE}/v1/checkouts`, {
