@@ -62,11 +62,36 @@ async function createCheckout({
       status: resp.status,
       body: text.slice(0, 500),
     });
+    // If a bad/expired discount code was the cause, surface it clearly so we
+    // never fail silently (Creem returns 4xx when the code is invalid).
+    if (discountCode && resp.status >= 400 && resp.status < 500) {
+      logger.error("[Creem] checkout rejected — discount code may be invalid", {
+        discountCode,
+      });
+    }
     throw new Error("Could not start checkout. Please try again.");
   }
   const json = await resp.json();
   const url = json?.checkout_url || json?.data?.checkout_url;
   if (!url) throw new Error("Creem did not return a checkout URL");
+
+  // Confirm the discount actually landed. Creem echoes an applied `discount`
+  // object on the checkout. If we sent a code but nothing came back, log LOUDLY
+  // — this is the "silently charged full price" failure mode we must catch.
+  const appliedDiscount = json?.discount || json?.data?.discount || null;
+  if (discountCode && !appliedDiscount) {
+    logger.error(
+      "[Creem] WARNING: sent discount_code but Creem applied NO discount — check the coupon code/status in the Creem dashboard",
+      { discountCode },
+    );
+  } else if (discountCode && appliedDiscount) {
+    logger.info("[Creem] discount applied to checkout", {
+      code: appliedDiscount.code || discountCode,
+      type: appliedDiscount.type,
+      amount: appliedDiscount.amount ?? appliedDiscount.percentage,
+      duration: appliedDiscount.duration,
+    });
+  }
   return url;
 }
 

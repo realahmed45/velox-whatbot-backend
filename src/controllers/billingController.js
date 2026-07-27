@@ -980,6 +980,9 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
   // checkout via the Creem coupon code (if configured). Everyone else pays full.
   const earlyBirdCode =
     req.user.earlyBird && CREEM_EARLY_BIRD_CODE ? CREEM_EARLY_BIRD_CODE : null;
+  logger.info(
+    `[Creem checkout] user=${req.user.email} earlyBird=${!!req.user.earlyBird} signupNumber=${req.user.signupNumber ?? "?"} couponConfigured=${!!CREEM_EARLY_BIRD_CODE} applying=${earlyBirdCode ? "YES" : "no"}`,
+  );
 
   const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
   const url = await creemService.createCheckout({
