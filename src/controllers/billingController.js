@@ -939,30 +939,6 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
   }
   const cycle = billingCycle === "annual" ? "annual" : "monthly";
 
-  // ── DEMO BYPASS ────────────────────────────────────────────────────────
-  // When DEMO_BYPASS_BILLING=true we skip Creem entirely: activate the chosen
-  // plan for this workspace and send the user straight to the dashboard. Lets
-  // us demo the full product with no payment provider. Remove the env var (or
-  // set it to anything but "true") to restore real Creem checkout — no code
-  // change needed. All Creem code below stays intact.
-  if (process.env.DEMO_BYPASS_BILLING === "true") {
-    await activatePlan({
-      workspaceId: req.workspace._id,
-      plan: planId,
-      billingCycle: cycle,
-      paymentMethod: "demo",
-      provider: "demo",
-      txnRef: `demo_${req.workspace._id}`,
-      amount: 0,
-      currency: "USD",
-      resetUsage: true,
-      extra: { status: "active" },
-    });
-    const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
-    return res.json({ success: true, url: `${clientUrl}/dashboard` });
-  }
-  // ───────────────────────────────────────────────────────────────────────
-
   if (!creemConfig.isConfigured()) {
     res.status(503);
     throw new Error("Card payments are not configured yet.");
