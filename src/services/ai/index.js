@@ -1,13 +1,23 @@
 /**
  * Botlify — Unified AI provider abstraction.
  *
- * Default: OpenAI gpt-4o-mini (best quality/cost ratio)
- * Fallback: Groq (free, fast) if no OpenAI key configured
+ * Provider priority (first available wins):
+ *   1. OpenAI  gpt-4o-mini              — if OPENAI_API_KEY set (paid, top tier)
+ *   2. Gemini  gemini-2.0-flash         — if GEMINI_API_KEY set (free, accurate)
+ *   3. Groq    llama-3.3-70b-versatile  — if GROQ_API_KEY set (free, fast)
+ *
+ * All three speak the OpenAI chat-completions format (Gemini via Google's
+ * OpenAI-compatible endpoint), so we reuse the single `openai` SDK for each —
+ * no extra dependency. Switching providers is purely a matter of which API key
+ * is set in the environment.
  */
 const logger = require("../../utils/logger");
 
 let groqClient = null;
 let openaiClient = null;
+let geminiClient = null;
+
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 const getGroqClient = () => {
   if (groqClient) return groqClient;
@@ -32,6 +42,22 @@ const getOpenaiClient = () => {
     const OpenAI = require("openai");
     openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     return openaiClient;
+  } catch {
+    return null;
+  }
+};
+
+// Google Gemini via its OpenAI-compatible endpoint. Free tier, high accuracy.
+const getGeminiClient = () => {
+  if (geminiClient) return geminiClient;
+  if (!process.env.GEMINI_API_KEY) return null;
+  try {
+    const OpenAI = require("openai");
+    geminiClient = new OpenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    });
+    return geminiClient;
   } catch {
     return null;
   }
@@ -354,18 +380,26 @@ const generateReply = async ({
     }
   }
 
-  // 3. Determine provider. If OPENAI_API_KEY is set we use OpenAI gpt-4o-mini;
-  // otherwise we run on Groq (Llama 3.3 70B) — a genuinely capable, free/fast
-  // model. This makes the switch a single env var: set OPENAI_API_KEY to move
-  // to gpt-4o-mini, unset it to run free on Groq. Either way the bot replies.
+  // 3. Determine provider by which API key is set (priority: OpenAI → Gemini →
+  // Groq). Set the key for the provider you want; the switch needs no code
+  // change. Recommended free launch: GEMINI_API_KEY (accurate + free).
   let client = getOpenaiClient();
   let model = "gpt-4o-mini";
   let providerUsed = "openai";
 
   if (!client) {
+    client = getGeminiClient();
+    if (client) {
+      model = GEMINI_MODEL;
+      providerUsed = "gemini";
+    }
+  }
+  if (!client) {
     client = getGroqClient();
-    model = "llama-3.3-70b-versatile";
-    providerUsed = "groq";
+    if (client) {
+      model = "llama-3.3-70b-versatile";
+      providerUsed = "groq";
+    }
   }
 
   if (!client) {
@@ -475,6 +509,8 @@ const generateReply = async ({
 const getAnyClient = () => {
   let client = getOpenaiClient();
   if (client) return { client, model: "gpt-4o-mini", provider: "openai" };
+  client = getGeminiClient();
+  if (client) return { client, model: GEMINI_MODEL, provider: "gemini" };
   client = getGroqClient();
   if (client)
     return { client, model: "llama-3.3-70b-versatile", provider: "groq" };
