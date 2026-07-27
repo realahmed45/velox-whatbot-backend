@@ -33,6 +33,7 @@ const scheduledPostsRoutes = require("./src/routes/scheduledPosts");
 const aiRoutes = require("./src/routes/ai");
 const dripRoutes = require("./src/routes/drip");
 const integrationRoutes = require("./src/routes/integrations");
+const adminRoutes = require("./src/routes/admin");
 
 const app = express();
 const server = http.createServer(app);
@@ -174,6 +175,7 @@ app.use("/api/workspaces/:workspaceId/ai", aiRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/drip-campaigns", dripRoutes);
 app.use("/api/integrations", integrationRoutes);
+app.use("/api/admin", adminRoutes);
 
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
