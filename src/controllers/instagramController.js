@@ -1429,9 +1429,11 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
 
     // Find the workspace — check both botlify_oauth (Zernio) and meta_oauth connections.
     // Zernio stores accountId in botlifyAccountId; fallback checks igUserId for accounts
-    // that may have been re-linked.
+    // that may have been re-linked. Include "error"-flagged accounts too: those
+    // still have valid credentials (we don't wipe on a provider blip), so they
+    // must keep routing messages and can self-heal back to "connected".
     const allWs = await Workspace.find({
-      "instagram.status": "connected",
+      "instagram.status": { $in: ["connected", "error"] },
     }).select(
       "+instagram.botlifyAccountId +instagram.igUserId instagram.connectionType",
     );
@@ -1465,29 +1467,53 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       continue;
     }
 
+    // Record activity. If this account was previously flagged as needing
+    // attention (status "error") but Zernio is clearly delivering events for it
+    // again, self-heal it back to "connected" — the credentials were kept, so
+    // it just works again. A message event (not the account.disconnected event
+    // handled below) proves the account is live.
+    const healBack =
+      target.instagram?.status === "error" &&
+      evtType !== "account.disconnected";
     Workspace.updateOne(
       { _id: target._id },
       {
         $set: {
           "instagram.lastWebhookAt": new Date(),
           "instagram.lastWebhookType": evtType || "unknown",
+          ...(healBack
+            ? { "instagram.status": "connected", "instagram.webhookError": null }
+            : {}),
         },
       },
     ).catch(() => {});
+    if (healBack) {
+      logger.info(
+        `[BotlifyIG webhook] self-healed workspace ${target._id} back to connected`,
+      );
+    }
 
-    // Account-level events (no senderId required)
+    // Account-level events (no senderId required).
+    //
+    // PERSISTENCE: we do NOT hard-wipe the connection on a provider
+    // account.disconnected event. Those can fire on transient provider-side
+    // blips, and a paying user's working connection must survive until THEY
+    // choose to disconnect. Instead we flag the connection as needing
+    // attention (status "error") while KEEPING the credentials + account hash,
+    // so it can auto-recover or be reconnected in one click. Only an explicit
+    // user disconnect or a Meta deauthorize fully clears the account.
     if (evtType === "account.disconnected") {
       logger.warn(
-        `[BotlifyIG webhook] account disconnected for workspace ${target._id}`,
+        `[BotlifyIG webhook] account.disconnected for workspace ${target._id} — flagging as needs-attention (credentials kept)`,
       );
       await Workspace.updateOne(
         { _id: target._id },
         {
-          $set: { "instagram.status": "disconnected" },
-          $unset: {
-            "instagram.accessToken": 1,
-            "instagram.botlifyAccountId": 1,
-            "instagram.igAccountHash": 1,
+          $set: {
+            "instagram.status": "error",
+            "instagram.webhookError":
+              "Provider reported the account was disconnected. Reconnect if messages stop.",
+            "instagram.webhookSubscribed": false,
           },
         },
       ).catch(() => {});
