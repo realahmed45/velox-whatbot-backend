@@ -354,22 +354,18 @@ const generateReply = async ({
     }
   }
 
-  // 3. Determine provider. Botlify runs on OpenAI gpt-4o-mini as the primary
-  // model for every reply. Groq (llama) is ONLY a safety fallback used when
-  // OPENAI_API_KEY is absent or the OpenAI client can't be created — so the bot
-  // never goes dead if OpenAI is misconfigured.
+  // 3. Determine provider. If OPENAI_API_KEY is set we use OpenAI gpt-4o-mini;
+  // otherwise we run on Groq (Llama 3.3 70B) — a genuinely capable, free/fast
+  // model. This makes the switch a single env var: set OPENAI_API_KEY to move
+  // to gpt-4o-mini, unset it to run free on Groq. Either way the bot replies.
   let client = getOpenaiClient();
   let model = "gpt-4o-mini";
   let providerUsed = "openai";
 
   if (!client) {
-    // No OpenAI key — fall back to Groq so the bot still replies.
     client = getGroqClient();
     model = "llama-3.3-70b-versatile";
     providerUsed = "groq";
-    logger.warn(
-      "[AI:generateReply] OPENAI_API_KEY missing — falling back to Groq. Set OPENAI_API_KEY to use gpt-4o-mini.",
-    );
   }
 
   if (!client) {
