@@ -155,6 +155,7 @@ const updateWorkspace = asyncHandler(async (req, res) => {
     "language",
     "branding",
     "aiSettings",
+    "holidayMode",
   ];
   const updates = {};
   allowed.forEach((field) => {

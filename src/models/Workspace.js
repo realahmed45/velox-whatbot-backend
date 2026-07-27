@@ -400,6 +400,21 @@ const workspaceSchema = new mongoose.Schema(
       },
     },
 
+    // Holiday / manual-away mode. A single master switch the owner flips when
+    // the team is on holiday, closed, or something's gone wrong. While ON it
+    // takes priority over the AI bot and every other auto-reply: every new
+    // message gets this one calm "we'll get back to you" reply. Turn OFF to
+    // resume normal automation.
+    holidayMode: {
+      enabled: { type: Boolean, default: false },
+      message: {
+        type: String,
+        default:
+          "Hi {name}! 🙏 Thanks for your message. Our team is away right now, but a manager will personally get back to you within a day. We appreciate your patience!",
+      },
+      cooldownHours: { type: Number, default: 12 },
+    },
+
     // AI Conversational Bot (Scale/Premium plan only)
     aiBot: {
       enabled: { type: Boolean, default: false },

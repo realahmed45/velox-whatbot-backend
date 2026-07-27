@@ -657,6 +657,27 @@ const handleLiveComment = async (workspace, senderId, text, meta = {}) => {
   });
 };
 
+// Holiday / manual-away mode. When the owner has flipped it ON, this takes
+// priority over EVERYTHING (flows, keywords, AI): every new message gets one
+// calm "a manager will get back to you" reply, deduped by cooldown so we don't
+// spam the same person. Available on every plan — it's a safety switch.
+const handleHolidayMode = async (workspace, contact, conv) => {
+  const cfg = workspace.holidayMode;
+  if (!cfg?.enabled) return false;
+  const cooldown = Number.isFinite(cfg.cooldownHours) ? cfg.cooldownHours : 12;
+  if (await recentlyTriggered(conv, "holiday_mode", null, cooldown)) return true;
+  await sendAndLog({
+    workspace,
+    contact,
+    conversation: conv,
+    text:
+      cfg.message ||
+      "Hi {name}! 🙏 Thanks for your message. Our team is away right now, but a manager will personally get back to you within a day.",
+    triggerType: "holiday_mode",
+  });
+  return true;
+};
+
 const handleAwayReply = async (workspace, contact, conv) => {
   if (!planHasFeature(workspace.subscription?.plan, FEATURES.BUSINESS_HOURS))
     return false;
@@ -1590,6 +1611,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
           logger.info(`[IG flow] handled by SHARE_TO_STORY`);
           return;
         }
+      }
+
+      // 0. Holiday / manual-away mode overrides everything when the owner has
+      // flipped it on (team away / something's wrong).
+      if (await handleHolidayMode(workspace, contact, conv)) {
+        logger.info(`[IG flow] handled by HOLIDAY_MODE`);
+        return;
       }
 
       // 1. Active visual flows take priority over the default automations.
