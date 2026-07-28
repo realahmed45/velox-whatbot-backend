@@ -416,7 +416,14 @@ const extractTextFromBuffer = async (buffer, filename = "file", mimetype = "") =
     //    let Gemini (natively multimodal) read the whole PDF. This is what
     //    makes big designed menus / scanned docs work.
     if (text.replace(/\s/g, "").length < 40) {
+      logger.info("[extract] pdf text layer thin — trying vision", {
+        textLayerLen: text.length,
+        bytes: buffer.length,
+      });
       const visionText = await ai.readPdfWithVision(buffer);
+      logger.info("[extract] vision result", {
+        visionLen: visionText?.length || 0,
+      });
       if (visionText && visionText.trim().length > text.trim().length) {
         text = visionText;
       }
@@ -439,16 +446,40 @@ const importDocument = async (buffer, filename = "document", mimetype = "") => {
   // Use the shared extractor — it already handles the vision fallback for
   // image-based PDFs, designed menus, scanned docs, images, docx, csv, txt.
   let text = "";
+  let extractErr = null;
   try {
     text = await extractTextFromBuffer(buffer, filename, mimetype);
   } catch (err) {
-    logger.warn("[websiteImporter] extract failed", { error: err.message });
+    extractErr = err.message;
+    logger.warn("[websiteImporter] extract failed", {
+      error: err.message,
+      filename,
+      mimetype,
+      bytes: buffer?.length,
+    });
     text = "";
   }
 
+  logger.info("[websiteImporter] importDocument", {
+    filename,
+    mimetype,
+    bytes: buffer?.length,
+    textLen: text?.length || 0,
+    hasGeminiKey: !!process.env.GEMINI_API_KEY,
+    extractErr,
+  });
+
   if (!text.trim()) {
+    // Surface the real cause so it's diagnosable instead of a vague message.
+    if (!process.env.GEMINI_API_KEY && isPdf(mimetype, filename)) {
+      throw new Error(
+        "This looks like an image-based PDF. Reading it needs the AI vision key (GEMINI_API_KEY) — it isn't configured on the server.",
+      );
+    }
     throw new Error(
-      "Couldn't read any text from that file. If it's a scanned or image-only PDF, try a clearer copy.",
+      extractErr
+        ? `Couldn't read that file: ${extractErr}`
+        : "Couldn't read any text from that file. If it's a scanned or image-only PDF, try a clearer copy.",
     );
   }
 
