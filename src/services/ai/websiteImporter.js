@@ -384,6 +384,38 @@ const isDocx = (mimetype = "", filename = "") =>
   /\.docx$/i.test(filename);
 
 /**
+ * Extract raw text from a buffer (PDF / Word / image / CSV / plain text).
+ * Shared by knowledge import and product bulk-import.
+ * @returns {Promise<string>}
+ */
+const extractTextFromBuffer = async (buffer, filename = "file", mimetype = "") => {
+  let text = "";
+  if (isImage(mimetype, filename)) {
+    const extracted = await ai.completeVision({
+      buffer,
+      mimetype: mimetype || "image/png",
+      instruction:
+        "Transcribe ALL visible text exactly (this may be a menu, price list, " +
+        "catalog or product photo). List every product name and its price. " +
+        "Output plain text only.",
+      maxTokens: 1800,
+    });
+    text = extracted || "";
+  } else if (isPdf(mimetype, filename)) {
+    const pdfParse = require("pdf-parse");
+    const data = await pdfParse(buffer);
+    text = data.text || "";
+  } else if (isDocx(mimetype, filename)) {
+    const mammoth = require("mammoth");
+    const out = await mammoth.extractRawText({ buffer });
+    text = out.value || "";
+  } else {
+    text = buffer.toString("utf8"); // csv / txt / md
+  }
+  return text;
+};
+
+/**
  * Import a PDF / Word / text / image document into a knowledge brief.
  * @returns {Promise<{ title, content, charCount }>}
  */
@@ -445,6 +477,7 @@ const importDocument = async (buffer, filename = "document", mimetype = "") => {
 module.exports = {
   importWebsite,
   importDocument,
+  extractTextFromBuffer,
   distillText,
   distillToKnowledge,
   normalizeUrl,

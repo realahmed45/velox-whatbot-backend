@@ -5,7 +5,82 @@
 const asyncHandler = require("express-async-handler");
 const Workspace = require("../models/Workspace");
 const ai = require("../services/ai");
+const { extractTextFromBuffer } = require("../services/ai/websiteImporter");
 const logger = require("../utils/logger");
+
+// @POST /api/workspaces/:workspaceId/ai/import-products
+// Multipart file (CSV / PDF / Word / image / txt). Extracts the text, asks the
+// AI to structure it into products, and returns the array for the user to
+// review before saving. Does NOT persist anything.
+const importProducts = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    res.status(400);
+    throw new Error("Please upload a file (CSV, PDF, or image).");
+  }
+  let text = "";
+  try {
+    text = await extractTextFromBuffer(
+      req.file.buffer,
+      req.file.originalname || "products",
+      req.file.mimetype || "",
+    );
+  } catch (e) {
+    logger.warn("[importProducts] extract failed", { err: e.message });
+    res.status(422);
+    throw new Error("Couldn't read that file. Try a CSV, PDF, or clear image.");
+  }
+  if (!text || text.trim().length < 3) {
+    res.status(422);
+    throw new Error("That file didn't contain any readable product text.");
+  }
+
+  const system =
+    "You extract a product catalog from raw text (a CSV, price list, menu, or " +
+    "catalog export). Output ONLY a JSON array — no markdown, no prose. Each " +
+    "item: { name, price, description, inStock }.\n" +
+    "- name: the product name (required).\n" +
+    "- price: keep the currency/format as written (e.g. 'Rs 2,500', '$19'), or '' if unknown.\n" +
+    "- description: a short detail (sizes, colours, variant) or '' — keep it under 120 chars.\n" +
+    "- inStock: true unless the text clearly says out of stock/sold out.\n" +
+    "Skip header rows, totals, and non-product lines. Max 200 items.";
+
+  const raw = await ai.complete({
+    system,
+    user: text.slice(0, 20000),
+    temperature: 0.1,
+    maxTokens: 4000,
+  });
+
+  let products = [];
+  try {
+    const jsonStr = raw.slice(raw.indexOf("["), raw.lastIndexOf("]") + 1);
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed)) {
+      products = parsed
+        .filter((p) => p && p.name)
+        .slice(0, 200)
+        .map((p) => ({
+          name: String(p.name).slice(0, 120),
+          price: String(p.price || "").slice(0, 40),
+          description: String(p.description || "").slice(0, 160),
+          inStock: p.inStock !== false,
+        }));
+    }
+  } catch (e) {
+    logger.warn("[importProducts] JSON parse failed", {
+      raw: (raw || "").slice(0, 200),
+    });
+  }
+
+  if (!products.length) {
+    res.status(422);
+    throw new Error(
+      "Couldn't find products in that file. Make sure it lists product names (and ideally prices).",
+    );
+  }
+
+  res.json({ success: true, products, count: products.length });
+});
 
 // @POST /api/workspaces/:workspaceId/ai/draft-persona
 // Auto-draft AI Role, Brand Voice and Guardrails from the connected Instagram
@@ -111,4 +186,4 @@ const playground = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { draftPersona, playground };
+module.exports = { draftPersona, playground, importProducts };
