@@ -779,7 +779,7 @@ const readPdfViaFileApi = async (buffer) => {
     }
   } catch (err) {
     logger.error("[readPdfViaFileApi] failed", { err: err.message });
-    return "";
+    throw err; // let the caller surface the real reason (e.g. quota)
   }
 };
 
@@ -790,12 +790,16 @@ const readPdfWithVision = async (buffer) => {
     return "";
   }
 
+  let lastErr = null;
   // Big or image-heavy PDFs → use the File API (handles up to ~1000 pages / 2GB
   // and processes far more reliably than inline base64). Small PDFs → inline.
   if (buffer.length > 6 * 1024 * 1024) {
-    const viaFile = await readPdfViaFileApi(buffer);
-    if (viaFile) return viaFile;
-    // fall through to try inline anyway
+    try {
+      const viaFile = await readPdfViaFileApi(buffer);
+      if (viaFile) return viaFile;
+    } catch (err) {
+      lastErr = err;
+    }
   }
 
   try {
@@ -812,13 +816,24 @@ const readPdfWithVision = async (buffer) => {
     const out = result.response?.text()?.trim() || "";
     if (out) return out;
   } catch (err) {
+    lastErr = err;
     logger.warn("[readPdfWithVision] inline failed, trying File API", {
       err: err.message,
     });
   }
 
   // Last resort: File API even for smaller files if inline errored.
-  return readPdfViaFileApi(buffer);
+  try {
+    const viaFile = await readPdfViaFileApi(buffer);
+    if (viaFile) return viaFile;
+  } catch (err) {
+    lastErr = err;
+  }
+
+  // Nothing worked. Re-throw the real error (e.g. quota) so the caller can show
+  // an honest message instead of a generic "couldn't read".
+  if (lastErr) throw lastErr;
+  return "";
 };
 
 module.exports = {

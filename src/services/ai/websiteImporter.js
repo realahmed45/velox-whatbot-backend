@@ -420,6 +420,7 @@ const extractTextFromBuffer = async (buffer, filename = "file", mimetype = "") =
         textLayerLen: text.length,
         bytes: buffer.length,
       });
+      // Let vision errors (e.g. quota) propagate so the caller reports them.
       const visionText = await ai.readPdfWithVision(buffer);
       logger.info("[extract] vision result", {
         visionLen: visionText?.length || 0,
@@ -476,10 +477,14 @@ const importDocument = async (buffer, filename = "document", mimetype = "") => {
         "This looks like an image-based PDF. Reading it needs the AI vision key (GEMINI_API_KEY) — it isn't configured on the server.",
       );
     }
+    const isQuota = /quota|429|rate.?limit/i.test(extractErr || "");
+    if (isQuota) {
+      throw new Error(
+        "The AI is temporarily over its usage limit and couldn't read this file. Please try again in a minute — if it keeps happening, the AI plan needs upgrading.",
+      );
+    }
     throw new Error(
-      extractErr
-        ? `Couldn't read that file: ${extractErr}`
-        : "Couldn't read any text from that file. If it's a scanned or image-only PDF, try a clearer copy.",
+      "Couldn't read any text from that file. If it's a scanned or image-only PDF, try a clearer copy.",
     );
   }
 
