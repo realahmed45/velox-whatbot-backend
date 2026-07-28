@@ -111,35 +111,37 @@ const draftPersona = asyncHandler(async (req, res) => {
   const raw = await ai.complete({ system, user, temperature: 0.4, maxTokens: 500 });
 
   // Parse the JSON out of the model response defensively.
-  let parsed = null;
-  if (raw) {
+  let parsed = {};
+  if (raw && typeof raw === "string" && raw.includes("{")) {
     try {
       const jsonStr = raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
-      parsed = JSON.parse(jsonStr);
+      const p = JSON.parse(jsonStr);
+      if (p && typeof p === "object") parsed = p;
     } catch (e) {
-      logger.warn("[draftPersona] JSON parse failed", { raw: raw.slice(0, 200) });
+      logger.warn("[draftPersona] JSON parse failed", {
+        raw: String(raw).slice(0, 200),
+      });
     }
   }
 
-  // Fallback so the endpoint never fails the UX.
-  if (!parsed || typeof parsed !== "object") {
-    parsed = {
-      aiRole: `You are the friendly assistant for ${igName || "our Instagram page"}, helping followers over DM.`,
-      brandVoice:
-        "warm and human; concise 1-2 lines; at most 1 emoji; mirror the customer's language; never pushy",
-      guardrails:
-        "never quote a price you weren't given; never promise refunds or policies you don't know; never share personal data; hand off angry customers or complaints to a human",
-    };
-  }
+  // Per-field fallback so a partial/empty AI response still yields a complete,
+  // usable persona — this endpoint should never leave a field blank.
+  const persona = {
+    aiRole:
+      String(parsed.aiRole || "").trim() ||
+      `You are the friendly assistant for ${igName || "our Instagram page"}, helping followers over DM.`,
+    brandVoice:
+      String(parsed.brandVoice || "").trim() ||
+      "warm and human; concise 1-2 lines; at most 1 emoji; mirror the customer's language; never pushy",
+    guardrails:
+      String(parsed.guardrails || "").trim() ||
+      "never quote a price you weren't given; never promise refunds or policies you don't know; never share personal data; hand off angry customers or complaints to a human",
+  };
 
-  res.json({
-    success: true,
-    persona: {
-      aiRole: String(parsed.aiRole || "").trim(),
-      brandVoice: String(parsed.brandVoice || "").trim(),
-      guardrails: String(parsed.guardrails || "").trim(),
-    },
-  });
+  logger.info(
+    `[draftPersona] ws=${ws._id} aiRaw=${raw ? "yes" : "no"} → returned persona`,
+  );
+  res.json({ success: true, persona });
 });
 
 // @POST /api/workspaces/:workspaceId/ai/playground
