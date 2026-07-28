@@ -213,6 +213,9 @@ const workspaceSchema = new mongoose.Schema(
       currentPeriodStart: Date,
       currentPeriodEnd: Date,
       trialEndsAt: Date,
+      // Set once we've emailed the "trial ends soon" reminder, so we never
+      // send it twice for the same trial.
+      trialReminderSentAt: Date,
       activatedAt: Date,
       cancelAtPeriodEnd: { type: Boolean, default: false },
       billingCycleAnchor: Date,
@@ -644,7 +647,10 @@ workspaceSchema.methods.isEntitled = function () {
   const plan = resolvePlanId(this.subscription?.plan);
   if (plan === "free") return false;
   const status = this.subscription?.status || "trialing";
-  return status === "trialing" || status === "active" || status === "past_due";
+  // Only an active trial or a paid, in-good-standing subscription grants
+  // access. past_due / cancelled / expired all LOCK the dashboard until the
+  // owner pays again — Botlify has no free tier.
+  return status === "trialing" || status === "active";
 };
 
 // Plan limits — sourced from src/config/plans.js (single source of truth)

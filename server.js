@@ -241,8 +241,16 @@ cron.schedule("0 3 * * *", () => {
   );
 });
 
+// Email trial-ending reminders daily at 9am UTC (once per trial).
+const { sendTrialReminders } = require("./src/jobs/trialReminderJob");
+cron.schedule("0 9 * * *", () => {
+  sendTrialReminders().catch((e) =>
+    logger.warn("[Cron] sendTrialReminders error: " + e.message),
+  );
+});
+
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am)",
 );
 
 // ─── Start Server ──────────────────────────────────────────
