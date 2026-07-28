@@ -778,23 +778,63 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
   );
 
-  const { reply, escalate, provider, imageUrls } = await ai.generateReply({
-    workspace,
-    history,
-    userMessage: text,
-    contact,
-    extraContext,
-    channel: "instagram",
-    incomingImageUrl,
-  });
+  const { reply, escalate, provider, imageUrls, intent, tags, lead } =
+    await ai.generateReply({
+      workspace,
+      history,
+      userMessage: text,
+      contact,
+      extraContext,
+      channel: "instagram",
+      incomingImageUrl,
+    });
 
   logger.info(
-    `[AI] ws=${workspace._id} reply="${(reply || "").slice(0, 80)}" provider=${provider} escalate=${!!escalate}`,
+    `[AI] ws=${workspace._id} reply="${(reply || "").slice(0, 80)}" provider=${provider} escalate=${!!escalate} intent=${intent || "-"}`,
   );
 
   if (escalate) {
     conv.status = "awaiting_human";
     await conv.save();
+  }
+
+  // ── AI actions (Phase 5) — apply tags + capture lead the model emitted.
+  // Skipped in simulate/playground mode so testing never mutates real data.
+  if (!workspace.__simulate) {
+    const actionsCfg = (workspace.aiSettings || {}).actions || {};
+    try {
+      if (actionsCfg.autoTag !== false && Array.isArray(tags) && tags.length) {
+        const existing = new Set(contact.tags || []);
+        tags.forEach((t) => existing.add(t));
+        contact.tags = [...existing].slice(0, 40);
+        await contact.save();
+      }
+      if (actionsCfg.captureLead !== false && lead && (lead.name || lead.contact)) {
+        const c = String(lead.contact || "");
+        const email = /@/.test(c) ? c : contact.email;
+        const phone = /@/.test(c) ? contact.phone : c || contact.phone;
+        contact.name = lead.name || contact.name;
+        if (email) contact.email = email;
+        if (phone) contact.phone = phone;
+        if (!(contact.tags || []).includes("lead")) {
+          contact.tags = [...(contact.tags || []), "lead"];
+        }
+        await contact.save();
+        dispatchEvent(workspace._id, "lead.created", {
+          contactId: contact._id,
+          igUsername: contact.igUsername,
+          name: contact.name,
+          email: email || null,
+          phone: phone || null,
+        }).catch(() => {});
+      }
+      if (intent) {
+        conv.lastIntent = intent;
+        await conv.save().catch(() => {});
+      }
+    } catch (e) {
+      logger.warn(`[AI actions] ws=${workspace._id} failed: ${e.message}`);
+    }
   }
 
   // Track value metrics (skip in Bot Tester / simulate mode).

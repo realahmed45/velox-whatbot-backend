@@ -356,6 +356,39 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     "Otherwise, keep helping them yourself — don't escalate for normal questions you can answer.",
   );
 
+  // ── Intent tag (Phase 4) — the model labels each message so we can route &
+  // analyse. Emitted on its own line; the system strips it before sending.
+  lines.push(
+    "",
+    "INTENT — start your reply with ONE hidden tag line, then your reply below it:",
+    "<<INTENT:one_of[greeting, question, pricing, availability, order, booking, support, complaint, lead, spam, other]>>",
+    "Example:",
+    "<<INTENT:pricing>>",
+    "Our serum is Rs 2,500 😊 Want me to send the link?",
+  );
+
+  // ── Actions/tools (Phase 5) — the agent can DO things by emitting markers on
+  // their own lines. Only enable the ones turned on in settings.
+  const actions = v2.actions || {};
+  const actionLines = [];
+  if (actions.autoTag !== false) {
+    actionLines.push(
+      "- Tag the customer when useful: <<TAG:tag_name>> (e.g. <<TAG:interested>>, <<TAG:vip>>, <<TAG:complaint>>).",
+    );
+  }
+  if (actions.captureLead !== false) {
+    actionLines.push(
+      "- When a customer shows real buying/booking interest and you learn their name + a contact (email or phone), record it once: <<LEAD:name=Full Name;contact=email-or-phone>>.",
+    );
+  }
+  if (actionLines.length) {
+    lines.push(
+      "",
+      "ACTIONS — you may add these marker lines ABOVE your reply. Markers are hidden from the customer; never mention them:",
+      ...actionLines,
+    );
+  }
+
   return lines.join("\n");
 };
 
@@ -484,14 +517,54 @@ const generateReply = async ({
       })
       .trim();
 
+    // Intent (Phase 4) — pull out the hidden <<INTENT:x>> tag.
+    let intent = null;
+    reply = reply
+      .replace(/<<\s*INTENT\s*:\s*([a-z_]+)\s*>>/i, (_, val) => {
+        intent = String(val).toLowerCase();
+        return "";
+      })
+      .trim();
+
+    // Actions (Phase 5) — pull out <<TAG:...>> and <<LEAD:...>> markers.
+    const tags = [];
+    reply = reply
+      .replace(/<<\s*TAG\s*:\s*([^>]+?)\s*>>/gi, (_, t) => {
+        const clean = String(t).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        if (clean) tags.push(clean);
+        return "";
+      })
+      .trim();
+
+    let lead = null;
+    reply = reply
+      .replace(/<<\s*LEAD\s*:\s*([^>]+?)\s*>>/i, (_, body) => {
+        const out = {};
+        String(body)
+          .split(";")
+          .forEach((kv) => {
+            const [k, ...rest] = kv.split("=");
+            if (k && rest.length)
+              out[k.trim().toLowerCase()] = rest.join("=").trim();
+          });
+        if (out.name || out.contact) lead = out;
+        return "";
+      })
+      .trim();
+
+    if (!reply) reply = fallbackReply(contact);
+
     logger.info(
-      `[AI:reply] ws=${workspace?._id} imageUrls=${imageUrls.length}`,
+      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} imageUrls=${imageUrls.length}`,
     );
 
     return {
       reply,
       escalate,
       imageUrls,
+      intent,
+      tags,
+      lead,
       tokens: response.usage?.total_tokens || 0,
       provider: providerUsed,
     };

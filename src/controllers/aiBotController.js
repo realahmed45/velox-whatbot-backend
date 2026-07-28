@@ -106,6 +106,8 @@ const playground = asyncHandler(async (req, res) => {
     escalate: !!result?.escalate,
     provider: result?.provider || "none",
     imageUrls: result?.imageUrls || [],
+    intent: result?.intent || null,
+    tags: result?.tags || [],
   });
 });
 

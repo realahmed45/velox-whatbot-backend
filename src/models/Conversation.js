@@ -35,6 +35,9 @@ const conversationSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Last intent the AI classified for this conversation (analytics + routing).
+    lastIntent: { type: String, default: null },
+
     // Per-conversation bot toggle. When false, automations STOP for this conversation
     // until agent turns bot back on (or after long silence, depending on settings).
     botEnabled: { type: Boolean, default: true },
