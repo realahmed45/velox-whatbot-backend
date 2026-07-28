@@ -722,29 +722,86 @@ const getNativeGemini = () => {
   }
 };
 
+const PDF_INSTRUCTION =
+  "This is a business document (a menu, price list, catalog, or brochure). " +
+  "Read EVERY page carefully. Transcribe ALL items/products with their exact " +
+  "prices and key details (sizes, variants, sections). Preserve section " +
+  "headings. Miss nothing. Output clean plain text only — no commentary.";
+
+// Upload a big PDF via the Gemini File API, then read it. Handles large image
+// PDFs (menus/catalogs) that are too big for inline data.
+const readPdfViaFileApi = async (buffer) => {
+  if (!process.env.GEMINI_API_KEY) return "";
+  try {
+    const { GoogleAIFileManager, FileState } = require(
+      "@google/generative-ai/server",
+    );
+    const fm = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
+    // The SDK's file manager reads from disk, so stage a temp file.
+    const os = require("os");
+    const path = require("path");
+    const fs = require("fs");
+    const tmp = path.join(
+      os.tmpdir(),
+      `botlify-${Date.now()}-${Math.round(Math.random() * 1e6)}.pdf`,
+    );
+    fs.writeFileSync(tmp, buffer);
+    let uploaded;
+    try {
+      uploaded = await fm.uploadFile(tmp, { mimeType: "application/pdf" });
+      // Wait for the file to finish processing.
+      let file = uploaded.file;
+      for (let i = 0; i < 30 && file.state === FileState.PROCESSING; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        file = await fm.getFile(uploaded.file.name);
+      }
+      if (file.state !== FileState.ACTIVE) {
+        logger.warn("[readPdfViaFileApi] file not active", {
+          state: file.state,
+        });
+        return "";
+      }
+      const genAI = getNativeGemini();
+      const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+      const result = await model.generateContent([
+        { text: PDF_INSTRUCTION },
+        {
+          fileData: {
+            mimeType: uploaded.file.mimeType,
+            fileUri: uploaded.file.uri,
+          },
+        },
+      ]);
+      return result.response?.text()?.trim() || "";
+    } finally {
+      fs.unlink(tmp, () => {});
+      if (uploaded?.file?.name) fm.deleteFile(uploaded.file.name).catch(() => {});
+    }
+  } catch (err) {
+    logger.error("[readPdfViaFileApi] failed", { err: err.message });
+    return "";
+  }
+};
+
 const readPdfWithVision = async (buffer) => {
   const genAI = getNativeGemini();
   if (!genAI) {
     logger.warn("[readPdfWithVision] no Gemini key — cannot read image PDF");
     return "";
   }
-  // Inline data is capped (~20MB). Bigger files would need the File API; keep
-  // it simple and bail cleanly so the caller shows a helpful message.
-  if (buffer.length > 18 * 1024 * 1024) {
-    logger.warn("[readPdfWithVision] PDF too large for inline vision", {
-      bytes: buffer.length,
-    });
-    return "";
+
+  // Big or image-heavy PDFs → use the File API (handles up to ~1000 pages / 2GB
+  // and processes far more reliably than inline base64). Small PDFs → inline.
+  if (buffer.length > 6 * 1024 * 1024) {
+    const viaFile = await readPdfViaFileApi(buffer);
+    if (viaFile) return viaFile;
+    // fall through to try inline anyway
   }
-  const instruction =
-    "This is a business document (a menu, price list, catalog, or brochure). " +
-    "Read EVERY page. Transcribe all items/products with their prices and any " +
-    "key details (sizes, variants, sections). Preserve section headings. " +
-    "Output clean plain text only — no commentary.";
+
   try {
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const result = await model.generateContent([
-      { text: instruction },
+      { text: PDF_INSTRUCTION },
       {
         inlineData: {
           mimeType: "application/pdf",
@@ -752,11 +809,16 @@ const readPdfWithVision = async (buffer) => {
         },
       },
     ]);
-    return result.response?.text()?.trim() || "";
+    const out = result.response?.text()?.trim() || "";
+    if (out) return out;
   } catch (err) {
-    logger.error("[readPdfWithVision] failed", { err: err.message });
-    return "";
+    logger.warn("[readPdfWithVision] inline failed, trying File API", {
+      err: err.message,
+    });
   }
+
+  // Last resort: File API even for smaller files if inline errored.
+  return readPdfViaFileApi(buffer);
 };
 
 module.exports = {
