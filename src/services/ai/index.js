@@ -520,36 +520,39 @@ const generateReply = async ({
     // Intent (Phase 4) — pull out the hidden <<INTENT:x>> tag.
     let intent = null;
     reply = reply
-      .replace(/<<\s*INTENT\s*:\s*([a-z_]+)\s*>>/i, (_, val) => {
-        intent = String(val).toLowerCase();
+      .replace(/<<\s*INTENT\s*:\s*([^>]+?)\s*>>/gi, (_, val) => {
+        if (!intent) intent = String(val).toLowerCase().trim();
         return "";
-      })
-      .trim();
+      });
 
     // Actions (Phase 5) — pull out <<TAG:...>> and <<LEAD:...>> markers.
     const tags = [];
-    reply = reply
-      .replace(/<<\s*TAG\s*:\s*([^>]+?)\s*>>/gi, (_, t) => {
-        const clean = String(t).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-        if (clean) tags.push(clean);
-        return "";
-      })
-      .trim();
+    reply = reply.replace(/<<\s*TAG\s*:\s*([^>]+?)\s*>>/gi, (_, t) => {
+      const clean = String(t).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      if (clean) tags.push(clean);
+      return "";
+    });
 
     let lead = null;
+    reply = reply.replace(/<<\s*LEAD\s*:\s*([^>]+?)\s*>>/i, (_, body) => {
+      const out = {};
+      String(body)
+        .split(";")
+        .forEach((kv) => {
+          const [k, ...rest] = kv.split("=");
+          if (k && rest.length)
+            out[k.trim().toLowerCase()] = rest.join("=").trim();
+        });
+      if (out.name || out.contact) lead = out;
+      return "";
+    });
+
+    // SAFETY NET: strip ANY remaining << … >> marker the model may have
+    // invented in a slightly different format, so nothing ever leaks to the
+    // customer. Then tidy up leftover blank lines.
     reply = reply
-      .replace(/<<\s*LEAD\s*:\s*([^>]+?)\s*>>/i, (_, body) => {
-        const out = {};
-        String(body)
-          .split(";")
-          .forEach((kv) => {
-            const [k, ...rest] = kv.split("=");
-            if (k && rest.length)
-              out[k.trim().toLowerCase()] = rest.join("=").trim();
-          });
-        if (out.name || out.contact) lead = out;
-        return "";
-      })
+      .replace(/<<[^>]*>>/g, "")
+      .replace(/\n{3,}/g, "\n\n")
       .trim();
 
     if (!reply) reply = fallbackReply(contact);
