@@ -151,6 +151,15 @@ const workspaceSchema = new mongoose.Schema(
           "You are a friendly, professional assistant. Keep replies short, warm, and helpful.",
       },
       businessContext: { type: String, default: "" },
+
+      // ── Persona (Phase 1) — the 3-field industry-standard setup ──────────
+      // AI Role: who the bot is ("You are the assistant for Acme, a bakery…").
+      aiRole: { type: String, default: "" },
+      // Brand Voice: tone + formatting rules ("warm, concise, 1 emoji…").
+      brandVoice: { type: String, default: "" },
+      // Guardrails: explicit "never do" rules.
+      guardrails: { type: String, default: "" },
+
       faqs: [
         {
           question: String,
@@ -176,6 +185,22 @@ const workspaceSchema = new mongoose.Schema(
       engageBack: { type: Boolean, default: false },
       // Optional link the bot can share (booking page, shop, link-in-bio).
       ctaLink: { type: String, default: "" },
+
+      // ── Product catalog (Phase 3) — structured items the bot can quote ───
+      productCatalog: [
+        {
+          name: String,
+          price: String,
+          description: String,
+          inStock: { type: Boolean, default: true },
+        },
+      ],
+
+      // ── AI actions/tools (Phase 5) — what the agent may DO mid-chat ──────
+      actions: {
+        autoTag: { type: Boolean, default: true }, // let AI tag contacts
+        captureLead: { type: Boolean, default: true }, // collect name + contact
+      },
     },
 
     // Lightweight AI bot analytics (reset monthly) so creators see the value.

@@ -131,30 +131,69 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
     systemPrompt: v2.systemPrompt || legacy.personality,
     businessContext: v2.businessContext || legacy.businessInfo,
     faqs: v2.faqs && v2.faqs.length ? v2.faqs : legacy.faqs,
+    aiRole: v2.aiRole,
+    brandVoice: v2.brandVoice,
+    guardrails: v2.guardrails,
   };
 
   const bizName =
     workspace.name || workspace.instagram?.username || "this business";
 
-  const lines = [
-    ai.systemPrompt ||
-      `You are the Instagram assistant for ${bizName} — a warm, sharp member of the team replying to DMs, comments and story replies. You sound like a real person who genuinely cares: friendly, concise, and helpful, never robotic or salesy.`,
-    "",
-    "WHO YOU ARE:",
-    "- You represent the business. Speak as 'we' / 'us', never 'the business' in third person.",
-    "- Be warm and human, but efficient — most replies are 1–3 short lines.",
-    "- Match the customer's energy and formality. Mirror their language exactly.",
-    "- Use at most 1 emoji per reply (a few more only when listing products).",
+  // AI Role — the persona. Prefer the explicit aiRole field, then a legacy
+  // systemPrompt, then a sensible default.
+  const role =
+    (ai.aiRole && ai.aiRole.trim()) ||
+    (ai.systemPrompt && ai.systemPrompt.trim()) ||
+    `You are the Instagram assistant for ${bizName} — a warm, sharp member of the team replying to DMs, comments and story replies. You sound like a real person who genuinely cares: friendly, concise, and helpful, never robotic or salesy.`;
+
+  const lines = [role, ""];
+
+  // Brand voice — user-defined tone/format rules, else a strong default.
+  lines.push("BRAND VOICE:");
+  if (ai.brandVoice && ai.brandVoice.trim()) {
+    lines.push(ai.brandVoice.trim());
+  } else {
+    lines.push(
+      "- Speak as 'we' / 'us' for the business, never in third person.",
+      "- Warm and human, but efficient — most replies are 1–3 short lines.",
+      "- Match the customer's energy and formality. Mirror their language exactly.",
+      "- Use at most 1 emoji per reply (a few more only when listing products).",
+    );
+  }
+
+  lines.push(
     "",
     "ACCURACY IS EVERYTHING:",
-    "- Only state facts you were given below (business info, knowledge, FAQs, live data).",
+    "- Only state facts you were given below (business info, knowledge, FAQs, catalog, live data).",
     "- NEVER invent prices, availability, delivery times, addresses, links, or policies.",
     "- If you genuinely don't know, say so honestly and offer to have a teammate follow up — do NOT guess or make something up.",
     "- If a customer asks something off-topic or unrelated to the business, gently steer back to how you can help them here.",
-  ];
+  );
+
+  // Guardrails — explicit "never do" rules from the user.
+  if (ai.guardrails && ai.guardrails.trim()) {
+    lines.push("", "STRICT GUARDRAILS — never break these:", ai.guardrails.trim());
+  }
 
   if (ai.businessContext) {
     lines.push("", "About this business:", ai.businessContext);
+  }
+
+  // Product catalog (Phase 3) — structured items the bot may quote exactly.
+  const catalog = Array.isArray(v2.productCatalog) ? v2.productCatalog : [];
+  const validCatalog = catalog.filter((p) => p && p.name);
+  if (validCatalog.length) {
+    lines.push(
+      "",
+      "PRODUCT CATALOG — quote these EXACTLY, never invent items or prices:",
+    );
+    validCatalog.slice(0, 100).forEach((p) => {
+      const bits = [`• ${p.name}`];
+      if (p.price) bits.push(`— ${p.price}`);
+      if (p.inStock === false) bits.push("(out of stock)");
+      if (p.description) bits.push(`| ${p.description}`);
+      lines.push(bits.join(" "));
+    });
   }
 
   // Business knowledge: free-form notes + imported sources (website, catalog, etc.)
