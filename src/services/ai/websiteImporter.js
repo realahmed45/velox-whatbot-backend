@@ -396,15 +396,31 @@ const extractTextFromBuffer = async (buffer, filename = "file", mimetype = "") =
       mimetype: mimetype || "image/png",
       instruction:
         "Transcribe ALL visible text exactly (this may be a menu, price list, " +
-        "catalog or product photo). List every product name and its price. " +
+        "catalog or product photo). List every item and its price. " +
         "Output plain text only.",
-      maxTokens: 1800,
+      maxTokens: 4000,
     });
     text = extracted || "";
   } else if (isPdf(mimetype, filename)) {
-    const pdfParse = require("pdf-parse");
-    const data = await pdfParse(buffer);
-    text = data.text || "";
+    // 1) Fast path: pdf-parse reads the embedded text layer (works for
+    //    "real" text PDFs). Many menus/catalogs are DESIGN PDFs where the text
+    //    is baked into images — those yield little/no text here.
+    try {
+      const pdfParse = require("pdf-parse");
+      const data = await pdfParse(buffer);
+      text = data.text || "";
+    } catch {
+      text = "";
+    }
+    // 2) Vision fallback: if we got too little text, the PDF is image-based —
+    //    let Gemini (natively multimodal) read the whole PDF. This is what
+    //    makes big designed menus / scanned docs work.
+    if (text.replace(/\s/g, "").length < 40) {
+      const visionText = await ai.readPdfWithVision(buffer);
+      if (visionText && visionText.trim().length > text.trim().length) {
+        text = visionText;
+      }
+    }
   } else if (isDocx(mimetype, filename)) {
     const mammoth = require("mammoth");
     const out = await mammoth.extractRawText({ buffer });
@@ -420,50 +436,20 @@ const extractTextFromBuffer = async (buffer, filename = "file", mimetype = "") =
  * @returns {Promise<{ title, content, charCount }>}
  */
 const importDocument = async (buffer, filename = "document", mimetype = "") => {
+  // Use the shared extractor — it already handles the vision fallback for
+  // image-based PDFs, designed menus, scanned docs, images, docx, csv, txt.
   let text = "";
-
-  if (isImage(mimetype, filename)) {
-    const extracted = await ai.completeVision({
-      buffer,
-      mimetype: mimetype || "image/png",
-      instruction:
-        "This image is from a business (e.g. a menu, price list, flyer, product " +
-        "photo, or screenshot). Transcribe ALL visible text exactly, and briefly " +
-        "describe products/items and their prices. Output plain text only.",
-      maxTokens: 1800,
-    });
-    if (!extracted || extracted.length < 10) {
-      throw new Error(
-        "Couldn't read any text or details from that image. Try a clearer photo.",
-      );
-    }
-    text = extracted;
-  } else if (isPdf(mimetype, filename)) {
-    try {
-      const pdfParse = require("pdf-parse");
-      const data = await pdfParse(buffer);
-      text = data.text || "";
-    } catch (err) {
-      logger.warn("[websiteImporter] pdf parse failed", { error: err.message });
-      throw new Error("Couldn't read that PDF. Try exporting it again.");
-    }
-  } else if (isDocx(mimetype, filename)) {
-    try {
-      const mammoth = require("mammoth");
-      const out = await mammoth.extractRawText({ buffer });
-      text = out.value || "";
-    } catch (err) {
-      logger.warn("[websiteImporter] docx parse failed", {
-        error: err.message,
-      });
-      throw new Error("Couldn't read that Word document.");
-    }
-  } else {
-    text = buffer.toString("utf8");
+  try {
+    text = await extractTextFromBuffer(buffer, filename, mimetype);
+  } catch (err) {
+    logger.warn("[websiteImporter] extract failed", { error: err.message });
+    text = "";
   }
 
   if (!text.trim()) {
-    throw new Error("That file didn't contain any readable text");
+    throw new Error(
+      "Couldn't read any text from that file. If it's a scanned or image-only PDF, try a clearer copy.",
+    );
   }
 
   const content = await distillToKnowledge(

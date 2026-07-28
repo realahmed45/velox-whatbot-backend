@@ -46,9 +46,9 @@ const importProducts = asyncHandler(async (req, res) => {
 
   const raw = await ai.complete({
     system,
-    user: text.slice(0, 20000),
+    user: text.slice(0, 60000), // handle multi-page menus/catalogs
     temperature: 0.1,
-    maxTokens: 4000,
+    maxTokens: 8000,
   });
 
   let products = [];

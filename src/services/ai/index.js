@@ -702,10 +702,68 @@ const completeVision = async ({
   }
 };
 
+/**
+ * Read a whole PDF with Gemini's NATIVE multimodal API (inlineData). Used when
+ * the embedded text layer is missing — designed menus, scanned catalogs, image
+ * PDFs. Gemini reads text AND images across every page (up to ~1000 pages).
+ * The OpenAI-compat endpoint doesn't accept PDFs, so we use @google/generative-ai.
+ */
+let nativeGenAI = null;
+const getNativeGemini = () => {
+  if (!process.env.GEMINI_API_KEY) return null;
+  if (nativeGenAI) return nativeGenAI;
+  try {
+    const { GoogleGenerativeAI } = require("@google/generative-ai");
+    nativeGenAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    return nativeGenAI;
+  } catch (e) {
+    logger.warn("[getNativeGemini] SDK not available", { err: e.message });
+    return null;
+  }
+};
+
+const readPdfWithVision = async (buffer) => {
+  const genAI = getNativeGemini();
+  if (!genAI) {
+    logger.warn("[readPdfWithVision] no Gemini key — cannot read image PDF");
+    return "";
+  }
+  // Inline data is capped (~20MB). Bigger files would need the File API; keep
+  // it simple and bail cleanly so the caller shows a helpful message.
+  if (buffer.length > 18 * 1024 * 1024) {
+    logger.warn("[readPdfWithVision] PDF too large for inline vision", {
+      bytes: buffer.length,
+    });
+    return "";
+  }
+  const instruction =
+    "This is a business document (a menu, price list, catalog, or brochure). " +
+    "Read EVERY page. Transcribe all items/products with their prices and any " +
+    "key details (sizes, variants, sections). Preserve section headings. " +
+    "Output clean plain text only — no commentary.";
+  try {
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const result = await model.generateContent([
+      { text: instruction },
+      {
+        inlineData: {
+          mimeType: "application/pdf",
+          data: buffer.toString("base64"),
+        },
+      },
+    ]);
+    return result.response?.text()?.trim() || "";
+  } catch (err) {
+    logger.error("[readPdfWithVision] failed", { err: err.message });
+    return "";
+  }
+};
+
 module.exports = {
   generateReply,
   buildSystemPrompt,
   getAnyClient,
   complete,
   completeVision,
+  readPdfWithVision,
 };
