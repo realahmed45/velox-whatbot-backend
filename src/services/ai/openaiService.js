@@ -42,8 +42,17 @@ const getGroqClient = () => {
   }
 };
 
-// Prefer Gemini; fall back to Groq. Returns { client, model } or null.
+// Provider selection lives in the main AI service (OpenAI → Gemini → Groq).
+// Delegate to it so this utility file always matches. Returns { client, model }
+// or null.
 const getUtilityClient = () => {
+  try {
+    const { getAnyClient } = require("./index");
+    const svc = getAnyClient();
+    if (svc?.client) return { client: svc.client, model: svc.model };
+  } catch {
+    /* fall through */
+  }
   const gm = getGeminiClient();
   if (gm) return { client: gm, model: GEMINI_MODEL };
   const gq = getGroqClient();

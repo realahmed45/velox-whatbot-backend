@@ -472,9 +472,13 @@ const importDocument = async (buffer, filename = "document", mimetype = "") => {
 
   if (!text.trim()) {
     // Surface the real cause so it's diagnosable instead of a vague message.
-    if (!process.env.GEMINI_API_KEY && isPdf(mimetype, filename)) {
+    if (
+      !process.env.OPENAI_API_KEY &&
+      !process.env.GEMINI_API_KEY &&
+      isPdf(mimetype, filename)
+    ) {
       throw new Error(
-        "This looks like an image-based PDF. Reading it needs the AI vision key (GEMINI_API_KEY) — it isn't configured on the server.",
+        "This looks like an image-based PDF. Reading it needs an AI vision key (OPENAI_API_KEY or GEMINI_API_KEY) — none is configured on the server.",
       );
     }
     const isQuota = /quota|429|rate.?limit/i.test(extractErr || "");

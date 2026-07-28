@@ -1,19 +1,35 @@
 /**
  * Botlify — Unified AI provider abstraction.
  *
- * Primary:  Google Gemini 2.0 Flash — multimodal, high accuracy, free tier.
- * Fallback: Groq  llama-3.3-70b     — free/fast, used only if no Gemini key.
+ * Priority (first key present wins):
+ *   1. OpenAI  gpt-4o-mini  — reliable, reads PDFs natively (no free-tier games)
+ *   2. Gemini  2.0-flash    — multimodal, if GEMINI_API_KEY set
+ *   3. Groq    llama-3.3-70b — free/fast text fallback
  *
- * Both speak the OpenAI chat-completions format (Gemini via Google's
- * OpenAI-compatible endpoint), so we reuse the single `openai` SDK for each —
- * no extra dependency. Provider is chosen by which API key is set.
+ * All speak the OpenAI chat-completions format, so we reuse the single `openai`
+ * SDK for each. Provider is chosen by which API key is set.
  */
 const logger = require("../../utils/logger");
 
 let groqClient = null;
 let geminiClient = null;
+let openaiClient = null;
 
 const GEMINI_MODEL = "gemini-2.0-flash";
+const OPENAI_MODEL = "gpt-4o-mini";
+
+const getOpenaiClient = () => {
+  if (openaiClient) return openaiClient;
+  if (!process.env.OPENAI_API_KEY) return null;
+  try {
+    const OpenAI = require("openai");
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return openaiClient;
+  } catch {
+    logger.warn("openai SDK not installed");
+    return null;
+  }
+};
 
 const getGroqClient = () => {
   if (groqClient) return groqClient;
@@ -440,12 +456,16 @@ const generateReply = async ({
     }
   }
 
-  // 3. Determine provider. Gemini 2.0 Flash is primary (set GEMINI_API_KEY);
-  // Groq (Llama 3.3 70B) is a free fallback if no Gemini key is configured.
-  let client = getGeminiClient();
-  let model = GEMINI_MODEL;
-  let providerUsed = "gemini";
+  // 3. Determine provider: OpenAI → Gemini → Groq, by which key is set.
+  let client = getOpenaiClient();
+  let model = OPENAI_MODEL;
+  let providerUsed = "openai";
 
+  if (!client) {
+    client = getGeminiClient();
+    model = GEMINI_MODEL;
+    providerUsed = "gemini";
+  }
   if (!client) {
     client = getGroqClient();
     model = "llama-3.3-70b-versatile";
@@ -619,7 +639,9 @@ const generateReply = async ({
  * Return the first available chat client (Gemini preferred, Groq fallback).
  */
 const getAnyClient = () => {
-  let client = getGeminiClient();
+  let client = getOpenaiClient();
+  if (client) return { client, model: OPENAI_MODEL, provider: "openai" };
+  client = getGeminiClient();
   if (client) return { client, model: GEMINI_MODEL, provider: "gemini" };
   client = getGroqClient();
   if (client)
@@ -670,15 +692,17 @@ const completeVision = async ({
   instruction,
   maxTokens = 1500,
 }) => {
-  // Gemini is natively multimodal — use it first for vision; Groq's vision
-  // model is the fallback. Both accept base64 data URLs in OpenAI format.
-  const gemini = getGeminiClient();
-  const groq = gemini ? null : getGroqClient();
-  const client = gemini || groq;
+  // Vision: OpenAI (gpt-4o-mini) → Gemini → Groq. All accept base64 image URLs.
+  const openai = getOpenaiClient();
+  const gemini = openai ? null : getGeminiClient();
+  const groq = openai || gemini ? null : getGroqClient();
+  const client = openai || gemini || groq;
   if (!client) return null;
-  const model = gemini
-    ? GEMINI_MODEL
-    : "meta-llama/llama-4-scout-17b-16e-instruct";
+  const model = openai
+    ? OPENAI_MODEL
+    : gemini
+      ? GEMINI_MODEL
+      : "meta-llama/llama-4-scout-17b-16e-instruct";
   const dataUrl = `data:${mimetype};base64,${buffer.toString("base64")}`;
   try {
     const r = await client.chat.completions.create({
@@ -783,10 +807,49 @@ const readPdfViaFileApi = async (buffer) => {
   }
 };
 
+// Read a PDF with OpenAI (gpt-4o-mini reads PDFs natively via a base64 file
+// part in the chat API). Reliable, no free-tier quota games.
+const readPdfWithOpenai = async (buffer) => {
+  const client = getOpenaiClient();
+  if (!client) return "";
+  const dataUrl = `data:application/pdf;base64,${buffer.toString("base64")}`;
+  const r = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: PDF_INSTRUCTION },
+          {
+            type: "file",
+            file: { filename: "document.pdf", file_data: dataUrl },
+          },
+        ],
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 8000,
+  });
+  return r.choices?.[0]?.message?.content?.trim() || "";
+};
+
 const readPdfWithVision = async (buffer) => {
+  // Prefer OpenAI (reliable PDF reading). Fall back to Gemini if no OpenAI key.
+  if (getOpenaiClient()) {
+    try {
+      const out = await readPdfWithOpenai(buffer);
+      if (out) return out;
+    } catch (err) {
+      logger.warn("[readPdfWithVision] OpenAI PDF read failed", {
+        err: err.message,
+      });
+      if (!getNativeGemini()) throw err;
+    }
+  }
+
   const genAI = getNativeGemini();
   if (!genAI) {
-    logger.warn("[readPdfWithVision] no Gemini key — cannot read image PDF");
+    logger.warn("[readPdfWithVision] no vision provider (OpenAI/Gemini) key");
     return "";
   }
 
