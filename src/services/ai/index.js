@@ -409,8 +409,59 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
 };
 
 /**
+ * Strip ALL internal markers from a raw model reply and pull out their data.
+ * Runs on EVERY reply path (primary + fallback) so nothing like <<INTENT:...>>
+ * can ever leak to the customer. Returns { reply, imageUrls, intent, tags, lead }.
+ */
+const parseMarkers = (raw) => {
+  let reply = String(raw || "");
+  const imageUrls = [];
+  reply = reply.replace(/<<\s*SEND_IMAGE\s*:\s*([^>]+?)\s*>>/gi, (_, url) => {
+    const clean = String(url).trim();
+    if (/^https?:\/\//i.test(clean)) imageUrls.push(clean);
+    return "";
+  });
+
+  let intent = null;
+  reply = reply.replace(/<<\s*INTENT\s*:\s*([^>]+?)\s*>>/gi, (_, val) => {
+    if (!intent) intent = String(val).toLowerCase().trim();
+    return "";
+  });
+
+  const tags = [];
+  reply = reply.replace(/<<\s*TAG\s*:\s*([^>]+?)\s*>>/gi, (_, t) => {
+    const clean = String(t).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (clean) tags.push(clean);
+    return "";
+  });
+
+  let lead = null;
+  reply = reply.replace(/<<\s*LEAD\s*:\s*([^>]+?)\s*>>/i, (_, body) => {
+    const out = {};
+    String(body)
+      .split(";")
+      .forEach((kv) => {
+        const [k, ...rest] = kv.split("=");
+        if (k && rest.length) out[k.trim().toLowerCase()] = rest.join("=").trim();
+      });
+    if (out.name || out.contact) lead = out;
+    return "";
+  });
+
+  // SAFETY NET: remove ANY remaining << … >> marker in any format the model
+  // might invent, then tidy whitespace.
+  reply = reply
+    .replace(/<<[^>]*>>/g, "")
+    .replace(/^\s*INTENT\s*:.*$/gim, "") // bare "INTENT: x" without brackets
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { reply, imageUrls, intent, tags, lead };
+};
+
+/**
  * Generate a chatbot reply.
- * Provider priority: gemini (gemini-2.0-flash) → groq (fallback)
+ * Provider priority: openai → gemini → groq (fallback)
  */
 const generateReply = async ({
   workspace,
@@ -524,58 +575,13 @@ const generateReply = async ({
         fallbackReply(contact);
     }
 
-    // Extract <<SEND_IMAGE:url>> markers
-    const imageUrls = [];
     logger.info(
       `[AI:raw] ws=${workspace?._id} provider=${providerUsed} raw="${(reply || "").slice(0, 150).replace(/\n/g, "\\n")}"`,
     );
-    reply = reply
-      .replace(/<<\s*SEND_IMAGE\s*:\s*([^>]+?)\s*>>/gi, (_, url) => {
-        const clean = String(url).trim();
-        if (/^https?:\/\//i.test(clean)) imageUrls.push(clean);
-        return "";
-      })
-      .trim();
-
-    // Intent (Phase 4) — pull out the hidden <<INTENT:x>> tag.
-    let intent = null;
-    reply = reply
-      .replace(/<<\s*INTENT\s*:\s*([^>]+?)\s*>>/gi, (_, val) => {
-        if (!intent) intent = String(val).toLowerCase().trim();
-        return "";
-      });
-
-    // Actions (Phase 5) — pull out <<TAG:...>> and <<LEAD:...>> markers.
-    const tags = [];
-    reply = reply.replace(/<<\s*TAG\s*:\s*([^>]+?)\s*>>/gi, (_, t) => {
-      const clean = String(t).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      if (clean) tags.push(clean);
-      return "";
-    });
-
-    let lead = null;
-    reply = reply.replace(/<<\s*LEAD\s*:\s*([^>]+?)\s*>>/i, (_, body) => {
-      const out = {};
-      String(body)
-        .split(";")
-        .forEach((kv) => {
-          const [k, ...rest] = kv.split("=");
-          if (k && rest.length)
-            out[k.trim().toLowerCase()] = rest.join("=").trim();
-        });
-      if (out.name || out.contact) lead = out;
-      return "";
-    });
-
-    // SAFETY NET: strip ANY remaining << … >> marker the model may have
-    // invented in a slightly different format, so nothing ever leaks to the
-    // customer. Then tidy up leftover blank lines.
-    reply = reply
-      .replace(/<<[^>]*>>/g, "")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-
-    if (!reply) reply = fallbackReply(contact);
+    // Parse & strip ALL internal markers (image/intent/tag/lead + safety net).
+    const parsed = parseMarkers(reply);
+    reply = parsed.reply || fallbackReply(contact);
+    const { imageUrls, intent, tags, lead } = parsed;
 
     logger.info(
       `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} imageUrls=${imageUrls.length}`,
@@ -612,12 +618,15 @@ const generateReply = async ({
             temperature: 0.45,
             max_tokens: 600,
           });
-          const reply2 =
-            r2.choices?.[0]?.message?.content?.trim() || fallbackReply(contact);
+          const raw2 = r2.choices?.[0]?.message?.content?.trim() || "";
+          const p2 = parseMarkers(raw2); // strip markers here too
           return {
-            reply: reply2,
+            reply: p2.reply || fallbackReply(contact),
             escalate,
-            imageUrls: [],
+            imageUrls: p2.imageUrls,
+            intent: p2.intent,
+            tags: p2.tags,
+            lead: p2.lead,
             tokens: r2.usage?.total_tokens || 0,
             provider: "groq-fallback",
           };
