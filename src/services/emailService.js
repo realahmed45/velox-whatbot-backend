@@ -252,6 +252,81 @@ const sendSignupNotification = async ({ name, email, method, signupNumber }) => 
   });
 };
 
+// ─── Branded shell for transactional emails ─────────────────────────────
+// A consistent Botlify-themed wrapper so every customer email looks the same.
+const APP_URL = process.env.CLIENT_URL || "https://www.botlify.site";
+const brandedEmail = ({ heading, bodyHtml, cta }) => `
+  <div style="font-family: -apple-system, Segoe UI, Arial, sans-serif; background:#f1f5f9; padding:24px;">
+    <div style="max-width:560px; margin:0 auto; background:#fff; border-radius:14px; overflow:hidden; border:1px solid #eef2f7;">
+      <div style="background:linear-gradient(135deg,#ff9a5c,#ff5722); padding:22px 28px;">
+        <span style="color:#fff; font-size:20px; font-weight:800; letter-spacing:-0.5px;">Botlify</span>
+      </div>
+      <div style="padding:28px;">
+        <h2 style="margin:0 0 12px; font-size:20px; color:#0f172a;">${heading}</h2>
+        <div style="font-size:15px; line-height:1.6; color:#475569;">${bodyHtml}</div>
+        ${
+          cta
+            ? `<div style="margin:26px 0 4px;"><a href="${cta.url}" style="display:inline-block; background:#ff5722; color:#fff; text-decoration:none; font-weight:700; font-size:14px; padding:12px 26px; border-radius:10px;">${cta.label}</a></div>`
+            : ""
+        }
+      </div>
+      <div style="padding:16px 28px; border-top:1px solid #eef2f7; font-size:12px; color:#94a3b8;">
+        Botlify · Reply to this email if you need help — we're at ${SUPPORT_EMAIL}.
+      </div>
+    </div>
+  </div>`;
+
+// 1. Subscription confirmed (trial converts / payment succeeds)
+const sendSubscriptionConfirmedEmail = async ({ to, name, planName, cycle, nextBillingDate }) => {
+  const html = brandedEmail({
+    heading: `You're all set, ${name || "there"} 🎉`,
+    bodyHtml: `
+      <p>Your <b>${planName || "Botlify"}</b> subscription is active${cycle ? ` (${cycle})` : ""}. Every Botlify feature on your plan is unlocked.</p>
+      ${nextBillingDate ? `<p style="color:#64748b;">Next billing date: <b>${new Date(nextBillingDate).toLocaleDateString()}</b>.</p>` : ""}
+      <p>Jump back in and let your bot handle your DMs 24/7.</p>`,
+    cta: { url: `${APP_URL}/dashboard`, label: "Go to dashboard" },
+  });
+  return sendEmail({ to, subject: "Your Botlify subscription is active ✅", html });
+};
+
+// 2. Subscription cancelled
+const sendSubscriptionCancelledEmail = async ({ to, name, accessEndsDate }) => {
+  const html = brandedEmail({
+    heading: "Your subscription is cancelled",
+    bodyHtml: `
+      <p>Hi ${name || "there"}, we've cancelled your Botlify subscription as requested.</p>
+      <p>You'll keep <b>full access until ${accessEndsDate ? new Date(accessEndsDate).toLocaleDateString() : "the end of your billing period"}</b>. After that, your automations pause — but <b>your account and all your data stay safe</b>.</p>
+      <p>Changed your mind? You can resubscribe anytime and pick up right where you left off.</p>`,
+    cta: { url: `${APP_URL}/dashboard/billing`, label: "Resubscribe" },
+  });
+  return sendEmail({ to, subject: "Your Botlify subscription is cancelled", html });
+};
+
+// 3. Trial ending soon
+const sendTrialEndingEmail = async ({ to, name, trialEndsDate, planName }) => {
+  const html = brandedEmail({
+    heading: "Your free trial ends soon ⏳",
+    bodyHtml: `
+      <p>Hi ${name || "there"}, your Botlify free trial ends on <b>${trialEndsDate ? new Date(trialEndsDate).toLocaleDateString() : "soon"}</b>.</p>
+      <p>To keep your bot replying to every DM, comment and story without interruption, your ${planName || "plan"} will continue automatically. No action needed.</p>
+      <p>Want to change or cancel first? You can manage everything from your billing page — cancel anytime before the trial ends and you won't be charged.</p>`,
+    cta: { url: `${APP_URL}/dashboard/billing`, label: "Manage subscription" },
+  });
+  return sendEmail({ to, subject: "Your Botlify trial ends soon", html });
+};
+
+// 4. Payment failed / access ended
+const sendPaymentFailedEmail = async ({ to, name }) => {
+  const html = brandedEmail({
+    heading: "We couldn't process your payment",
+    bodyHtml: `
+      <p>Hi ${name || "there"}, your latest Botlify payment didn't go through, so your automations are paused for now.</p>
+      <p>It's usually a quick fix — update your card and you're back up in seconds. Your account and data are safe.</p>`,
+    cta: { url: `${APP_URL}/dashboard/billing`, label: "Update payment method" },
+  });
+  return sendEmail({ to, subject: "Action needed: update your Botlify payment", html });
+};
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
@@ -261,4 +336,8 @@ module.exports = {
   sendInvoiceEmail,
   sendTeamInviteEmail,
   sendSignupNotification,
+  sendSubscriptionConfirmedEmail,
+  sendSubscriptionCancelledEmail,
+  sendTrialEndingEmail,
+  sendPaymentFailedEmail,
 };

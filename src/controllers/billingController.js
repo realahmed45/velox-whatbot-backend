@@ -10,7 +10,12 @@ const paddleService = require("../services/payments/paddleService");
 const paddleConfig = require("../config/paddle");
 const creemService = require("../services/payments/creemService");
 const creemConfig = require("../config/creem");
-const { sendInvoiceEmail } = require("../services/emailService");
+const {
+  sendInvoiceEmail,
+  sendSubscriptionConfirmedEmail,
+  sendSubscriptionCancelledEmail,
+  sendPaymentFailedEmail,
+} = require("../services/emailService");
 const { v4: uuidv4 } = require("uuid");
 const moment = require("moment");
 const logger = require("../utils/logger");
@@ -450,6 +455,18 @@ const cancelSubscription = asyncHandler(async (req, res) => {
   await Workspace.findByIdAndUpdate(req.workspace._id, {
     "subscription.cancelAtPeriodEnd": true,
   });
+
+  // Confirmation email — best-effort, never blocks the response.
+  if (req.user?.email) {
+    sendSubscriptionCancelledEmail({
+      to: req.user.email,
+      name: req.user.name,
+      accessEndsDate: sub?.currentPeriodEnd || req.workspace.subscription?.currentPeriodEnd,
+    }).catch((e) =>
+      logger.warn("[cancel] email failed", { err: e.message }),
+    );
+  }
+
   res.json({
     success: true,
     message:
@@ -1060,13 +1077,37 @@ const handleCreemWebhook = asyncHandler(async (req, res) => {
     });
   };
 
+  // Email the workspace owner (best-effort). Looks up the owner from the ws.
+  const emailOwner = async (ws, fn) => {
+    try {
+      const w = await Workspace.findById(ws).populate("owner", "name email");
+      const owner = w?.owner;
+      if (owner?.email) await fn(owner);
+    } catch (e) {
+      logger.warn("[Creem webhook] owner email failed", { err: e.message });
+    }
+  };
+
   try {
     switch (eventType) {
       case "checkout.completed":
       case "subscription.paid":
       case "subscription.active": {
         const ws = await findWs();
-        if (ws) await activate(ws, "active", eventType === "checkout.completed");
+        if (ws) {
+          await activate(ws, "active", eventType === "checkout.completed");
+          // Confirmation email only on the initial checkout (not every renewal).
+          if (eventType === "checkout.completed") {
+            await emailOwner(ws, (owner) =>
+              sendSubscriptionConfirmedEmail({
+                to: owner.email,
+                name: owner.name,
+                planName: plan === "ig_pro" ? "Instagram Pro" : "Basic",
+                cycle,
+              }),
+            );
+          }
+        }
         break;
       }
       case "subscription.trialing": {
@@ -1106,7 +1147,16 @@ const handleCreemWebhook = asyncHandler(async (req, res) => {
       case "subscription.canceled":
       case "subscription.expired": {
         const ws = await findWs();
-        if (ws) await downgradeToTrial(ws, subId);
+        if (ws) {
+          await downgradeToTrial(ws, subId);
+          // An expiry (as opposed to a user-initiated cancel, which already
+          // emailed) usually means a failed renewal — nudge them to fix it.
+          if (eventType === "subscription.expired") {
+            await emailOwner(ws, (owner) =>
+              sendPaymentFailedEmail({ to: owner.email, name: owner.name }),
+            );
+          }
+        }
         break;
       }
       case "subscription.past_due": {
