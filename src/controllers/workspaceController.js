@@ -838,7 +838,9 @@ const updateAiKnowledge = asyncHandler(async (req, res) => {
 // a knowledge source the DM bot can use.
 const importKnowledgeSource = asyncHandler(async (req, res) => {
   const Workspace = require("../models/Workspace");
-  const { importWebsite } = require("../services/ai/websiteImporter");
+  const { importWebsite, normalizeUrl } = require(
+    "../services/ai/websiteImporter",
+  );
   const ws = await Workspace.findById(req.workspace._id);
   if (!ws) {
     res.status(404);
@@ -858,32 +860,78 @@ const importKnowledgeSource = asyncHandler(async (req, res) => {
     throw new Error("You can keep up to 12 sources. Remove one first.");
   }
 
-  let result;
+  // A full-site deep crawl takes too long for an HTTP request, so we create the
+  // source as "processing" and return immediately, then crawl + distill in the
+  // background and flip it to "ready" (or "error").
+  let cleanUrl;
   try {
-    result = await importWebsite(url);
+    cleanUrl = normalizeUrl(url).toString();
   } catch (err) {
-    res.status(422);
-    throw new Error(err.message || "Could not import that website");
+    res.status(400);
+    throw new Error(err.message || "That doesn't look like a valid URL");
   }
 
   ws.aiKnowledge.enabled = true;
   ws.aiKnowledge.sources.push({
     type: "website",
-    label: result.title,
-    url: result.url,
-    content: result.content,
-    status: "ready",
-    charCount: result.charCount,
+    label: cleanUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""),
+    url: cleanUrl,
+    content: "",
+    status: "processing",
+    charCount: 0,
     addedAt: new Date(),
-    syncedAt: new Date(),
   });
   ws.aiKnowledge.lastUpdatedAt = new Date();
-  // Adding knowledge turns the bot live (Manychat-style — no separate toggle).
   ws.set("aiSettings.enabled", true);
   await ws.save();
 
   const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];
-  res.json({ success: true, source, pagesScraped: result.pagesScraped });
+  const sourceId = source._id;
+  const workspaceId = ws._id;
+
+  // Respond right away — the UI shows "Processing…" and polls for the result.
+  res.json({ success: true, source, processing: true });
+
+  // ── Background crawl (fire-and-forget) ─────────────────────────────────
+  setImmediate(async () => {
+    try {
+      const result = await importWebsite(cleanUrl);
+      await Workspace.updateOne(
+        { _id: workspaceId, "aiKnowledge.sources._id": sourceId },
+        {
+          $set: {
+            "aiKnowledge.sources.$.label": result.title,
+            "aiKnowledge.sources.$.content": result.content,
+            "aiKnowledge.sources.$.charCount": result.charCount,
+            "aiKnowledge.sources.$.status": "ready",
+            "aiKnowledge.sources.$.syncedAt": new Date(),
+            "aiKnowledge.sources.$.error": "",
+            "aiKnowledge.lastUpdatedAt": new Date(),
+          },
+        },
+      );
+      logger.info("[knowledge] website import complete", {
+        url: cleanUrl,
+        chars: result.charCount,
+        pages: result.pagesScraped,
+      });
+    } catch (err) {
+      await Workspace.updateOne(
+        { _id: workspaceId, "aiKnowledge.sources._id": sourceId },
+        {
+          $set: {
+            "aiKnowledge.sources.$.status": "error",
+            "aiKnowledge.sources.$.error":
+              err.message || "Could not import that website",
+          },
+        },
+      );
+      logger.warn("[knowledge] website import failed", {
+        url: cleanUrl,
+        err: err.message,
+      });
+    }
+  });
 });
 
 // @POST /api/workspaces/:workspaceId/ai-knowledge/import-doc  (multipart)
@@ -986,27 +1034,51 @@ const resyncKnowledgeSource = asyncHandler(async (req, res) => {
     throw new Error("Source not found");
   }
 
-  try {
-    if (src.type === "website" && src.url) {
-      const { importWebsite } = require("../services/ai/websiteImporter");
-      const r = await importWebsite(src.url);
-      src.content = r.content;
-      src.charCount = r.charCount;
-      src.label = r.title || src.label;
-    } else {
-      res.status(400);
-      throw new Error("This source can't be re-synced");
-    }
-  } catch (err) {
-    res.status(422);
-    throw new Error(err.message || "Re-sync failed");
+  if (src.type !== "website" || !src.url) {
+    res.status(400);
+    throw new Error("This source can't be re-synced");
   }
 
-  src.status = "ready";
-  src.syncedAt = new Date();
+  // Deep re-crawl runs in the background (same as the initial import).
+  src.status = "processing";
+  src.error = "";
   ws.aiKnowledge.lastUpdatedAt = new Date();
   await ws.save();
-  res.json({ success: true, source: src });
+  res.json({ success: true, source: src, processing: true });
+
+  const workspaceId = ws._id;
+  const sourceId = src._id;
+  const url = src.url;
+  setImmediate(async () => {
+    try {
+      const { importWebsite } = require("../services/ai/websiteImporter");
+      const r = await importWebsite(url);
+      await Workspace.updateOne(
+        { _id: workspaceId, "aiKnowledge.sources._id": sourceId },
+        {
+          $set: {
+            "aiKnowledge.sources.$.content": r.content,
+            "aiKnowledge.sources.$.charCount": r.charCount,
+            "aiKnowledge.sources.$.label": r.title || src.label,
+            "aiKnowledge.sources.$.status": "ready",
+            "aiKnowledge.sources.$.syncedAt": new Date(),
+            "aiKnowledge.sources.$.error": "",
+            "aiKnowledge.lastUpdatedAt": new Date(),
+          },
+        },
+      );
+    } catch (err) {
+      await Workspace.updateOne(
+        { _id: workspaceId, "aiKnowledge.sources._id": sourceId },
+        {
+          $set: {
+            "aiKnowledge.sources.$.status": "error",
+            "aiKnowledge.sources.$.error": err.message || "Re-sync failed",
+          },
+        },
+      );
+    }
+  });
 });
 
 // @DELETE /api/workspaces/:workspaceId/ai-knowledge/sources/:sourceId

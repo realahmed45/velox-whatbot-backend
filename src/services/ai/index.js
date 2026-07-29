@@ -15,7 +15,10 @@ let groqClient = null;
 let geminiClient = null;
 let openaiClient = null;
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+// Gemini 2.5 Flash-Lite — cheapest capable model with native PDF + image +
+// video ($0.10/1M in, $0.40/1M out; ~33% cheaper than gpt-4o-mini). Used for
+// text AND vision/PDF, so a single cheap model covers everything.
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const OPENAI_MODEL = "gpt-4o-mini";
 
 const getOpenaiClient = () => {

@@ -15,11 +15,16 @@ const cheerio = require("cheerio");
 const logger = require("../../utils/logger");
 const ai = require("./index");
 
-const MAX_PAGES = 14; // homepage + up to 13 internal pages
+// Deep crawl: BFS the whole site (recursing into links found on child pages),
+// fetching pages concurrently. Runs in a BACKGROUND job (see the controller),
+// so the higher limits + latency don't hit the HTTP request timeout.
+const MAX_PAGES = 120; // pages to crawl for a full-site scrape
+const CRAWL_CONCURRENCY = 6; // pages fetched in parallel per batch
+const MAX_CRAWL_DEPTH = 4; // link-follow depth from the homepage
 const PAGE_TIMEOUT = 12000;
-const MAX_BYTES = 4 * 1024 * 1024; // 4 MB cap per page
-const MAX_RAW_CHARS = 90000; // combined text fed to the AI
-const MAX_BRIEF_CHARS = 14000; // stored knowledge per source
+const MAX_BYTES = 5 * 1024 * 1024; // 5 MB cap per page
+const MAX_RAW_CHARS = 400000; // combined text fed to the AI (deep site)
+const MAX_BRIEF_CHARS = 48000; // stored knowledge per source (fits schema 50k)
 
 // Use a real browser UA. Some hosts/CDNs serve a richer (pre-rendered) page to
 // browsers than to obvious bots, so this alone often turns a near-empty SPA
@@ -293,29 +298,58 @@ const collectInternalLinks = (html, baseUrl) => {
   return [...interesting, ...others];
 };
 
-/** Discover URLs from /sitemap.xml (and a couple of common variants). */
+/**
+ * Discover URLs from sitemaps. Follows a sitemap INDEX into its child sitemaps
+ * (one level) so we get the full URL set on big sites, not just the index.
+ */
 const discoverFromSitemap = async (root) => {
+  const readLocs = async (sitemapUrl) => {
+    try {
+      const xml = await fetchText(
+        new URL(sitemapUrl),
+        "application/xml,text/xml,*/*",
+      );
+      const isIndex = /<sitemapindex[\s>]/i.test(xml);
+      const locs = (xml.match(/<loc>([^<]+)<\/loc>/gi) || []).map((m) =>
+        m.replace(/<\/?loc>/gi, "").trim(),
+      );
+      return { isIndex, locs };
+    } catch {
+      return { isIndex: false, locs: [] };
+    }
+  };
+
   const candidates = [
     `${root.origin}/sitemap.xml`,
     `${root.origin}/sitemap_index.xml`,
+    `${root.origin}/sitemap-index.xml`,
   ];
-  const urls = [];
+  const pageUrls = new Set();
+
   for (const c of candidates) {
-    try {
-      const xml = await fetchText(new URL(c), "application/xml,text/xml,*/*");
-      const matches = xml.match(/<loc>([^<]+)<\/loc>/gi) || [];
-      for (const m of matches) {
-        const loc = m.replace(/<\/?loc>/gi, "").trim();
-        try {
-          const u = new URL(loc);
-          if (u.hostname === root.hostname) urls.push(u);
-        } catch {
-          /* ignore */
-        }
+    const { isIndex, locs } = await readLocs(c);
+    if (!locs.length) continue;
+    if (isIndex) {
+      // Fetch up to a handful of child sitemaps and collect their page URLs.
+      const children = locs.slice(0, 20);
+      for (const child of children) {
+        const { locs: childLocs } = await readLocs(child);
+        childLocs.forEach((l) => pageUrls.add(l));
+        if (pageUrls.size > 2000) break;
       }
-      if (urls.length) break;
+    } else {
+      locs.forEach((l) => pageUrls.add(l));
+    }
+    if (pageUrls.size) break;
+  }
+
+  const urls = [];
+  for (const loc of pageUrls) {
+    try {
+      const u = new URL(loc);
+      if (u.hostname === root.hostname) urls.push(u);
     } catch {
-      /* no sitemap — fine */
+      /* ignore */
     }
   }
   const interesting = urls.filter((u) => INTERESTING.test(u.pathname));
@@ -339,69 +373,117 @@ const dedupeByPath = (urls) => {
  * Import a website into a distilled knowledge brief.
  * @returns {Promise<{ title, url, content, charCount, pagesScraped }>}
  */
-const importWebsite = async (rawUrl) => {
+const pathKey = (u) => u.origin + u.pathname.replace(/\/$/, "");
+
+/**
+ * Fetch + extract a single page. For thin/SPA pages, falls back to the JS
+ * render proxy — but only when `allowRender` is set (root + shallow pages), so
+ * a deep crawl doesn't fire a slow render on every leaf.
+ */
+const scrapePage = async (url, { allowRender = false } = {}) => {
+  const THIN = 400;
+  let html = "";
+  try {
+    html = await fetchText(url);
+  } catch {
+    return null;
+  }
+  const { title, text } = extractText(html);
+  let finalText = text;
+  if (allowRender && (!finalText || finalText.length < THIN)) {
+    const rendered = await fetchRenderedText(url);
+    if (rendered && rendered.length > (finalText?.length || 0)) {
+      finalText = [finalText, rendered].filter(Boolean).join("\n");
+    }
+  }
+  return { url: url.toString(), title, text: finalText || "", html };
+};
+
+/**
+ * Import a website into a distilled knowledge brief via a concurrent BFS deep
+ * crawl. Seeds from homepage links + the full sitemap, then follows links found
+ * on every fetched page up to MAX_CRAWL_DEPTH / MAX_PAGES. Meant to run in a
+ * background job (higher limits + latency than an HTTP request allows).
+ *
+ * @param {string} rawUrl
+ * @param {(p:{done:number,total:number})=>void} [onProgress]
+ * @returns {Promise<{ title, url, content, charCount, pagesScraped }>}
+ */
+const importWebsite = async (rawUrl, onProgress) => {
   const root = normalizeUrl(rawUrl);
 
-  let firstHtml;
-  try {
-    firstHtml = await fetchText(root);
-  } catch (err) {
-    logger.warn("[websiteImporter] fetch failed", {
-      url: root.toString(),
-      error: err.message,
-    });
+  const visited = new Set(); // path keys we've queued/fetched
+  const pages = []; // { url, title, text }
+  let siteTitle = root.hostname;
+
+  // ── Seed the frontier ──────────────────────────────────────────────────
+  // Fetch the homepage first (also validates reachability).
+  const rootPage = await scrapePage(root, { allowRender: true });
+  if (!rootPage) {
     throw new Error(
       "Couldn't reach that site. Check the link is public and try again.",
     );
   }
+  visited.add(pathKey(root));
+  if (rootPage.text) {
+    pages.push({ url: rootPage.url, title: rootPage.title, text: rootPage.text });
+    siteTitle = rootPage.title || siteTitle;
+  }
 
-  const pages = [];
-  const first = extractText(firstHtml);
-  if (first.text) pages.push({ url: root.toString(), ...first });
-
-  // If the homepage is a client-rendered SPA (near-empty static HTML), fall
-  // back to a rendering proxy that executes JS and returns readable text.
-  const THIN = 400; // chars — below this the static fetch clearly missed content
-  if (!first.text || first.text.length < THIN) {
-    const rendered = await fetchRenderedText(root);
-    if (rendered && rendered.length > (first.text?.length || 0)) {
-      const idx = pages.findIndex((p) => p.url === root.toString());
-      const merged = {
-        url: root.toString(),
-        title: first.title || "",
-        text: [first.text, rendered].filter(Boolean).join("\n"),
-      };
-      if (idx >= 0) pages[idx] = merged;
-      else pages.push(merged);
-      logger.info("[websiteImporter] used render fallback", {
-        url: root.toString(),
-        staticLen: first.text?.length || 0,
-        renderedLen: rendered.length,
-      });
+  // depth-tagged frontier
+  let frontier = [];
+  const enqueue = (urls, depth) => {
+    for (const u of urls) {
+      const k = pathKey(u);
+      if (visited.has(k)) continue;
+      if (
+        /\.(pdf|jpg|jpeg|png|gif|webp|zip|mp4|mp3|svg|css|js|ico|woff2?)$/i.test(
+          u.pathname,
+        )
+      )
+        continue;
+      visited.add(k);
+      frontier.push({ url: u, depth });
     }
-  }
+  };
 
-  // Build a crawl queue: internal homepage links + sitemap URLs.
-  const fromLinks = collectInternalLinks(firstHtml, root);
-  let fromSitemap = [];
+  // Homepage links (depth 1) + sitemap URLs (also depth 1, they're top-level).
+  enqueue(collectInternalLinks(rootPage.html, root), 1);
   try {
-    fromSitemap = await discoverFromSitemap(root);
+    enqueue(await discoverFromSitemap(root), 1);
   } catch {
-    /* ignore */
+    /* no sitemap — fine */
   }
-  const queue = dedupeByPath([...fromLinks, ...fromSitemap]).filter(
-    (u) => u.origin + u.pathname !== root.origin + root.pathname,
-  );
 
-  for (const link of queue) {
-    if (pages.length >= MAX_PAGES) break;
-    try {
-      const html = await fetchText(link);
-      const { title, text } = extractText(html);
-      if (text && text.length > 60)
-        pages.push({ url: link.toString(), title, text });
-    } catch {
-      /* skip individual page failures */
+  // ── Concurrent BFS ─────────────────────────────────────────────────────
+  while (frontier.length && pages.length < MAX_PAGES) {
+    // Take the next batch, respecting the page cap.
+    const room = MAX_PAGES - pages.length;
+    const batch = frontier.splice(0, Math.min(CRAWL_CONCURRENCY, room));
+    const results = await Promise.all(
+      batch.map(({ url, depth }) =>
+        // Only spend a render-proxy call on shallow pages (depth 1).
+        scrapePage(url, { allowRender: depth <= 1 }).then((r) =>
+          r ? { ...r, depth } : null,
+        ),
+      ),
+    );
+    for (const r of results) {
+      if (!r) continue;
+      if (r.text && r.text.length > 60) {
+        pages.push({ url: r.url, title: r.title, text: r.text });
+      }
+      // Follow links from this page if we can still go deeper.
+      if (r.depth < MAX_CRAWL_DEPTH && pages.length < MAX_PAGES && r.html) {
+        try {
+          enqueue(collectInternalLinks(r.html, new URL(r.url)), r.depth + 1);
+        } catch {
+          /* ignore link parse errors */
+        }
+      }
+    }
+    if (typeof onProgress === "function") {
+      onProgress({ done: pages.length, total: Math.min(MAX_PAGES, pages.length + frontier.length) });
     }
   }
 
@@ -411,7 +493,7 @@ const importWebsite = async (rawUrl) => {
     );
   }
 
-  const siteTitle = pages[0].title || root.hostname;
+  // ── Distil every page into one knowledge brief ─────────────────────────
   const raw = pages
     .map((p) => `# ${p.title || p.url}\n(${p.url})\n${p.text}`)
     .join("\n\n")
@@ -432,10 +514,29 @@ const importWebsite = async (rawUrl) => {
   };
 };
 
+const DISTILL_SYSTEM = (kind) =>
+  "You build a COMPREHENSIVE knowledge base for a customer-support AI from raw " +
+  `${kind} content. Capture EVERY useful fact — what the business is and does, ` +
+  "all products/services with prices, packages/plans, shipping & delivery, returns & " +
+  "refunds, booking/appointment info, opening hours, locations, contact details " +
+  "(phone, email, address, socials), team, guarantees, FAQs, and important links. " +
+  "Organise it under clear markdown headings with bullet points. Be thorough and " +
+  "detailed — do NOT over-summarise; it's better to keep more facts than fewer. " +
+  "Never invent anything; only include what's present. Skip nav menus, cookie " +
+  "notices and boilerplate.";
+
+// One AI request handles roughly this many characters of source safely within
+// free-tier per-request/day token limits (~1 token ≈ 4 chars → ~7k tokens in).
+const DISTILL_CHUNK_CHARS = 28000;
+
 /**
  * Distill raw extracted text into a thorough, factual knowledge brief.
- * Falls back to the cleaned raw text if the AI is unavailable or returns
- * something suspiciously short — so we never store a tiny summary.
+ *
+ * For large inputs (a deep site crawl) this MAP-REDUCES: the text is split into
+ * chunks, each distilled separately (so no single request blows the model's
+ * token limit), then the chunk briefs are merged — and, if there are several,
+ * lightly de-duplicated by a final pass. Always falls back to raw text if the
+ * AI is unavailable, so we never store a tiny summary or fail outright.
  */
 const distillToKnowledge = async (rawText, label, kind = "document") => {
   const cleaned = String(rawText || "")
@@ -445,26 +546,53 @@ const distillToKnowledge = async (rawText, label, kind = "document") => {
     throw new Error("Couldn't read enough text to learn from");
   }
 
-  const brief = await ai.complete({
-    system:
-      "You build a COMPREHENSIVE knowledge base for a customer-support AI from raw " +
-      `${kind} content. Capture EVERY useful fact — what the business is and does, ` +
-      "all products/services with prices, packages/plans, shipping & delivery, returns & " +
-      "refunds, booking/appointment info, opening hours, locations, contact details " +
-      "(phone, email, address, socials), team, guarantees, FAQs, and important links. " +
-      "Organise it under clear markdown headings with bullet points. Be thorough and " +
-      "detailed — do NOT over-summarise; it's better to keep more facts than fewer. " +
-      "Never invent anything; only include what's present. Skip nav menus, cookie " +
-      "notices and boilerplate.",
-    user: `${label}\n\nRaw content:\n${cleaned}`,
-    maxTokens: 4000,
-    temperature: 0.2,
-  });
+  const distillChunk = async (chunk) => {
+    try {
+      return await ai.complete({
+        system: DISTILL_SYSTEM(kind),
+        user: `${label}\n\nRaw content:\n${chunk}`,
+        maxTokens: 4000,
+        temperature: 0.2,
+      });
+    } catch (err) {
+      logger.warn("[websiteImporter] distill chunk failed", {
+        err: err.message,
+      });
+      return ""; // fall back to raw for this chunk
+    }
+  };
+
+  // Split into chunks on paragraph boundaries.
+  const chunks = [];
+  for (let i = 0; i < cleaned.length; i += DISTILL_CHUNK_CHARS) {
+    chunks.push(cleaned.slice(i, i + DISTILL_CHUNK_CHARS));
+  }
+
+  let brief;
+  if (chunks.length === 1) {
+    brief = await distillChunk(chunks[0]);
+  } else {
+    // Map: distill each chunk (cap the number of AI calls to stay cheap).
+    const MAX_CHUNKS = 16;
+    const briefs = [];
+    for (const chunk of chunks.slice(0, MAX_CHUNKS)) {
+      const b = await distillChunk(chunk);
+      briefs.push(b || chunk.slice(0, 4000));
+    }
+    const combined = briefs.join("\n\n").slice(0, MAX_BRIEF_CHARS);
+    // Reduce: one final tidy/de-dup pass if it's not too large.
+    if (combined.length <= DISTILL_CHUNK_CHARS) {
+      brief =
+        (await distillChunk(combined)) || combined;
+    } else {
+      brief = combined;
+    }
+  }
 
   const rawFallback = cleaned.slice(0, MAX_BRIEF_CHARS).trim();
 
   // If the AI brief is missing or much thinner than the source, keep the raw
-  // text too so we don't lose information (the "250 chars" problem).
+  // text too so we don't lose information.
   let content;
   if (!brief) {
     content = rawFallback;
