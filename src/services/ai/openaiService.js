@@ -386,29 +386,60 @@ Group them by popularity:
 
 Language: ${language === "ur" ? "Roman Urdu / English mix for Pakistani audience" : "English"}
 
-Return JSON: { "hashtags": { "big": ["#tag1",...], "medium": ["#tag2",...], "niche": ["#tag3",...] } }`;
+Return ONLY valid JSON, no markdown, no code fences, exactly this shape:
+{ "hashtags": { "big": ["#tag1"], "medium": ["#tag2"], "niche": ["#tag3"] } }`;
 
-    const response = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an Instagram growth expert. Always return valid JSON with relevant, searchable hashtags without spaces.",
-        },
-        { role: "user", content: prompt },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.6,
-      max_tokens: 800,
-    });
+    // Groq's llama models honour response_format=json_object only when the
+    // request also contains the literal word "json" (it does above). Some
+    // providers/models reject the param outright, so if it throws we retry
+    // once without it and rely on the extractor below.
+    let response;
+    try {
+      response = await client.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an Instagram growth expert. Always return valid JSON with relevant, searchable hashtags without spaces.",
+          },
+          { role: "user", content: prompt },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.6,
+        max_tokens: 800,
+      });
+    } catch (fmtErr) {
+      logger.warn("researchHashtags: json_object mode failed, retrying plain", {
+        err: fmtErr.message,
+      });
+      response = await client.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an Instagram growth expert. Reply with ONLY a valid JSON object, no markdown or code fences.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.6,
+        max_tokens: 800,
+      });
+    }
 
     const tokens = response.usage?.total_tokens || 0;
-    const parsed = JSON.parse(response.choices[0].message.content);
-    return {
-      hashtags: parsed.hashtags || { big: [], medium: [], niche: [] },
-      tokens,
-    };
+    const raw = response.choices?.[0]?.message?.content || "";
+    const hashtags = parseHashtagGroups(raw);
+    const total =
+      hashtags.big.length + hashtags.medium.length + hashtags.niche.length;
+    if (!total) {
+      logger.warn("researchHashtags: model returned no usable hashtags", {
+        model,
+        raw: raw.slice(0, 200),
+      });
+    }
+    return { hashtags, tokens };
   } catch (err) {
     logger.error("researchHashtags failed", { err: err.message });
     return {
@@ -417,6 +448,83 @@ Return JSON: { "hashtags": { "big": ["#tag1",...], "medium": ["#tag2",...], "nic
       error: err.message,
     };
   }
+};
+
+/**
+ * Parse the model's hashtag response defensively. Handles: markdown code
+ * fences, the arrays nested under `hashtags` OR at the top level, a flat
+ * array/string of tags, and tags with or without a leading `#`. Always
+ * returns { big, medium, niche } of clean, deduped `#tag` strings.
+ */
+const parseHashtagGroups = (raw) => {
+  const empty = { big: [], medium: [], niche: [] };
+  if (!raw) return empty;
+
+  // 1. Pull JSON out even if wrapped in ```json fences or surrounding prose.
+  let text = String(raw).trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  const braceStart = text.indexOf("{");
+  const braceEnd = text.lastIndexOf("}");
+  const jsonSlice =
+    braceStart !== -1 && braceEnd > braceStart
+      ? text.slice(braceStart, braceEnd + 1)
+      : text;
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(jsonSlice);
+  } catch {
+    // 2. No parseable JSON — fall back to scraping every #tag from the text.
+    const scraped = cleanTags(String(raw).match(/#[\p{L}\p{N}_]+/gu) || []);
+    if (scraped.length) return spreadTags(scraped);
+    return empty;
+  }
+
+  // 3. Normalise to the { big, medium, niche } shape.
+  const groups = parsed.hashtags && typeof parsed.hashtags === "object"
+    ? parsed.hashtags
+    : parsed;
+
+  const pick = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+  let big = cleanTags(pick(groups.big));
+  let medium = cleanTags(pick(groups.medium));
+  let niche = cleanTags(pick(groups.niche));
+
+  // 4. If the model ignored the grouping and returned a flat list, spread it.
+  if (!big.length && !medium.length && !niche.length) {
+    const flat = cleanTags(
+      Array.isArray(parsed) ? parsed : pick(groups.hashtags || groups.tags),
+    );
+    if (flat.length) return spreadTags(flat);
+  }
+
+  return { big, medium, niche };
+};
+
+// Ensure every tag is a clean, single-word `#hashtag`, deduped.
+const cleanTags = (arr) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of arr) {
+    if (item == null) continue;
+    let t = String(item).trim().replace(/^#+/, "").replace(/[^\p{L}\p{N}_]/gu, "");
+    if (!t) continue;
+    const tag = "#" + t;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+  }
+  return out;
+};
+
+// Distribute a flat list across the three buckets so the UI still renders.
+const spreadTags = (flat) => {
+  const big = flat.slice(0, 5);
+  const medium = flat.slice(5, 18);
+  const niche = flat.slice(18);
+  return { big, medium, niche };
 };
 
 /**
