@@ -42,6 +42,8 @@ const getGroqClient = () => {
   }
 };
 
+const GROQ_MODEL = "llama-3.3-70b-versatile";
+
 // Provider selection lives in the main AI service (OpenAI → Gemini → Groq).
 // Delegate to it so this utility file always matches. Returns { client, model }
 // or null.
@@ -56,8 +58,17 @@ const getUtilityClient = () => {
   const gm = getGeminiClient();
   if (gm) return { client: gm, model: GEMINI_MODEL };
   const gq = getGroqClient();
-  if (gq) return { client: gq, model: "llama-3.3-70b-versatile" };
+  if (gq) return { client: gq, model: GROQ_MODEL };
   return null;
+};
+
+// Prefer Groq explicitly for lightweight text tasks (hashtags, captions) so
+// they work deterministically while OpenAI isn't configured. Falls back to the
+// general chain if Groq isn't available.
+const getGroqPreferredClient = () => {
+  const gq = getGroqClient();
+  if (gq) return { client: gq, model: GROQ_MODEL };
+  return getUtilityClient();
 };
 
 /**
@@ -367,12 +378,15 @@ const moderateComment = async (text, competitorNames = []) => {
  * Returns hashtags grouped by size: big (>1M), medium (100K-1M), niche (<100K).
  */
 const researchHashtags = async ({ topic, language = "en", count = 30 }) => {
-  const svc = getUtilityClient();
+  // Prefer Groq for hashtags (works while OpenAI/Gemini are unset).
+  const svc = getGroqPreferredClient();
   if (!svc || !topic) {
+    // No AI provider — still return useful topic-based hashtags so the feature
+    // never comes back empty.
     return {
-      hashtags: { big: [], medium: [], niche: [] },
+      hashtags: fallbackHashtags(topic),
       tokens: 0,
-      provider: "none",
+      provider: "fallback",
     };
   }
   const { client, model } = svc;
@@ -438,16 +452,63 @@ Return ONLY valid JSON, no markdown, no code fences, exactly this shape:
         model,
         raw: raw.slice(0, 200),
       });
+      // Never leave the user empty-handed.
+      return { hashtags: fallbackHashtags(topic), tokens, provider: "fallback" };
     }
     return { hashtags, tokens };
   } catch (err) {
     logger.error("researchHashtags failed", { err: err.message });
+    // Groq/network hiccup — still return topic-based hashtags.
     return {
-      hashtags: { big: [], medium: [], niche: [] },
+      hashtags: fallbackHashtags(topic),
       tokens: 0,
+      provider: "fallback",
       error: err.message,
     };
   }
+};
+
+/**
+ * Deterministic, no-AI hashtag generator. Builds sensible #tags from the topic
+ * plus evergreen Instagram-growth tags, grouped by reach. Guarantees the
+ * Hashtag Research feature always returns something useful.
+ */
+const fallbackHashtags = (topic = "") => {
+  const words = String(topic)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  const base = words.join("");
+  const combos = [];
+  if (base) {
+    combos.push(`#${base}`, `#${base}s`, `#${base}lover`, `#${base}life`);
+    for (const w of words) combos.push(`#${w}`);
+    // pairwise combos
+    for (let i = 0; i < words.length - 1; i++) {
+      combos.push(`#${words[i]}${words[i + 1]}`);
+    }
+  }
+  const big = cleanTags([
+    ...combos.slice(0, 2),
+    "#instagram",
+    "#instagood",
+    "#viral",
+  ]);
+  const medium = cleanTags([
+    ...combos.slice(2, 8),
+    "#smallbusiness",
+    "#instadaily",
+    "#explorepage",
+    "#contentcreator",
+  ]);
+  const niche = cleanTags([
+    ...combos.slice(8),
+    ...words.map((w) => `#${w}community`),
+    ...words.map((w) => `#${w}tips`),
+    "#supportsmallbusiness",
+  ]);
+  return { big, medium, niche };
 };
 
 /**

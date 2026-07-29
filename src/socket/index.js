@@ -7,9 +7,24 @@ const logger = require("../utils/logger");
 let io;
 
 const initSocket = (server) => {
+  // Accept the apex + www variants of CLIENT_URL, plus localhost in dev, so the
+  // polling handshake isn't CORS-blocked when the app is opened via www.
+  const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+  const allowedOrigins = new Set([
+    clientUrl,
+    clientUrl.replace("://www.", "://"),
+    clientUrl.replace("://", "://www."),
+    "http://localhost:5173",
+  ]);
+
   io = new Server(server, {
     cors: {
-      origin: process.env.CLIENT_URL || "http://localhost:5173",
+      origin: (origin, cb) => {
+        // Allow same-origin / server-to-server (no Origin header) and any
+        // allowed web origin.
+        if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+        return cb(null, false);
+      },
       methods: ["GET", "POST"],
       credentials: true,
     },
