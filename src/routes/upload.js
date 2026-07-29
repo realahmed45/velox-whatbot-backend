@@ -4,6 +4,7 @@ const asyncHandler = require("express-async-handler");
 const { protect } = require("../middleware/auth");
 const {
   uploadImage,
+  uploadVideo,
   uploadDocument,
   uploadBuffer,
 } = require("../services/cloudinaryService");
@@ -31,6 +32,31 @@ router.post(
       url: result.secure_url,
       publicId: result.public_id,
       format: result.format,
+    });
+  }),
+);
+
+// @POST /api/upload/video  (reels — audio baked into the file)
+router.post(
+  "/video",
+  uploadVideo.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      res.status(400);
+      throw new Error("No video file provided");
+    }
+
+    const result = await uploadBuffer(req.file.buffer, {
+      folder: "scheduled-posts",
+      resource_type: "video",
+    });
+
+    res.json({
+      success: true,
+      url: result.secure_url,
+      publicId: result.public_id,
+      format: result.format,
+      duration: result.duration,
     });
   }),
 );

@@ -476,6 +476,36 @@ const publishStory = async (accountIdOrToken, _igUserId, imageUrl) => {
   }
 };
 
+const publishReel = async (
+  accountIdOrToken,
+  _igUserId,
+  videoUrl,
+  caption = "",
+) => {
+  try {
+    const accountId = stripPrefix(accountIdOrToken);
+    const { data } = await client().post("/posts", {
+      accountId,
+      platforms: [{ platform: "instagram", accountId }],
+      contentType: "reel",
+      content: caption,
+      // Audio is baked into the uploaded video — Instagram's API can't attach
+      // its licensed catalog music to API-published media.
+      mediaItems: [{ type: "video", url: videoUrl }],
+      publishNow: true,
+    });
+    return { success: true, mediaId: data.id || data.postId };
+  } catch (err) {
+    logger.error("[BotlifyIG] publishReel error", {
+      error: err.response?.data || err.message,
+    });
+    return {
+      success: false,
+      error: err.response?.data?.error || err.message,
+    };
+  }
+};
+
 const hideComment = async (accountIdOrToken, commentId) => {
   try {
     const accountId = stripPrefix(accountIdOrToken);
@@ -546,6 +576,7 @@ module.exports = {
   getSubscribedApps,
   publishPost,
   publishStory,
+  publishReel,
   hideComment,
   disconnectAccount,
 };

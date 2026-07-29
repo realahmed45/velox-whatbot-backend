@@ -1,6 +1,6 @@
 const ScheduledPost = require("../models/ScheduledPost");
 const Workspace = require("../models/Workspace");
-const { publishPost, publishStory } = require("../services/instagram");
+const { publishPost, publishStory, publishReel } = require("../services/instagram");
 const { decrypt } = require("../utils/encryption");
 const logger = require("../utils/logger");
 
@@ -66,16 +66,25 @@ const processScheduledPosts = async () => {
         const accessToken = decrypt(workspace.instagram.accessToken);
         const igUserId = decrypt(workspace.instagram.igUserId);
 
-        // Publish to Instagram (story or feed image)
-        const result =
-          post.postType === "story"
-            ? await publishStory(accessToken, igUserId, post.imageUrl)
-            : await publishPost(
-                accessToken,
-                igUserId,
-                post.imageUrl,
-                post.caption,
-              );
+        // Publish to Instagram (reel, story, or feed image)
+        let result;
+        if (post.postType === "reel") {
+          result = await publishReel(
+            accessToken,
+            igUserId,
+            post.videoUrl,
+            post.caption,
+          );
+        } else if (post.postType === "story") {
+          result = await publishStory(accessToken, igUserId, post.imageUrl);
+        } else {
+          result = await publishPost(
+            accessToken,
+            igUserId,
+            post.imageUrl,
+            post.caption,
+          );
+        }
 
         if (result.success) {
           // Zernio ACCEPTED the post but publishes to Instagram asynchronously.
@@ -163,6 +172,8 @@ const scheduleNextRecurrence = async (post) => {
     workspaceId: post.workspaceId,
     channelType: post.channelType,
     imageUrl: post.imageUrl,
+    videoUrl: post.videoUrl,
+    postType: post.postType,
     caption: post.caption,
     scheduledTime: nextRun,
     status: "pending",

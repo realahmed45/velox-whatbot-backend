@@ -21,5 +21,6 @@ module.exports = {
   getSubscribedApps: botlify.getSubscribedApps,
   publishPost: botlify.publishPost,
   publishStory: botlify.publishStory,
+  publishReel: botlify.publishReel,
   hideComment: botlify.hideComment,
 };

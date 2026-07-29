@@ -21,7 +21,12 @@ const MAX_BYTES = 4 * 1024 * 1024; // 4 MB cap per page
 const MAX_RAW_CHARS = 90000; // combined text fed to the AI
 const MAX_BRIEF_CHARS = 14000; // stored knowledge per source
 
-const UA = "Mozilla/5.0 (compatible; BotlifyBot/1.0; +https://botlify.site)";
+// Use a real browser UA. Some hosts/CDNs serve a richer (pre-rendered) page to
+// browsers than to obvious bots, so this alone often turns a near-empty SPA
+// fetch into readable content.
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/122.0 Safari/537.36";
 
 // Internal links worth following for business context.
 const INTERESTING =
@@ -60,6 +65,34 @@ const fetchText = async (url, accept = "text/html,*/*") => {
     validateStatus: (s) => s >= 200 && s < 400,
   });
   return typeof data === "string" ? data : "";
+};
+
+/**
+ * Fetch a JS-rendered version of a page via a reader proxy that executes the
+ * site's JavaScript and returns clean text/markdown. Used only as a fallback
+ * for client-rendered SPAs (like Vite/CRA sites) whose static HTML is nearly
+ * empty — no headless browser to host on our side. Returns "" on any failure.
+ */
+const fetchRenderedText = async (url) => {
+  try {
+    // r.jina.ai renders the page and returns readable text. Free, no key.
+    const proxied = `https://r.jina.ai/${url.toString()}`;
+    const { data } = await axios.get(proxied, {
+      timeout: 20000,
+      maxContentLength: MAX_BYTES,
+      responseType: "text",
+      headers: { "User-Agent": UA, Accept: "text/plain,*/*" },
+      validateStatus: (s) => s >= 200 && s < 400,
+    });
+    const text = typeof data === "string" ? data.replace(/\s+\n/g, "\n").trim() : "";
+    return text;
+  } catch (err) {
+    logger.info("[websiteImporter] render fallback failed", {
+      url: url.toString(),
+      error: err.message,
+    });
+    return "";
+  }
 };
 
 /** Pull readable facts out of JSON-LD structured data blocks. */
@@ -108,9 +141,70 @@ const extractJsonLd = ($) => {
   return facts.join("\n");
 };
 
+/**
+ * SPAs (Next/Nuxt/Vite/React) often ship their copy inside an inline JSON
+ * bootstrap (e.g. __NEXT_DATA__, __NUXT__, window.__INITIAL_STATE__) even when
+ * the visible <body> is nearly empty. Pull human-readable strings out of those
+ * blobs so a JS-rendered marketing site still yields real content.
+ */
+const extractSpaJsonText = ($) => {
+  const chunks = [];
+  const collectStrings = (val, depth = 0) => {
+    if (depth > 8 || chunks.length > 4000) return;
+    if (typeof val === "string") {
+      const s = val.trim();
+      // Keep sentence-like strings; skip ids, urls, css, hashes.
+      if (
+        s.length >= 12 &&
+        s.length <= 600 &&
+        /\s/.test(s) &&
+        !/^https?:\/\//i.test(s) &&
+        !/^[\w-]+\.(js|css|png|jpe?g|svg|woff2?)/i.test(s) &&
+        !/^[A-Fa-f0-9]{16,}$/.test(s)
+      ) {
+        chunks.push(s);
+      }
+    } else if (Array.isArray(val)) {
+      val.forEach((v) => collectStrings(v, depth + 1));
+    } else if (val && typeof val === "object") {
+      Object.values(val).forEach((v) => collectStrings(v, depth + 1));
+    }
+  };
+
+  $('script[type="application/json"], script#__NEXT_DATA__').each((_, el) => {
+    const raw = $(el).contents().text();
+    if (!raw) return;
+    try {
+      collectStrings(JSON.parse(raw));
+    } catch {
+      /* not valid JSON — ignore */
+    }
+  });
+
+  // window.__NUXT__ / __INITIAL_STATE__ style bootstraps.
+  $("script:not([src])").each((_, el) => {
+    const raw = $(el).contents().text();
+    if (!raw || !/__(NUXT|NEXT|INITIAL_STATE|APOLLO_STATE)__|self\.__next/i.test(raw))
+      return;
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return;
+    try {
+      collectStrings(JSON.parse(m[0]));
+    } catch {
+      /* best-effort */
+    }
+  });
+
+  // De-dupe while preserving order.
+  return [...new Set(chunks)].join("\n");
+};
+
 /** Strip an HTML doc to readable text + the page title + structured facts. */
 const extractText = (html) => {
   const $ = cheerio.load(html);
+
+  // Pull SPA-embedded JSON copy BEFORE we strip <script> tags below.
+  const spaText = extractSpaJsonText($);
 
   const title =
     $("title").first().text().trim() ||
@@ -162,6 +256,8 @@ const extractText = (html) => {
     listItems.slice(0, 120).join("\n"),
     alts.length ? `Images: ${[...new Set(alts)].slice(0, 40).join(", ")}` : "",
     bodyText,
+    // SPA JSON copy last — it backfills content when the visible body is thin.
+    spaText,
   ]
     .filter(Boolean)
     .join("\n");
@@ -262,6 +358,28 @@ const importWebsite = async (rawUrl) => {
   const pages = [];
   const first = extractText(firstHtml);
   if (first.text) pages.push({ url: root.toString(), ...first });
+
+  // If the homepage is a client-rendered SPA (near-empty static HTML), fall
+  // back to a rendering proxy that executes JS and returns readable text.
+  const THIN = 400; // chars — below this the static fetch clearly missed content
+  if (!first.text || first.text.length < THIN) {
+    const rendered = await fetchRenderedText(root);
+    if (rendered && rendered.length > (first.text?.length || 0)) {
+      const idx = pages.findIndex((p) => p.url === root.toString());
+      const merged = {
+        url: root.toString(),
+        title: first.title || "",
+        text: [first.text, rendered].filter(Boolean).join("\n"),
+      };
+      if (idx >= 0) pages[idx] = merged;
+      else pages.push(merged);
+      logger.info("[websiteImporter] used render fallback", {
+        url: root.toString(),
+        staticLen: first.text?.length || 0,
+        renderedLen: rendered.length,
+      });
+    }
+  }
 
   // Build a crawl queue: internal homepage links + sitemap URLs.
   const fromLinks = collectInternalLinks(firstHtml, root);

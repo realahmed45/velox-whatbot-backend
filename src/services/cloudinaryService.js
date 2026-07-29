@@ -17,6 +17,19 @@ const uploadImage = multer({
   },
 });
 
+// Memory-based multer for videos (reels). Audio is baked into the file.
+const uploadVideo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB — Instagram reels cap
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("video/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only video files are allowed"), false);
+    }
+  },
+});
+
 // Memory-based multer for documents (PDFs, etc.)
 const uploadDocument = multer({
   storage: multer.memoryStorage(),
@@ -60,6 +73,7 @@ const deleteFile = async (publicId, resourceType = "image") => {
 
 module.exports = {
   uploadImage,
+  uploadVideo,
   uploadDocument,
   uploadBuffer,
   deleteFile,

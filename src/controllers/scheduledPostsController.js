@@ -42,9 +42,19 @@ exports.getScheduledPosts = asyncHandler(async (req, res) => {
  */
 exports.createScheduledPost = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
-  const { imageUrl, caption, scheduledTime } = req.body;
+  const { imageUrl, videoUrl, caption, scheduledTime } = req.body;
+  const postType = ["story", "reel"].includes(req.body.postType)
+    ? req.body.postType
+    : "image";
 
-  if (!imageUrl || !scheduledTime) {
+  // Reels need a video; image/story need an image.
+  if (postType === "reel") {
+    if (!videoUrl || !scheduledTime) {
+      return res
+        .status(400)
+        .json({ message: "videoUrl and scheduledTime are required for reels" });
+    }
+  } else if (!imageUrl || !scheduledTime) {
     return res
       .status(400)
       .json({ message: "imageUrl and scheduledTime are required" });
@@ -75,9 +85,10 @@ exports.createScheduledPost = asyncHandler(async (req, res) => {
   const post = await ScheduledPost.create({
     workspaceId,
     channelType: "instagram",
-    imageUrl,
+    imageUrl: imageUrl || "",
+    videoUrl: postType === "reel" ? videoUrl : undefined,
     caption: caption || "",
-    postType: req.body.postType === "story" ? "story" : "image",
+    postType,
     scheduledTime: scheduleDate,
     status: "pending",
     recurring: req.body.recurring || { enabled: false },
@@ -201,7 +212,7 @@ exports.cancelScheduledPost = asyncHandler(async (req, res) => {
 exports.updateScheduledPost = asyncHandler(async (req, res) => {
   const workspaceId = req.workspace?._id || req.headers["x-workspace-id"];
   const { id } = req.params;
-  const { imageUrl, caption, postType, scheduledTime } = req.body;
+  const { imageUrl, videoUrl, caption, postType, scheduledTime } = req.body;
 
   const post = await ScheduledPost.findOne({ _id: id, workspaceId });
   if (!post) {
@@ -216,6 +227,7 @@ exports.updateScheduledPost = asyncHandler(async (req, res) => {
   }
 
   if (imageUrl !== undefined) post.imageUrl = imageUrl;
+  if (videoUrl !== undefined) post.videoUrl = videoUrl;
   if (caption !== undefined) post.caption = caption;
   if (postType !== undefined) post.postType = postType;
   if (scheduledTime !== undefined) {
