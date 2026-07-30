@@ -34,6 +34,65 @@ const wsHasFeature = (workspace, feature) => {
   if (workspace?.subscription?.lifetime === true) return true;
   return planHasFeature(workspace?.subscription?.plan, feature);
 };
+
+/**
+ * Tell the merchant a conversation needs a human. Fires on every channel we
+ * have: a realtime socket event to the workspace's inbox, a webhook event, and
+ * an email to the owner. All best-effort — one failing never blocks the others.
+ */
+const notifyHandoff = async (workspace, contact, conv) => {
+  const who = contact?.name || contact?.igUsername || "A customer";
+
+  // 1. Realtime → inbox lights up immediately.
+  try {
+    const { getIO } = require("../../socket");
+    getIO()
+      ?.to(`workspace:${workspace._id}`)
+      .emit("conversation:escalated", {
+        conversationId: String(conv._id),
+        contactId: String(contact._id),
+        name: who,
+        igUsername: contact?.igUsername || null,
+        at: new Date(),
+      });
+  } catch {
+    /* socket not ready */
+  }
+
+  // 2. Webhook event for anyone integrating.
+  dispatchEvent(workspace._id, "conversation.escalated", {
+    conversationId: String(conv._id),
+    contactId: String(contact._id),
+    name: who,
+    igUsername: contact?.igUsername || null,
+  }).catch(() => {});
+
+  // 3. Email the owner (throttled so a busy thread doesn't spam — one per
+  //    conversation per hour).
+  const last = conv.lastHandoffEmailAt
+    ? new Date(conv.lastHandoffEmailAt).getTime()
+    : 0;
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  try {
+    const ws = await Workspace.findById(workspace._id)
+      .select("name owner")
+      .populate("owner", "name email");
+    const email = ws?.owner?.email;
+    if (email) {
+      const { sendEmail } = require("../emailService");
+      await sendEmail({
+        to: email,
+        subject: `🙋 ${who} needs a human on Instagram`,
+        text: `${who} (@${contact?.igUsername || "—"}) is waiting for a reply in your Botlify inbox.\n\nOpen your inbox to take over: ${process.env.CLIENT_URL || "https://botlify.site"}/dashboard/inbox`,
+        html: `<p><b>${who}</b> (@${contact?.igUsername || "—"}) is waiting for a human reply in your Botlify inbox.</p><p><a href="${process.env.CLIENT_URL || "https://botlify.site"}/dashboard/inbox">Open your inbox →</a></p>`,
+      });
+      conv.lastHandoffEmailAt = new Date();
+      await conv.save().catch(() => {});
+    }
+  } catch (e) {
+    logger.warn("[AI] handoff email failed", { err: e.message });
+  }
+};
 const { dispatchEvent } = require("../webhookDispatcher");
 
 const TRIGGERS = {
@@ -805,7 +864,7 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
   );
 
-  const { reply, escalate, provider, imageUrls, intent, tags, lead } =
+  const { reply, escalate, provider, imageUrls, intent, tags, lead, order } =
     await ai.generateReply({
       workspace,
       history,
@@ -823,6 +882,13 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
   if (escalate) {
     conv.status = "awaiting_human";
     await conv.save();
+    // Notify the merchant that a conversation needs a human — previously this
+    // only flagged the status and told no one. Best-effort on all channels.
+    if (!workspace.__simulate) {
+      notifyHandoff(workspace, contact, conv).catch((e) =>
+        logger.warn("[AI] handoff notify failed", { err: e.message }),
+      );
+    }
   }
 
   // ── AI actions (Phase 5) — apply tags + capture lead the model emitted.
@@ -858,6 +924,65 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
       if (intent) {
         conv.lastIntent = intent;
         await conv.save().catch(() => {});
+      }
+      // Smart Orders — persist the order the AI captured (was silently dropped).
+      if (order && Array.isArray(order.items) && order.items.length) {
+        try {
+          const Order = require("../../models/Order");
+          const created = await Order.create({
+            workspaceId: workspace._id,
+            contactId: contact._id,
+            conversationId: conv._id,
+            igUsername: contact.igUsername || "",
+            items: order.items.map((it) => ({
+              name: String(it.name || ""),
+              qty: Number(it.qty) || 1,
+              variant: String(it.variant || ""),
+              price: Number(it.price) || 0,
+            })),
+            customerName: order.customerName || contact.name || "",
+            customerAddress: order.customerAddress || "",
+            customerPhone: order.customerPhone || contact.phone || "",
+            paymentMethod: order.paymentMethod || "",
+            subtotal: Number(order.subtotal) || 0,
+            currency: order.currency || "",
+            notes: order.notes || "",
+          });
+          await Workspace.updateOne(
+            { _id: workspace._id },
+            { $inc: { "smartOrders.monthlyOrderCount": 1 } },
+          );
+          // Tag the contact + realtime/webhook so the merchant sees the sale.
+          if (!(contact.tags || []).includes("order")) {
+            contact.tags = [...(contact.tags || []), "order"];
+            await contact.save().catch(() => {});
+          }
+          try {
+            const { getIO } = require("../../socket");
+            getIO()
+              ?.to(`workspace:${workspace._id}`)
+              .emit("order:created", {
+                orderId: String(created._id),
+                name: created.customerName,
+                subtotal: created.subtotal,
+                currency: created.currency,
+              });
+          } catch {
+            /* socket not ready */
+          }
+          dispatchEvent(workspace._id, "order.created", {
+            orderId: String(created._id),
+            contactId: String(contact._id),
+            items: created.items,
+            subtotal: created.subtotal,
+            currency: created.currency,
+          }).catch(() => {});
+          logger.info(
+            `[AI] order captured ws=${workspace._id} total=${created.subtotal} ${created.currency}`,
+          );
+        } catch (e) {
+          logger.warn("[AI] order save failed", { err: e.message });
+        }
       }
     } catch (e) {
       logger.warn(`[AI actions] ws=${workspace._id} failed: ${e.message}`);

@@ -37,6 +37,8 @@ const conversationSchema = new mongoose.Schema(
 
     // Last intent the AI classified for this conversation (analytics + routing).
     lastIntent: { type: String, default: null },
+    // Throttle handoff notification emails (one per conversation per hour).
+    lastHandoffEmailAt: { type: Date, default: null },
 
     // Per-conversation bot toggle. When false, automations STOP for this conversation
     // until agent turns bot back on (or after long silence, depending on settings).

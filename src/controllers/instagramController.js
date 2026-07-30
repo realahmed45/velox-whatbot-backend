@@ -2048,6 +2048,42 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           storyId: evt.storyId || null,
         });
         break;
+      case "reaction.received":
+      case "reaction": {
+        // We subscribe to reactions — capture them instead of dropping. Emit to
+        // the inbox + fire a webhook so flows/integrations can react to a 💗.
+        const reaction =
+          evt.reaction || msg.reaction || evt.emoji || msg.emoji || "❤️";
+        try {
+          const { getIO } = require("../socket");
+          getIO()
+            ?.to(`workspace:${target._id}`)
+            .emit("reaction:received", {
+              senderId,
+              senderUsername,
+              reaction,
+              at: new Date(),
+            });
+        } catch {
+          /* socket not ready */
+        }
+        try {
+          const {
+            dispatchEvent,
+          } = require("../services/webhookDispatcher");
+          dispatchEvent(target._id, "reaction.received", {
+            senderId,
+            senderUsername,
+            reaction,
+          }).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+        logger.info(
+          `[BotlifyIG webhook] reaction ${reaction} from ${senderUsername || senderId}`,
+        );
+        break;
+      }
       default:
         logger.info(`[BotlifyIG webhook] unhandled type: ${evtType}`);
     }

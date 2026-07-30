@@ -282,7 +282,7 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
       "Ask 1-2 fields at a time — conversational, not a form. Confirm prices as you go.",
       "",
       "When ALL collected emit ONCE on its own line:",
-      '<<ORDER_JSON>>{"items":[{"name":"<product>","qty":<int>,"variant":"<size/color or empty>","price":<unit price number>}],"customerName":"<full name>","customerAddress":"<full address>","customerPhone":"<phone or empty>","paymentMethod":"<method>","subtotal":<total number>,"currency":"<PKR/USD/etc>","notes":"<any extra notes>"}<<END_ORDER>>',
+      '<<ORDER_JSON>>{"items":[{"name":"<product>","qty":<int>,"variant":"<size/color or empty>","price":<unit price number>}],"customerName":"<full name>","customerAddress":"<full address>","customerPhone":"<phone or empty>","paymentMethod":"<method>","subtotal":<total number>,"currency":"<USD/etc>","notes":"<any extra notes>"}<<END_ORDER>>',
       "The order block is never shown to the customer. Write a friendly confirmation above it.",
       "─── END SMART ORDERS ───",
     );
@@ -445,6 +445,24 @@ const parseMarkers = (raw) => {
     return "";
   });
 
+  // Smart Orders — the model emits <<ORDER_JSON>>{...}<<END_ORDER>>. Parse it out
+  // (before the catch-all below deletes it) so the order is actually recorded.
+  let order = null;
+  reply = reply.replace(
+    /<<\s*ORDER_JSON\s*>>([\s\S]*?)<<\s*END_ORDER\s*>>/i,
+    (_, json) => {
+      try {
+        const parsed = JSON.parse(String(json).trim());
+        if (parsed && Array.isArray(parsed.items) && parsed.items.length) {
+          order = parsed;
+        }
+      } catch {
+        /* malformed order block — ignore */
+      }
+      return "";
+    },
+  );
+
   // SAFETY NET: remove ANY remaining << … >> marker in any format the model
   // might invent, then tidy whitespace.
   reply = reply
@@ -453,7 +471,7 @@ const parseMarkers = (raw) => {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return { reply, imageUrls, intent, tags, lead };
+  return { reply, imageUrls, intent, tags, lead, order };
 };
 
 /**
@@ -567,10 +585,10 @@ const generateReply = async ({
     // Parse & strip ALL internal markers (image/intent/tag/lead + safety net).
     const parsed = parseMarkers(reply);
     reply = parsed.reply || fallbackReply(contact);
-    const { imageUrls, intent, tags, lead } = parsed;
+    const { imageUrls, intent, tags, lead, order } = parsed;
 
     logger.info(
-      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} imageUrls=${imageUrls.length}`,
+      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} imageUrls=${imageUrls.length}`,
     );
 
     return {
@@ -580,6 +598,7 @@ const generateReply = async ({
       intent,
       tags,
       lead,
+      order,
       tokens: response.usage?.total_tokens || 0,
       provider: providerUsed,
     };
