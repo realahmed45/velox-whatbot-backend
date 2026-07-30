@@ -69,9 +69,17 @@ const getSubscription = asyncHandler(async (req, res) => {
   }).populate("latestInvoiceId");
   const workspace = req.workspace;
 
+  // Surface the lifetime/comp flag (it lives on the Workspace, not the separate
+  // Subscription doc) so the UI can show "Lifetime subscription" and hide the
+  // renew/cancel controls.
+  const lifetime = workspace.subscription?.lifetime === true;
+
   res.json({
     success: true,
-    subscription,
+    lifetime,
+    subscription: subscription
+      ? { ...subscription.toObject(), lifetime }
+      : { lifetime, plan: workspace.subscription?.plan, status: "active" },
     usage: workspace.usage,
     planLimits: workspace.getPlanLimits(),
   });
@@ -422,6 +430,16 @@ const handleXenditWebhook = asyncHandler(async (req, res) => {
 
 // @POST /api/billing/cancel — Cancel subscription
 const cancelSubscription = asyncHandler(async (req, res) => {
+  // Lifetime/comped accounts have no billing to cancel — never let them
+  // downgrade themselves.
+  if (req.workspace.subscription?.lifetime === true) {
+    return res.json({
+      success: true,
+      lifetime: true,
+      message: "This is a lifetime account — nothing to cancel.",
+    });
+  }
+
   const sub = await Subscription.findOne({ workspaceId: req.workspace._id });
 
   // Stop future auto-charges on the gateway side for card subscriptions.
