@@ -249,8 +249,18 @@ cron.schedule("0 9 * * *", () => {
   );
 });
 
+// Auto-disconnect Instagram for trials that lapsed without paying, so the
+// hosted provider stops billing us. Paid + lifetime accounts are never touched.
+// Runs hourly so a lapsed trial is dropped promptly.
+const { expireTrials } = require("./src/jobs/expireTrialsJob");
+cron.schedule("15 * * * *", () => {
+  expireTrials().catch((e) =>
+    logger.warn("[Cron] expireTrials error: " + e.message),
+  );
+});
+
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly)",
 );
 
 // ─── Start Server ──────────────────────────────────────────

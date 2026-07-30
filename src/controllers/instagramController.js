@@ -1246,6 +1246,81 @@ exports.getBotlifyOAuthUrl = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * Resolve the just-connected Zernio account and attach it to a workspace.
+ * Shared by the browser callback AND the account.connected webhook, so a
+ * connection completes even if the browser never redirects back (e.g. the user
+ * had to log into Instagram first and got stranded on instagram.com).
+ *
+ * @returns {Promise<{ok:boolean, reason?:string, webhookSubscribed?:boolean}>}
+ */
+async function attachBotlifyAccountToWorkspace(
+  workspaceId,
+  { accountId, username, profileId } = {},
+) {
+  const botlifyIgSvc = require("../services/instagram/botlifyIgService");
+
+  // Account ids already claimed by OTHER workspaces (shared-profile fallback).
+  const claimed = await Workspace.find({
+    "instagram.connectionType": "botlify_oauth",
+    _id: { $ne: workspaceId },
+  }).select("+instagram.botlifyAccountId");
+  const excludeAccountIds = [];
+  for (const w of claimed) {
+    try {
+      if (w.instagram?.botlifyAccountId)
+        excludeAccountIds.push(decrypt(w.instagram.botlifyAccountId));
+    } catch {}
+  }
+
+  const { accountId: acc, info } = await botlifyIgSvc.exchangeCallback({
+    accountId,
+    username,
+    excludeAccountIds,
+    profileId,
+  });
+  if (!acc) return { ok: false, reason: "no_account" };
+
+  // One IG account → one workspace.
+  const igAccountHash = hashToken(String(acc));
+  const conflict = await Workspace.findOne({
+    "instagram.igAccountHash": igAccountHash,
+    "instagram.status": "connected",
+    _id: { $ne: workspaceId },
+  }).select("_id");
+  if (conflict) return { ok: false, reason: "already_connected" };
+
+  let webhookSubscribed = false;
+  let webhookError = null;
+  try {
+    await botlifyIgSvc.subscribeWebhook(acc);
+    webhookSubscribed = true;
+  } catch (e) {
+    webhookError = e.response?.data?.error || e.message;
+  }
+
+  await Workspace.findByIdAndUpdate(workspaceId, {
+    "instagram.status": "connected",
+    "instagram.connectionType": "botlify_oauth",
+    "instagram.igUserId": encrypt(String(info.user_id || acc)),
+    "instagram.accessToken": encrypt(botlifyIgSvc.wrapAccountId(acc)),
+    "instagram.botlifyAccountId": encrypt(acc),
+    "instagram.igAccountHash": igAccountHash,
+    "instagram.username": info.username,
+    "instagram.displayName": info.name || info.username,
+    "instagram.profilePicture": info.profile_picture_url,
+    "instagram.followersCount": info.followers_count,
+    "instagram.connectedAt": new Date(),
+    "instagram.tokenExpiresAt": null,
+    "instagram.webhookSubscribed": webhookSubscribed,
+    "instagram.webhookError": webhookError,
+    "settings.automationEnabled": true,
+    onboardingCompleted: true,
+  });
+  return { ok: true, webhookSubscribed };
+}
+exports._attachBotlifyAccountToWorkspace = attachBotlifyAccountToWorkspace;
+
 // GET /api/instagram/connect/callback-botlify
 // Provider redirects user back here with ?accountId=xxx (or ?code=xxx) + state.
 exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
@@ -1276,21 +1351,6 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Collect account ids already claimed by other workspaces so we attach the
-    // newly-connected one (single shared Zernio profile in MVP).
-    const claimed = await Workspace.find({
-      "instagram.connectionType": "botlify_oauth",
-      _id: { $ne: workspaceId },
-    }).select("+instagram.botlifyAccountId");
-    const excludeAccountIds = [];
-    for (const w of claimed) {
-      try {
-        if (w.instagram?.botlifyAccountId) {
-          excludeAccountIds.push(decrypt(w.instagram.botlifyAccountId));
-        }
-      } catch {}
-    }
-
     // This workspace's own Zernio profile — scopes the account lookup to just
     // this tenant so we resolve exactly the account the user connected.
     let wsProfileId = null;
@@ -1305,85 +1365,33 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
       /* fall back to unscoped lookup */
     }
 
-    const { accountId: acc, info } = await botlifyIg.exchangeCallback({
+    const r = await attachBotlifyAccountToWorkspace(workspaceId, {
       accountId,
-      username, // used to build a minimal record if the account list lags
-      excludeAccountIds,
+      username,
       profileId: wsProfileId,
     });
 
-    logger.info("[BotlifyIG] callback resolved account", {
-      workspaceId,
-      resolvedAccountId: acc,
-      username: info?.username,
-      userId: info?.user_id,
-    });
-
-    if (!acc) {
-      // Should never happen (exchangeCallback throws otherwise) but guard so we
-      // never store a broken "connected" state with an undefined account id.
-      throw new Error("Could not resolve the connected Instagram account id");
+    if (r.ok) {
+      return res.redirect(
+        `${process.env.CLIENT_URL}/dashboard?connected=true${r.webhookSubscribed ? "" : "&webhook=failed"}`,
+      );
     }
-
-    // SECURITY: one Instagram account may only be connected to one workspace.
-    // Hash the resolved account id and check whether ANOTHER workspace already
-    // owns it. If so, refuse — don't let a second user hijack the same account.
-    const igAccountHash = hashToken(String(acc));
-    const conflict = await Workspace.findOne({
-      "instagram.igAccountHash": igAccountHash,
-      "instagram.status": "connected",
-      _id: { $ne: workspaceId },
-    }).select("_id");
-    if (conflict) {
-      logger.warn("[BotlifyIG] duplicate connect blocked", {
-        workspaceId,
-        conflictWorkspace: String(conflict._id),
-        igUsername: info?.username,
-      });
+    if (r.reason === "already_connected") {
+      // The account.connected webhook may have already attached it to THIS
+      // workspace — treat that as success, not a duplicate error.
+      const nowWs = await Workspace.findById(workspaceId).select(
+        "instagram.status",
+      );
+      if (nowWs?.instagram?.status === "connected") {
+        return res.redirect(`${process.env.CLIENT_URL}/dashboard?connected=true`);
+      }
       return res.redirect(
         `${process.env.CLIENT_URL}/dashboard?error=already_connected`,
       );
     }
-
-    // Subscribe the IG account to our webhook on the provider side.
-    let webhookSubscribed = false;
-    let webhookError = null;
-    try {
-      await botlifyIg.subscribeWebhook(acc);
-      webhookSubscribed = true;
-    } catch (e) {
-      webhookError = e.response?.data?.error || e.message;
-      logger.warn("[BotlifyIG] webhook subscribe failed", {
-        err: webhookError,
-      });
-    }
-
-    // We store the wrapped token "zer:<accountId>" — the dispatcher uses the
-    // prefix to route every subsequent call to botlifyIgService.
-    const wrappedToken = botlifyIg.wrapAccountId(acc);
-
-    await Workspace.findByIdAndUpdate(workspaceId, {
-      "instagram.status": "connected",
-      "instagram.connectionType": "botlify_oauth",
-      "instagram.igUserId": encrypt(String(info.user_id || acc)),
-      "instagram.accessToken": encrypt(wrappedToken),
-      "instagram.botlifyAccountId": encrypt(acc),
-      "instagram.igAccountHash": igAccountHash,
-      "instagram.username": info.username,
-      "instagram.displayName": info.name || info.username,
-      "instagram.profilePicture": info.profile_picture_url,
-      "instagram.followersCount": info.followers_count,
-      "instagram.connectedAt": new Date(),
-      "instagram.tokenExpiresAt": null, // hosted provider manages renewal
-      "instagram.webhookSubscribed": webhookSubscribed,
-      "instagram.webhookError": webhookError,
-      "settings.automationEnabled": true,
-      onboardingCompleted: true,
-    });
-
-    return res.redirect(
-      `${process.env.CLIENT_URL}/dashboard?connected=true${webhookSubscribed ? "" : "&webhook=failed"}`,
-    );
+    // no_account etc. — the webhook path may still complete it; send the user to
+    // the dashboard where the poll picks up the connection when it lands.
+    return res.redirect(`${process.env.CLIENT_URL}/dashboard?connecting=1`);
   } catch (err) {
     logger.error("[BotlifyIG] callback failed", {
       err: err.response?.data || err.message,
@@ -1476,6 +1484,70 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     // payload (incl. sender) under `message`.
     const evtType = evt.type || evt.event || evt.eventType || null;
     const msg = evt.message || {};
+
+    // ── Complete a connection server-side ────────────────────────────────────
+    // When the browser gets stranded (user had to log into Instagram first and
+    // never bounced back to us), the OAuth callback never runs — so we finish
+    // the connection HERE, off the account.connected webhook. Match the
+    // workspace by its own Zernio profile id, then attach the account. This is
+    // what makes connect "just work" on any device without pressing Connect
+    // again. Idempotent: if it's already connected, exchange+attach is a no-op.
+    if (evtType === "account.connected") {
+      const evtProfileId =
+        evt.profileId ||
+        evt.account?.profileId ||
+        evt.data?.profileId ||
+        evt.data?.account?.profileId ||
+        null;
+      const evtAccountId =
+        evt.accountId ||
+        evt.account?.accountId ||
+        evt.account?.id ||
+        evt.data?.accountId ||
+        null;
+      const evtUsername =
+        evt.account?.username || evt.data?.account?.username || evt.username;
+
+      if (evtProfileId) {
+        try {
+          // Find the workspace that owns this Zernio profile (encrypted match).
+          const pending = await Workspace.find({
+            "instagram.botlifyProfileId": { $exists: true },
+            "instagram.status": { $ne: "connected" },
+          }).select("+instagram.botlifyProfileId");
+          let targetWs = null;
+          for (const w of pending) {
+            try {
+              if (
+                decrypt(w.instagram.botlifyProfileId) === String(evtProfileId)
+              ) {
+                targetWs = w;
+                break;
+              }
+            } catch {}
+          }
+          if (targetWs) {
+            const r = await attachBotlifyAccountToWorkspace(targetWs._id, {
+              accountId: evtAccountId,
+              username: evtUsername,
+              profileId: evtProfileId,
+            });
+            logger.info(
+              `[BotlifyIG webhook] account.connected → attach ws=${targetWs._id} ok=${r.ok} reason=${r.reason || "-"}`,
+            );
+          } else {
+            logger.info(
+              `[BotlifyIG webhook] account.connected profileId=${evtProfileId} — no pending workspace (already connected or unknown)`,
+            );
+          }
+        } catch (e) {
+          logger.warn("[BotlifyIG webhook] account.connected attach failed", {
+            err: e.message,
+          });
+        }
+      }
+      continue; // handled — don't fall through to message routing
+    }
 
     // Zernio identifies the IG account by `accountId`. On some payloads it's
     // top-level, on others (e.g. account.connected) it's nested under `account`

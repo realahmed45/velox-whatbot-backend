@@ -137,11 +137,13 @@ const workspaceSchema = new mongoose.Schema(
     // Instagram connection
     instagram: instagramConnectionSchema,
 
-    // AI provider settings (runtime always uses Gemini; these are informational)
+    // AI provider settings (runtime always uses Gemini; these are informational).
+    // Legacy values (groq/openai) are kept in the enum so existing workspace
+    // docs still validate on save — the runtime ignores this field regardless.
     aiSettings: {
       provider: {
         type: String,
-        enum: ["gemini", "none"],
+        enum: ["gemini", "groq", "openai", "none"],
         default: "gemini",
       },
       model: { type: String, default: "gemini-2.5-flash" },
@@ -244,6 +246,10 @@ const workspaceSchema = new mongoose.Schema(
       activatedAt: Date,
       cancelAtPeriodEnd: { type: Boolean, default: false },
       billingCycleAnchor: Date,
+      // Complimentary / lifetime-free account — always entitled, never charged,
+      // never auto-disconnected. Set manually for comped users; no webhook
+      // touches this flag, so it sticks across all provider events.
+      lifetime: { type: Boolean, default: false },
       // Provider subscription/customer ids (for portal / cancel) + last provider.
       lemonSqueezySubscriptionId: String,
       paddleSubscriptionId: String,
@@ -668,6 +674,9 @@ workspaceSchema.pre("save", async function (next) {
  * A brand-new workspace (plan "free") is NOT entitled — it must start a trial.
  */
 workspaceSchema.methods.isEntitled = function () {
+  // Comped / lifetime-free accounts are always entitled, regardless of plan or
+  // provider status. Checked first so no billing state can lock them out.
+  if (this.subscription?.lifetime) return true;
   const { resolvePlanId } = require("../config/plans");
   const plan = resolvePlanId(this.subscription?.plan);
   if (plan === "free") return false;
