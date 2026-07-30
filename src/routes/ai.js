@@ -15,6 +15,12 @@ const productUpload = multer({
 
 router.use(protect, requireWorkspace, aiLimiter);
 
+// Diagnostic: confirm Gemini key + model are working on the live server.
+router.get("/health", async (req, res) => {
+  const ai = require("../services/ai");
+  res.json(await ai.healthCheck());
+});
+
 router.post("/caption", c.generateCaption);
 router.post("/suggest-replies", c.suggestReplies);
 router.post("/sentiment", c.analyzeSentiment);

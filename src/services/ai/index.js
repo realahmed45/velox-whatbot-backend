@@ -810,6 +810,39 @@ const readPdfWithVision = async (buffer) => {
   return "";
 };
 
+/**
+ * Diagnostic: is Gemini configured AND actually answering? Returns a small
+ * object we can surface to confirm the key + model work on the live server.
+ */
+const healthCheck = async () => {
+  const hasKey = !!process.env.GEMINI_API_KEY;
+  const out = {
+    hasGeminiKey: hasKey,
+    model: GEMINI_MODEL,
+    liteModel: GEMINI_LITE_MODEL,
+    ok: false,
+    reply: null,
+    error: null,
+  };
+  if (!hasKey) {
+    out.error = "GEMINI_API_KEY is not set on the server";
+    return out;
+  }
+  try {
+    const client = getGeminiClient();
+    const r = await client.chat.completions.create({
+      model: GEMINI_MODEL,
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 5,
+    });
+    out.reply = r.choices?.[0]?.message?.content?.trim() || null;
+    out.ok = !!out.reply;
+  } catch (err) {
+    out.error = err?.response?.data?.error?.message || err.message;
+  }
+  return out;
+};
+
 module.exports = {
   generateReply,
   buildSystemPrompt,
@@ -817,4 +850,5 @@ module.exports = {
   complete,
   completeVision,
   readPdfWithVision,
+  healthCheck,
 };
