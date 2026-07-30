@@ -15,10 +15,14 @@ const AdminEvent = require("../models/AdminEvent");
 const funnelStage = (ws) => {
   const sub = ws?.subscription || {};
   const ig = ws?.instagram || {};
-  const paying =
-    sub.lifetime === true ||
-    (sub.status === "active" && sub.plan && sub.plan !== "free");
-  if (paying) return sub.lifetime ? "lifetime" : "paying";
+  // Lifetime always wins.
+  if (sub.lifetime === true) return "lifetime";
+  // Truly paying = active AND not scheduled to cancel.
+  if (sub.status === "active" && sub.plan && sub.plan !== "free") {
+    return sub.cancelAtPeriodEnd ? "canceling" : "paying";
+  }
+  if (["cancelled", "expired", "past_due"].includes(sub.status))
+    return "cancelled";
   if (sub.status === "trialing") return "trial";
   if (ig.status === "connected") return "connected";
   if ((ws?.aiKnowledge?.sources || []).length > 0) return "knowledge";

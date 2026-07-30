@@ -721,16 +721,25 @@ const handleLemonSqueezyWebhook = asyncHandler(async (req, res) => {
 // When a subscription truly ends, drop the workspace back to the (locked) trial
 // state so paid features gate off.
 async function downgradeToTrial(workspaceId, subId) {
+  // Never downgrade a comped/lifetime account.
+  const ws = await Workspace.findById(workspaceId).select("subscription.lifetime");
+  if (ws?.subscription?.lifetime === true) {
+    logger.info(`[billing] skip downgrade — workspace ${workspaceId} is lifetime`);
+    return;
+  }
   await Workspace.findByIdAndUpdate(workspaceId, {
     "subscription.plan": "free",
     "subscription.status": "cancelled",
     "subscription.cancelAtPeriodEnd": false,
   });
+  // Match by workspaceId only — the old `lemonSqueezySubscriptionId: subId`
+  // filter never matched Creem subs, so the Subscription doc drifted (stayed
+  // "active" while the Workspace was "cancelled").
   await Subscription.findOneAndUpdate(
-    { workspaceId, ...(subId ? { lemonSqueezySubscriptionId: subId } : {}) },
+    { workspaceId },
     { status: "cancelled", cancelledAt: new Date() },
   );
-  logger.info(`[LS] workspace ${workspaceId} downgraded (subscription ended)`);
+  logger.info(`[billing] workspace ${workspaceId} downgraded (subscription ended)`);
 }
 
 // @POST /api/billing/select-plan — Directly activate a plan (no payment required).
