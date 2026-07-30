@@ -846,9 +846,13 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     return false;
   }
 
+  // Pull a wider window so the bot remembers more of the conversation (~10 user
+  // turns instead of ~5). The system prompt is large, but Gemini's context is
+  // huge, so this is safe and makes replies noticeably more coherent.
+  const HISTORY_LIMIT = 20;
   const msgs = await Message.find({ conversationId: conv._id })
     .sort({ createdAt: -1 })
-    .limit(10)
+    .limit(HISTORY_LIMIT)
     .lean();
   const history = msgs
     .reverse()
@@ -858,7 +862,16 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     }))
     .filter((m) => m.content);
 
-  const extraContext = null;
+  // Live context injected into the prompt's "LIVE STORE DATA" slot (previously
+  // always null — a fully-plumbed but dead capability). Give the bot the facts
+  // that change: who it's talking to, and any running conversation memory.
+  const ctxBits = [];
+  if (contact?.name) ctxBits.push(`Customer name: ${contact.name}`);
+  if (contact?.tags?.length)
+    ctxBits.push(`Customer tags: ${contact.tags.join(", ")}`);
+  if (conv?.summary) ctxBits.push(`Conversation so far: ${conv.summary}`);
+  if (conv?.lastIntent) ctxBits.push(`Last detected intent: ${conv.lastIntent}`);
+  const extraContext = ctxBits.length ? ctxBits.join("\n") : null;
 
   logger.info(
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
@@ -1023,7 +1036,52 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     triggerType: TRIGGERS.AI_REPLY,
     imageUrls: imageUrls || [],
   });
+
+  // Keep a rolling summary so long conversations don't lose their earlier
+  // context once messages fall out of the history window. Refresh it every ~15
+  // new messages, in the background (never blocks the reply).
+  if (!workspace.__simulate) {
+    maybeSummarizeConversation(conv).catch(() => {});
+  }
   return true;
+};
+
+/** Update conv.summary when enough new messages have accrued since last time. */
+const maybeSummarizeConversation = async (conv) => {
+  try {
+    const total = await Message.countDocuments({ conversationId: conv._id });
+    if (total < 12 || total - (conv.summaryUpToCount || 0) < 15) return;
+    const msgs = await Message.find({ conversationId: conv._id })
+      .sort({ createdAt: 1 })
+      .limit(80)
+      .lean();
+    const transcript = msgs
+      .map(
+        (m) =>
+          `${m.direction === "outbound" ? "Us" : "Customer"}: ${m.text || m.content?.text || ""}`,
+      )
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 12000);
+    const summary = await ai.complete({
+      system:
+        "Summarize this Instagram DM conversation for a support bot's memory. " +
+        "Capture what the customer wants, key facts they gave (name, product, " +
+        "size, address, budget), decisions made, and anything still pending. " +
+        "3-5 short bullet points, no fluff.",
+      user: transcript,
+      maxTokens: 300,
+      temperature: 0.2,
+      lite: true,
+    });
+    if (summary) {
+      conv.summary = summary.slice(0, 1500);
+      conv.summaryUpToCount = total;
+      await conv.save().catch(() => {});
+    }
+  } catch {
+    /* best-effort */
+  }
 };
 
 const handleFallback = async (workspace, contact, conv) => {

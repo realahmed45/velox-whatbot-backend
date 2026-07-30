@@ -39,6 +39,9 @@ const conversationSchema = new mongoose.Schema(
     lastIntent: { type: String, default: null },
     // Throttle handoff notification emails (one per conversation per hour).
     lastHandoffEmailAt: { type: Date, default: null },
+    // Rolling AI summary of older turns so long chats keep their context.
+    summary: { type: String, default: "" },
+    summaryUpToCount: { type: Number, default: 0 },
 
     // Per-conversation bot toggle. When false, automations STOP for this conversation
     // until agent turns bot back on (or after long silence, depending on settings).
