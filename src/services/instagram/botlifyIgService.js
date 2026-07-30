@@ -67,11 +67,30 @@ const getDefaultProfileId = async () => {
 };
 
 /**
- * List Instagram accounts connected to the Zernio workspace, normalized to the
- * shape the rest of the app expects.
+ * Create a dedicated Zernio profile for one workspace (tenant). Isolating each
+ * customer's Instagram accounts under their own profile is what makes multiple
+ * accounts connectable — see docs.zernio.com/multi-tenant.
+ * @returns {Promise<string>} the new profile's id
  */
-const listInstagramAccounts = async () => {
-  const { data } = await client().get("/accounts");
+const createProfile = async ({ name, description } = {}) => {
+  const { data } = await client().post("/profiles", {
+    name: name || `ws_${Date.now()}`,
+    description: description || "Botlify workspace",
+  });
+  const id = data?._id || data?.id || data?.profile?._id;
+  if (!id) throw new Error("Zernio did not return a profile id");
+  return id;
+};
+
+/**
+ * List Instagram accounts, optionally scoped to a single profile (tenant). With
+ * a profileId only that workspace's accounts are returned, so the callback can
+ * unambiguously pick the account the user just connected.
+ */
+const listInstagramAccounts = async (profileId) => {
+  const { data } = await client().get("/accounts", {
+    params: profileId ? { profileId } : undefined,
+  });
   const accounts = Array.isArray(data) ? data : data?.accounts || [];
   return accounts
     .filter((a) => (a.platform || "").toLowerCase() === "instagram")
@@ -100,19 +119,21 @@ const listInstagramAccounts = async () => {
  * @param {string} opts.callbackUrl  our /api/instagram/connect/callback-botlify
  * @returns {Promise<{url: string}>}
  */
-const createHostedAuthLink = async ({ state, callbackUrl }) => {
+const createHostedAuthLink = async ({ state, callbackUrl, profileId }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
   }
-  // Zernio uses GET /connect/instagram?profileId=...&redirectUrl=... (not POST)
-  const profileId = await getDefaultProfileId();
-  const params = { profileId };
+  // Zernio uses GET /connect/instagram?profileId=...&redirectUrl=... (not POST).
+  // profileId is per-workspace (tenant isolation); fall back to the shared
+  // default only if a caller didn't supply one.
+  const pid = profileId || (await getDefaultProfileId());
+  const params = { profileId: pid };
   // After the user authorizes, Zernio redirects the browser here. We embed our
   // workspace id in the callbackUrl query so the callback knows which workspace
   // to attach the freshly-connected account to.
   if (callbackUrl) params.redirectUrl = callbackUrl;
 
-  logger.info("[Zernio] creating auth link", { profileId, callbackUrl });
+  logger.info("[Zernio] creating auth link", { profileId: pid, callbackUrl });
   const { data } = await client().get("/connect/instagram", { params });
   logger.info("[Zernio] auth link response", { keys: Object.keys(data || {}) });
 
@@ -135,6 +156,7 @@ const exchangeCallback = async ({
   accountId,
   username,
   excludeAccountIds = [],
+  profileId = null,
 }) => {
   if (!isConfigured()) {
     throw new Error("Instagram hosted provider not configured");
@@ -157,10 +179,12 @@ const exchangeCallback = async ({
     }
   }
 
-  // Try the account list next.
+  // List accounts — scoped to THIS workspace's profile when we have one, so the
+  // result contains only this tenant's account(s). This is what lets many
+  // different Instagram accounts connect (one per workspace profile).
   let accounts = [];
   try {
-    accounts = await listInstagramAccounts();
+    accounts = await listInstagramAccounts(profileId);
   } catch (err) {
     logger.warn("[BotlifyIG] exchangeCallback: listInstagramAccounts failed", {
       err: err.response?.data || err.message,
@@ -172,10 +196,15 @@ const exchangeCallback = async ({
     acc = accounts.find((a) => a.accountId === provided);
   }
   if (!acc && accounts.length && !provided) {
-    // No accountId in the callback — pick the newest unclaimed IG account.
+    // No accountId in the callback — pick the newest account in this profile
+    // (with a shared profile, still fall back to excluding already-claimed).
     const exclude = new Set(excludeAccountIds);
     const unclaimed = accounts.filter((a) => !exclude.has(a.accountId));
-    const pool = unclaimed.length ? unclaimed : accounts;
+    const pool = profileId
+      ? accounts // profile-scoped: every account here belongs to this tenant
+      : unclaimed.length
+        ? unclaimed
+        : accounts;
     pool.sort(
       (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
     );
@@ -560,6 +589,9 @@ module.exports = {
   isConfigured,
   wrapAccountId,
   stripPrefix,
+  // profiles (multi-tenant)
+  createProfile,
+  getDefaultProfileId,
   // hosted-auth flow
   createHostedAuthLink,
   exchangeCallback,

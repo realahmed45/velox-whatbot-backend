@@ -108,8 +108,39 @@ exports.getOAuthUrl = asyncHandler(async (req, res) => {
     ).toString("base64");
     const base =
       process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
-    // Embed the workspace id in the callback — Zernio generates its own state
-    // and won't carry ours, so we identify the workspace via this query param.
+
+    // Give each workspace its OWN Zernio profile (tenant isolation) so any
+    // number of different Instagram accounts can connect — one per workspace.
+    // Create it lazily on first connect and remember it on the workspace.
+    let profileId = null;
+    try {
+      const wsDoc = await Workspace.findById(workspaceId).select(
+        "+instagram.botlifyProfileId name",
+      );
+      profileId = wsDoc?.instagram?.botlifyProfileId
+        ? decrypt(wsDoc.instagram.botlifyProfileId)
+        : null;
+      if (!profileId) {
+        profileId = await botlifyIgEarly.createProfile({
+          name: `ws_${workspaceId}`,
+          description: wsDoc?.name || "Botlify workspace",
+        });
+        await Workspace.findByIdAndUpdate(workspaceId, {
+          "instagram.botlifyProfileId": encrypt(String(profileId)),
+        });
+        logger.info("[IG connect] created Zernio profile for workspace", {
+          workspaceId,
+          profileId,
+        });
+      }
+    } catch (err) {
+      logger.warn("[IG connect] profile setup failed, using default profile", {
+        err: err.response?.data || err.message,
+      });
+      profileId = null; // fall back to shared default inside the service
+    }
+
+    // Embed workspace id in the callback so it knows which workspace to attach.
     const callbackUrl =
       `${base}/api/instagram/connect/callback-botlify` +
       `?ws=${encodeURIComponent(workspaceId)}`;
@@ -117,6 +148,7 @@ exports.getOAuthUrl = asyncHandler(async (req, res) => {
       const { url } = await botlifyIgEarly.createHostedAuthLink({
         state,
         callbackUrl,
+        profileId,
       });
       return res.json({ url });
     } catch (err) {
@@ -1175,10 +1207,33 @@ exports.getBotlifyOAuthUrl = asyncHandler(async (req, res) => {
     `${base}/api/instagram/connect/callback-botlify` +
     `?ws=${encodeURIComponent(workspaceId)}`;
 
+  // Per-workspace Zernio profile (tenant isolation) — same as getOAuthUrl.
+  let profileId = null;
+  try {
+    const wsDoc = await Workspace.findById(workspaceId).select(
+      "+instagram.botlifyProfileId name",
+    );
+    profileId = wsDoc?.instagram?.botlifyProfileId
+      ? decrypt(wsDoc.instagram.botlifyProfileId)
+      : null;
+    if (!profileId) {
+      profileId = await botlifyIg.createProfile({
+        name: `ws_${workspaceId}`,
+        description: wsDoc?.name || "Botlify workspace",
+      });
+      await Workspace.findByIdAndUpdate(workspaceId, {
+        "instagram.botlifyProfileId": encrypt(String(profileId)),
+      });
+    }
+  } catch {
+    profileId = null;
+  }
+
   try {
     const { url } = await botlifyIg.createHostedAuthLink({
       state,
       callbackUrl,
+      profileId,
     });
     res.json({ url });
   } catch (err) {
@@ -1236,10 +1291,25 @@ exports.botlifyOAuthCallback = asyncHandler(async (req, res) => {
       } catch {}
     }
 
+    // This workspace's own Zernio profile — scopes the account lookup to just
+    // this tenant so we resolve exactly the account the user connected.
+    let wsProfileId = null;
+    try {
+      const wsDoc = await Workspace.findById(workspaceId).select(
+        "+instagram.botlifyProfileId",
+      );
+      if (wsDoc?.instagram?.botlifyProfileId) {
+        wsProfileId = decrypt(wsDoc.instagram.botlifyProfileId);
+      }
+    } catch {
+      /* fall back to unscoped lookup */
+    }
+
     const { accountId: acc, info } = await botlifyIg.exchangeCallback({
       accountId,
       username, // used to build a minimal record if the account list lags
       excludeAccountIds,
+      profileId: wsProfileId,
     });
 
     logger.info("[BotlifyIG] callback resolved account", {
