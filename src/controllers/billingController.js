@@ -317,6 +317,24 @@ const activatePlan = async ({
   }
   await Workspace.findByIdAndUpdate(workspaceId, wsUpdate);
 
+  // Activity log — a payment/activation happened.
+  try {
+    const { record, EVENTS } = require("../services/adminEvents");
+    const wsDoc = await Workspace.findById(workspaceId)
+      .select("name owner")
+      .populate("owner", "name email");
+    record(EVENTS.PAYMENT, {
+      workspaceId,
+      userId: wsDoc?.owner?._id,
+      userEmail: wsDoc?.owner?.email,
+      userName: wsDoc?.owner?.name,
+      message: `${wsDoc?.owner?.name || wsDoc?.name || "A user"} is now paying (${plan}, ${billingCycle})`,
+      meta: { plan, billingCycle },
+    });
+  } catch {
+    /* best-effort */
+  }
+
   await Subscription.findOneAndUpdate(
     { workspaceId },
     {

@@ -82,6 +82,15 @@ async function expireTrials() {
         workspaceId: String(ws._id),
         name: ws.name,
       });
+      try {
+        const { record, EVENTS } = require("../services/adminEvents");
+        record(EVENTS.TRIAL_EXPIRED, {
+          workspaceId: ws._id,
+          message: `${ws.name || "A workspace"}'s trial expired — Instagram auto-disconnected`,
+        });
+      } catch {
+        /* best-effort */
+      }
     } catch (e) {
       logger.warn("[expireTrials] workspace update failed", {
         workspaceId: String(ws._id),

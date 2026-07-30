@@ -889,6 +889,18 @@ const importKnowledgeSource = asyncHandler(async (req, res) => {
   const sourceId = source._id;
   const workspaceId = ws._id;
 
+  // Activity log — a user added a knowledge source.
+  try {
+    const { record, EVENTS } = require("../services/adminEvents");
+    record(EVENTS.KNOWLEDGE_ADDED, {
+      workspaceId,
+      message: `${ws.name || "A user"} added a website to the AI's knowledge`,
+      meta: { url: cleanUrl, kind: "website" },
+    });
+  } catch {
+    /* best-effort */
+  }
+
   // Respond right away — the UI shows "Processing…" and polls for the result.
   res.json({ success: true, source, processing: true });
 

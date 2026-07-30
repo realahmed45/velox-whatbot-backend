@@ -29,6 +29,15 @@ const notifyAdminOfSignup = (user, method) => {
   }).catch((err) =>
     logger.error("[signup] admin notification failed", { err: err.message }),
   );
+  // Activity log for the admin timeline.
+  const { record, EVENTS } = require("../services/adminEvents");
+  record(EVENTS.SIGNUP, {
+    userId: user._id,
+    userEmail: user.email,
+    userName: user.name,
+    message: `${user.name || user.email} signed up (${method})`,
+    meta: { method, signupNumber: user.signupNumber },
+  });
 };
 
 // Generate a random 4-digit verification code as a string ("0000"–"9999").

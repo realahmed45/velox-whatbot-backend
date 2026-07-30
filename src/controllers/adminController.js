@@ -9,6 +9,22 @@ const asyncHandler = require("express-async-handler");
 const User = require("../models/User");
 const Workspace = require("../models/Workspace");
 const Subscription = require("../models/Subscription");
+const AdminEvent = require("../models/AdminEvent");
+
+// Derive a single funnel stage for a workspace, most-advanced first.
+const funnelStage = (ws) => {
+  const sub = ws?.subscription || {};
+  const ig = ws?.instagram || {};
+  const paying =
+    sub.lifetime === true ||
+    (sub.status === "active" && sub.plan && sub.plan !== "free");
+  if (paying) return sub.lifetime ? "lifetime" : "paying";
+  if (sub.status === "trialing") return "trial";
+  if (ig.status === "connected") return "connected";
+  if ((ws?.aiKnowledge?.sources || []).length > 0) return "knowledge";
+  if (ws?.onboardingCompleted) return "onboarded";
+  return "signed_up";
+};
 const {
   checkAdminCredentials,
   signAdminToken,
@@ -68,6 +84,13 @@ const overview = asyncHandler(async (req, res) => {
     mrr += monthly;
   }
 
+  // Funnel counts across all workspaces.
+  const [onboardedWs, knowledgeWs, lifetimeWs] = await Promise.all([
+    Workspace.countDocuments({ onboardingCompleted: true }),
+    Workspace.countDocuments({ "aiKnowledge.sources.0": { $exists: true } }),
+    Workspace.countDocuments({ "subscription.lifetime": true }),
+  ]);
+
   res.json({
     users: {
       total: totalUsers,
@@ -78,14 +101,124 @@ const overview = asyncHandler(async (req, res) => {
     workspaces: {
       total: totalWorkspaces,
       igConnected: connectedWorkspaces,
+      onboarded: onboardedWs,
+      addedKnowledge: knowledgeWs,
     },
     subscriptions: {
       active: activeSubs,
       trialing: trialingSubs,
+      lifetime: lifetimeWs,
+      paying: activeSubs + lifetimeWs,
       estimatedMrr: Math.round(mrr),
+    },
+    // Conversion funnel (each stage as a count).
+    funnel: {
+      signedUp: totalUsers,
+      onboarded: onboardedWs,
+      connectedIg: connectedWorkspaces,
+      addedKnowledge: knowledgeWs,
+      onTrial: trialingSubs,
+      paying: activeSubs + lifetimeWs,
     },
     generatedAt: now,
   });
+});
+
+// @GET /api/admin/activity?limit=&page=&q=&stage= -> users enriched with their
+// workspace funnel stage + activity details. This is the main "trace every
+// user" table.
+const listActivity = asyncHandler(async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const q = (req.query.q || "").trim();
+  const stage = (req.query.stage || "").trim();
+
+  const filter = q
+    ? {
+        $or: [
+          { email: { $regex: q, $options: "i" } },
+          { name: { $regex: q, $options: "i" } },
+        ],
+      }
+    : {};
+
+  const users = await User.find(filter)
+    .select("name email isEmailVerified signupNumber googleId createdAt lastLogin")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Owned workspace per user (the primary one), with all activity fields.
+  const userIds = users.map((u) => u._id);
+  const workspaces = await Workspace.find({ owner: { $in: userIds } })
+    .select(
+      "owner name subscription instagram onboardingCompleted aiKnowledge.sources aiSettings.enabled usage aiStats createdAt",
+    )
+    .lean();
+  const wsByOwner = {};
+  for (const w of workspaces) {
+    // keep the most recently created workspace per owner
+    const k = String(w.owner);
+    if (!wsByOwner[k] || w.createdAt > wsByOwner[k].createdAt) wsByOwner[k] = w;
+  }
+
+  let rows = users.map((u) => {
+    const w = wsByOwner[String(u._id)] || null;
+    const ig = w?.instagram || {};
+    const sub = w?.subscription || {};
+    return {
+      userId: u._id,
+      signupNumber: u.signupNumber,
+      name: u.name,
+      email: u.email,
+      verified: !!u.isEmailVerified,
+      signupMethod: u.googleId ? "google" : "email",
+      signedUpAt: u.createdAt,
+      lastLogin: u.lastLogin || null,
+      stage: funnelStage(w),
+      onboarded: !!w?.onboardingCompleted,
+      ig: {
+        connected: ig.status === "connected",
+        username: ig.username || null,
+        followers: ig.followersCount || 0,
+        connectedAt: ig.connectedAt || null,
+        lastMessageAt: ig.lastMessageAt || null,
+      },
+      plan: sub.plan || "free",
+      subStatus: sub.status || null,
+      lifetime: sub.lifetime === true,
+      trialEndsAt: sub.trialEndsAt || null,
+      knowledgeSources: (w?.aiKnowledge?.sources || []).length,
+      aiEnabled: w?.aiSettings?.enabled !== false,
+      messagesThisMonth: w?.usage?.messagesThisMonth || 0,
+      aiRepliesThisMonth: w?.aiStats?.repliesThisMonth || 0,
+      leadsCaptured: w?.aiStats?.leadsCaptured || 0,
+      workspaceName: w?.name || null,
+    };
+  });
+
+  if (stage) rows = rows.filter((r) => r.stage === stage);
+
+  const total = rows.length;
+  const paged = rows.slice((page - 1) * limit, page * limit);
+  res.json({
+    rows: paged,
+    total,
+    page,
+    limit,
+    pages: Math.ceil(total / limit),
+  });
+});
+
+// @GET /api/admin/timeline?limit=&type= -> the live activity feed (newest first)
+const timeline = asyncHandler(async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 300);
+  const type = (req.query.type || "").trim();
+  const filter = type ? { type } : {};
+  const events = await AdminEvent.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  res.json({ events, total: events.length });
 });
 
 // @GET /api/admin/users?limit=&page=&q= -> paginated users
@@ -144,4 +277,11 @@ const listSubscriptions = asyncHandler(async (req, res) => {
   res.json({ subscriptions: rows, total: rows.length });
 });
 
-module.exports = { login, overview, listUsers, listSubscriptions };
+module.exports = {
+  login,
+  overview,
+  listUsers,
+  listSubscriptions,
+  listActivity,
+  timeline,
+};

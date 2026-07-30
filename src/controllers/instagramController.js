@@ -1360,6 +1360,28 @@ async function attachBotlifyAccountToWorkspace(
     "settings.automationEnabled": true,
     onboardingCompleted: true,
   });
+
+  // Activity log — who connected Instagram.
+  try {
+    const { record, EVENTS } = require("../services/adminEvents");
+    const wsDoc = await Workspace.findById(workspaceId)
+      .select("name owner")
+      .populate("owner", "name email");
+    record(EVENTS.IG_CONNECTED, {
+      workspaceId,
+      userId: wsDoc?.owner?._id,
+      userEmail: wsDoc?.owner?.email,
+      userName: wsDoc?.owner?.name,
+      message: `${wsDoc?.owner?.name || wsDoc?.name || "A user"} connected Instagram @${info.username || ""}`,
+      meta: {
+        igUsername: info.username,
+        followers: info.followers_count,
+      },
+    });
+  } catch {
+    /* best-effort */
+  }
+
   return { ok: true, webhookSubscribed };
 }
 exports._attachBotlifyAccountToWorkspace = attachBotlifyAccountToWorkspace;
