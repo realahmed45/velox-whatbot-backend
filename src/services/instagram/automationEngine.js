@@ -26,6 +26,14 @@ const logger = require("../../utils/logger");
 const { planHasFeature, FEATURES } = require("../../config/plans");
 const ai = require("../ai");
 const legacyAi = require("../ai/openaiService"); // kept for transcribeAudio/captions only
+
+// Feature check that respects lifetime/comped accounts (they get everything),
+// otherwise falls back to the plan's feature list. Use this for ALL live
+// feature gates so a lifetime or paid account is never wrongly skipped.
+const wsHasFeature = (workspace, feature) => {
+  if (workspace?.subscription?.lifetime === true) return true;
+  return planHasFeature(workspace?.subscription?.plan, feature);
+};
 const { dispatchEvent } = require("../webhookDispatcher");
 
 const TRIGGERS = {
@@ -64,13 +72,18 @@ const DEFAULT_MESSAGES = {
 };
 
 // ── Utilities ────────────────────────────────────────────────────────────────
-// Reject junk placeholder names (e.g. Zernio returning "Instagram") so we never
-// greet a follower as "Instagram".
-const isJunkName = (n) =>
-  !n ||
-  /^(instagram|instagram user|user|unknown|null|there)$/i.test(
-    String(n).trim(),
-  );
+// Reject junk placeholder names so we never greet a follower as "Instagram" or
+// as their raw numeric IG id. Rejects: known placeholders AND all-digit ids
+// (the long Instagram-scoped id that leaks in when no real name/username came
+// through on the webhook).
+const isJunkName = (n) => {
+  if (!n) return true;
+  const s = String(n).trim();
+  if (/^(instagram|instagram user|user|unknown|null|there)$/i.test(s))
+    return true;
+  if (/^\d{6,}$/.test(s)) return true; // raw IG sender id
+  return false;
+};
 
 const personalize = (tpl, contact) => {
   const candidate = !isJunkName(contact?.name)
@@ -187,12 +200,15 @@ const upsertContact = async (
 
   let contact = await Contact.findOne({ workspaceId, igUserId: senderId });
   if (!contact) {
+    const cleanUsername = isJunkName(username) ? "" : username;
     contact = await Contact.create({
       workspaceId,
       igUserId: senderId,
-      igUsername: username || senderId,
-      username: username || senderId,
-      name: (!isJunkName(name) && name) || username || "Instagram User",
+      // Never store the raw numeric senderId as a "username" — leave it blank so
+      // greetings fall back to "there" instead of a long IG number.
+      igUsername: cleanUsername || undefined,
+      username: cleanUsername || undefined,
+      name: (!isJunkName(name) && name) || cleanUsername || "Instagram User",
       igProfilePic: profilePic || undefined,
       source: channelSource,
       acquisitionTrigger,
@@ -504,7 +520,7 @@ const handleWelcome = async (workspace, contact, conv) => {
 const handleStoryReply = async (workspace, contact, conv, text) => {
   const cfg = workspace.storyReplyTrigger;
   if (!cfg?.enabled) return false;
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_REPLY))
+  if (!wsHasFeature(workspace, FEATURES.STORY_REPLY))
     return false;
   if (await recentlyTriggered(conv, TRIGGERS.STORY_REPLY, null, 6)) return true;
 
@@ -532,7 +548,7 @@ const handleStoryMention = async (workspace, senderId, meta = {}) => {
     );
     return;
   }
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.STORY_MENTION)) {
+  if (!wsHasFeature(workspace, FEATURES.STORY_MENTION)) {
     logger.info(
       `[storyMention] skipped: plan ${workspace.subscription?.plan} lacks STORY_MENTION ws=${workspace._id}`,
     );
@@ -574,7 +590,7 @@ const handleShare = async (workspace, contact, conv) => {
     );
     return false;
   }
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.SHARE_TO_STORY)) {
+  if (!wsHasFeature(workspace, FEATURES.SHARE_TO_STORY)) {
     logger.info(
       `[share] skipped: plan ${workspace.subscription?.plan} lacks SHARE_TO_STORY ws=${workspace._id}`,
     );
@@ -597,7 +613,7 @@ const handleShare = async (workspace, contact, conv) => {
 };
 
 const handleRefUrl = async (workspace, senderId, refCode, meta = {}) => {
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.REF_URL)) return;
+  if (!wsHasFeature(workspace, FEATURES.REF_URL)) return;
   const trig = (workspace.refUrlTriggers || []).find(
     (t) => t.enabled && t.code === refCode,
   );
@@ -623,8 +639,7 @@ const handleRefUrl = async (workspace, senderId, refCode, meta = {}) => {
 
 const handlePostback = async (workspace, contact, conv, payload) => {
   if (
-    !planHasFeature(
-      workspace.subscription?.plan,
+    !wsHasFeature(workspace,
       FEATURES.CONVERSATION_STARTERS,
     )
   )
@@ -645,7 +660,7 @@ const handlePostback = async (workspace, contact, conv, payload) => {
 };
 
 const handleLiveComment = async (workspace, senderId, text, meta = {}) => {
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.LIVE_COMMENT))
+  if (!wsHasFeature(workspace, FEATURES.LIVE_COMMENT))
     return;
   const matched = (workspace.liveCommentTriggers || []).find(
     (t) => t.enabled && matchKeyword(text, t.keyword, "contains"),
@@ -692,7 +707,7 @@ const handleHolidayMode = async (workspace, contact, conv) => {
 };
 
 const handleAwayReply = async (workspace, contact, conv) => {
-  if (!planHasFeature(workspace.subscription?.plan, FEATURES.BUSINESS_HOURS))
+  if (!wsHasFeature(workspace, FEATURES.BUSINESS_HOURS))
     return false;
   const cfg = workspace.awayReply;
   if (!cfg?.enabled) return false;
@@ -752,10 +767,9 @@ const bumpAiStats = async (workspace, { faq, handoff, lead }) => {
 
 const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
   const { incomingImageUrl = null } = opts;
-  const plan = workspace.subscription?.plan || "free";
-  if (!planHasFeature(plan, FEATURES.AI_BOT)) {
+  if (!wsHasFeature(workspace, FEATURES.AI_BOT)) {
     logger.info(
-      `[AI] ws=${workspace._id} plan=${plan} has no AI_BOT feature — skip`,
+      `[AI] ws=${workspace._id} plan=${workspace.subscription?.plan} has no AI_BOT feature — skip`,
     );
     return false;
   }
