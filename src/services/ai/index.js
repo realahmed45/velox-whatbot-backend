@@ -818,27 +818,67 @@ const healthCheck = async () => {
   const hasKey = !!process.env.GEMINI_API_KEY;
   const out = {
     hasGeminiKey: hasKey,
-    model: GEMINI_MODEL,
-    liteModel: GEMINI_LITE_MODEL,
+    configuredModel: GEMINI_MODEL,
+    configuredLite: GEMINI_LITE_MODEL,
     ok: false,
     reply: null,
+    workingModel: null,
+    triedModels: [],
+    availableModels: null,
     error: null,
   };
   if (!hasKey) {
     out.error = "GEMINI_API_KEY is not set on the server";
     return out;
   }
+  const client = getGeminiClient();
+
+  // 1. List the models this key can actually use (the live source of truth).
   try {
-    const client = getGeminiClient();
-    const r = await client.chat.completions.create({
-      model: GEMINI_MODEL,
-      messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      max_tokens: 5,
-    });
-    out.reply = r.choices?.[0]?.message?.content?.trim() || null;
-    out.ok = !!out.reply;
+    const axios = require("axios");
+    const { data } = await axios.get(
+      "https://generativelanguage.googleapis.com/v1beta/models",
+      { params: { key: process.env.GEMINI_API_KEY }, timeout: 12000 },
+    );
+    out.availableModels = (data.models || [])
+      .map((m) => (m.name || "").replace(/^models\//, ""))
+      .filter((n) => /gemini/i.test(n))
+      .slice(0, 40);
   } catch (err) {
-    out.error = err?.response?.data?.error?.message || err.message;
+    out.availableModels = `list failed: ${err.response?.status || err.message}`;
+  }
+
+  // 2. Try candidate models until one answers, so we know exactly what works.
+  const candidates = [
+    GEMINI_MODEL,
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-2.0-flash",
+  ];
+  for (const model of candidates) {
+    if (out.triedModels.includes(model)) continue;
+    out.triedModels.push(model);
+    try {
+      const r = await client.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_tokens: 5,
+      });
+      const reply = r.choices?.[0]?.message?.content?.trim() || null;
+      if (reply) {
+        out.ok = true;
+        out.reply = reply;
+        out.workingModel = model;
+        break;
+      }
+    } catch (err) {
+      if (!out.error)
+        out.error =
+          err?.response?.data?.error?.message ||
+          `${err.message} (model ${model})`;
+    }
   }
   return out;
 };
