@@ -64,15 +64,23 @@ const DEFAULT_MESSAGES = {
 };
 
 // ── Utilities ────────────────────────────────────────────────────────────────
+// Reject junk placeholder names (e.g. Zernio returning "Instagram") so we never
+// greet a follower as "Instagram".
+const isJunkName = (n) =>
+  !n ||
+  /^(instagram|instagram user|user|unknown|null|there)$/i.test(
+    String(n).trim(),
+  );
+
 const personalize = (tpl, contact) => {
-  const firstName = (
-    contact?.name ||
-    contact?.igUsername ||
-    contact?.username ||
-    "there"
-  )
-    .toString()
-    .split(" ")[0];
+  const candidate = !isJunkName(contact?.name)
+    ? contact.name
+    : !isJunkName(contact?.igUsername)
+      ? contact.igUsername
+      : !isJunkName(contact?.username)
+        ? contact.username
+        : "there";
+  const firstName = candidate.toString().split(" ")[0];
   return (tpl || "")
     .replace(/\{name\}/gi, firstName)
     .replace(/\{first_name\}/gi, firstName)
@@ -184,7 +192,7 @@ const upsertContact = async (
       igUserId: senderId,
       igUsername: username || senderId,
       username: username || senderId,
-      name: name || username || "Instagram User",
+      name: (!isJunkName(name) && name) || username || "Instagram User",
       igProfilePic: profilePic || undefined,
       source: channelSource,
       acquisitionTrigger,
@@ -199,7 +207,12 @@ const upsertContact = async (
     contact.username = username;
     dirty = true;
   }
-  if (name && (!contact.name || contact.name === "Instagram User")) {
+  if (
+    !isJunkName(name) &&
+    (!contact.name ||
+      contact.name === "Instagram User" ||
+      isJunkName(contact.name))
+  ) {
     contact.name = name;
     dirty = true;
   }

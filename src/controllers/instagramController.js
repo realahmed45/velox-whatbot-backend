@@ -1880,13 +1880,25 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
       msg.participant?.username ||
       evt.conversation?.participantUsername ||
       null;
-    const senderName =
+    let senderName =
       msg.sender?.name ||
       evt.sender?.name ||
       msg.participantName ||
       msg.participant?.name ||
       evt.conversation?.participantName ||
       null;
+    // Zernio sometimes returns a junk placeholder ("Instagram", "Instagram
+    // User", the account id, etc.) instead of the follower's real name. Reject
+    // those so the welcome DM doesn't greet people as "Instagram" — prefer the
+    // username, else let the engine fall back to "there".
+    if (
+      senderName &&
+      /^(instagram|instagram user|user|unknown|null)$/i.test(
+        String(senderName).trim(),
+      )
+    ) {
+      senderName = null;
+    }
 
     logger.info(
       `[BotlifyIG webhook] dispatching type=${evtType} sender=${senderId} (@${senderUsername}) ws=${target._id}`,
