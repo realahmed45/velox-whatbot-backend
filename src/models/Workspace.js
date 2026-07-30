@@ -50,6 +50,9 @@ const instagramConnectionSchema = new mongoose.Schema(
     displayName: String,
     profilePicture: String,
     followersCount: Number,
+    // Last time we live-refreshed followers/profile from the provider (used to
+    // throttle on-demand syncs from the dashboard).
+    followersSyncedAt: Date,
     // Session-cookie fallback (encrypted)
     sessionCookie: { type: String, select: false },
     // Botlify Cloud (white-label hosted IG provider) — encrypted account id

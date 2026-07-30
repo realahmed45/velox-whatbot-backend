@@ -451,8 +451,51 @@ exports.dataDeletionStatus = (req, res) => {
 // ── GET /api/instagram/connection ────────────────────────────────────────────
 exports.getConnection = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
-  const workspace = await Workspace.findById(workspaceId).select("instagram");
+  const workspace = await Workspace.findById(workspaceId).select(
+    "instagram +instagram.accessToken",
+  );
   const ig = workspace?.instagram || {};
+
+  // Live-sync followers/profile from the provider when the dashboard asks, but
+  // THROTTLED to at most once per 60s per workspace so we don't hammer Zernio.
+  // This keeps the count fresh without the user having to reconnect.
+  const SYNC_EVERY_MS = 60 * 1000;
+  const lastSync = ig.followersSyncedAt
+    ? new Date(ig.followersSyncedAt).getTime()
+    : 0;
+  if (
+    ig.status === "connected" &&
+    ig.accessToken &&
+    Date.now() - lastSync > SYNC_EVERY_MS
+  ) {
+    try {
+      const token = decrypt(ig.accessToken);
+      const info = await botlifyIg.getIGAccountInfo(token);
+      const count = Number(info?.followers_count ?? ig.followersCount ?? 0);
+      const update = {
+        "instagram.followersCount": count,
+        "instagram.followersSyncedAt": new Date(),
+      };
+      if (info?.profile_picture_url)
+        update["instagram.profilePicture"] = info.profile_picture_url;
+      if (info?.username) update["instagram.username"] = info.username;
+      if (info?.name)
+        update["instagram.displayName"] = info.name || info.username;
+      await Workspace.updateOne({ _id: workspaceId }, { $set: update });
+      // Reflect the fresh values in this response.
+      ig.followersCount = count;
+      if (info?.profile_picture_url)
+        ig.profilePicture = info.profile_picture_url;
+      if (info?.username) ig.username = info.username;
+      if (info?.name) ig.displayName = info.name || info.username;
+    } catch (e) {
+      logger.warn("[IG connection] live follower sync failed", {
+        err: e.message,
+      });
+      // fall through — return the last-known values
+    }
+  }
+
   res.json({
     status: ig.status || "disconnected",
     connectionType: ig.connectionType,

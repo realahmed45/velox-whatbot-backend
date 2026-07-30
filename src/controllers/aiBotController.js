@@ -39,7 +39,7 @@ const importProducts = asyncHandler(async (req, res) => {
     "catalog export). Output ONLY a JSON array — no markdown, no prose. Each " +
     "item: { name, price, description, inStock }.\n" +
     "- name: the product name (required).\n" +
-    "- price: keep the currency/format as written (e.g. 'Rs 2,500', '$19'), or '' if unknown.\n" +
+    "- price: keep the currency/format as written (e.g. '$25', '$19'), or '' if unknown.\n" +
     "- description: a short detail (sizes, colours, variant) or '' — keep it under 120 chars.\n" +
     "- inStock: true unless the text clearly says out of stock/sold out.\n" +
     "Skip header rows, totals, and non-product lines. Max 200 items.";

@@ -955,63 +955,92 @@ const importKnowledgeDocument = asyncHandler(async (req, res) => {
     throw new Error("You can keep up to 12 sources. Remove one first.");
   }
 
-  let result;
-  try {
-    result = await importDocument(
-      req.file.buffer,
-      req.file.originalname,
-      req.file.mimetype,
-    );
-  } catch (err) {
-    res.status(422);
-    throw new Error(err.message || "Could not read that file");
-  }
-
-  // If the upload is an image (menu, price list, lookbook), keep the actual
-  // image so the AI bot can send it back to customers — not just its OCR text.
+  // Reading a big PDF (many pages, vision OCR) can take minutes — longer than
+  // the HTTP request timeout, which is why large files "never uploaded". So we
+  // create the source as "processing", return immediately, and read it in the
+  // background; the UI polls and flips it to "ready" when done.
   const isImage = (req.file.mimetype || "").startsWith("image/");
-  let imageUrl = "";
-  if (isImage) {
-    try {
-      const cloudinary = require("../config/cloudinary");
-      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-      if (!cloudName) {
-        logger.warn(
-          "[knowledge] CLOUDINARY_CLOUD_NAME not set — image will save as text only",
-        );
-      }
-      const dataUri = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
-      const uploaded = await cloudinary.uploader.upload(dataUri, {
-        folder: `botlify/knowledge/${ws._id}`,
-        resource_type: "image",
-      });
-      imageUrl = uploaded.secure_url || "";
-      logger.info(
-        `[knowledge] image uploaded to Cloudinary: ${imageUrl.slice(0, 80)}`,
-      );
-    } catch (e) {
-      logger.warn(`[knowledge] image upload failed: ${e.message}`);
-    }
-  }
-
   ws.aiKnowledge.enabled = true;
   ws.aiKnowledge.sources.push({
-    type: imageUrl ? "image" : "text",
-    label: result.title,
+    type: isImage ? "image" : "text",
+    label: req.file.originalname || "Document",
     url: "",
-    imageUrl,
-    content: result.content,
-    status: "ready",
-    charCount: result.charCount,
+    imageUrl: "",
+    content: "",
+    status: "processing",
+    charCount: 0,
     addedAt: new Date(),
-    syncedAt: new Date(),
   });
   ws.aiKnowledge.lastUpdatedAt = new Date();
   ws.set("aiSettings.enabled", true);
   await ws.save();
-  res.json({
-    success: true,
-    source: ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1],
+
+  const source = ws.aiKnowledge.sources[ws.aiKnowledge.sources.length - 1];
+  const sourceId = source._id;
+  const workspaceId = ws._id;
+  const buffer = req.file.buffer;
+  const filename = req.file.originalname;
+  const mimetype = req.file.mimetype;
+
+  res.json({ success: true, source, processing: true });
+
+  // ── Background read (fire-and-forget) ──────────────────────────────────
+  setImmediate(async () => {
+    try {
+      const result = await importDocument(buffer, filename, mimetype);
+
+      // For images, also store the actual file so the bot can send it back.
+      let imageUrl = "";
+      if (isImage) {
+        try {
+          const cloudinary = require("../config/cloudinary");
+          const dataUri = `data:${mimetype};base64,${buffer.toString("base64")}`;
+          const uploaded = await cloudinary.uploader.upload(dataUri, {
+            folder: `botlify/knowledge/${workspaceId}`,
+            resource_type: "image",
+          });
+          imageUrl = uploaded.secure_url || "";
+        } catch (e) {
+          logger.warn(`[knowledge] image upload failed: ${e.message}`);
+        }
+      }
+
+      await Workspace.updateOne(
+        { _id: workspaceId, "aiKnowledge.sources._id": sourceId },
+        {
+          $set: {
+            "aiKnowledge.sources.$.label": result.title,
+            "aiKnowledge.sources.$.content": result.content,
+            "aiKnowledge.sources.$.charCount": result.charCount,
+            "aiKnowledge.sources.$.imageUrl": imageUrl,
+            "aiKnowledge.sources.$.type": imageUrl ? "image" : "text",
+            "aiKnowledge.sources.$.status": "ready",
+            "aiKnowledge.sources.$.syncedAt": new Date(),
+            "aiKnowledge.sources.$.error": "",
+            "aiKnowledge.lastUpdatedAt": new Date(),
+          },
+        },
+      );
+      logger.info("[knowledge] document import complete", {
+        filename,
+        chars: result.charCount,
+      });
+    } catch (err) {
+      await Workspace.updateOne(
+        { _id: workspaceId, "aiKnowledge.sources._id": sourceId },
+        {
+          $set: {
+            "aiKnowledge.sources.$.status": "error",
+            "aiKnowledge.sources.$.error":
+              err.message || "Could not read that file",
+          },
+        },
+      );
+      logger.warn("[knowledge] document import failed", {
+        filename,
+        err: err.message,
+      });
+    }
   });
 });
 

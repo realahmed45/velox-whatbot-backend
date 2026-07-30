@@ -2,7 +2,7 @@
  * Botlify — Plan catalog (source of truth)
  *
  * Instagram-only pricing model.
- * Pricing in PKR (primary) with USD reference. 3-day free trial on every paid plan.
+ * Pricing in USD. 3-day free trial on every paid plan.
  */
 
 const FEATURES = {
@@ -28,8 +28,8 @@ const FEATURES = {
   SMART_ORDERS: "smart_orders",
 };
 
-// PKR ↔ USD reference (display only)
-const USD = (pkr) => Math.round(pkr / 280);
+// Pricing is USD-only (Creem, our processor, charges in USD).
+const USD = (usd) => usd;
 
 const baseIgFeatures = [
   FEATURES.POST_COMMENT_KEYWORD,
@@ -58,7 +58,7 @@ const PLANS = {
     channel: "both",
     priceMonthly: 0,
     priceAnnual: 0,
-    currency: "PKR",
+    currency: "USD",
     usd: 0,
     trialDays: 3,
     limits: {
@@ -79,9 +79,9 @@ const PLANS = {
     name: "Basic — Instagram",
     tagline: "Instagram only · automate DMs and comments",
     channel: "instagram",
-    priceMonthly: 2520, // ≈ $9 @ 280 PKR/USD
-    priceAnnual: 2520 * 10, // 2 months free
-    currency: "PKR",
+    priceMonthly: 9,
+    priceAnnual: 9 * 10, // 2 months free
+    currency: "USD",
     usd: 9,
     trialDays: 3,
     limits: {
@@ -111,9 +111,9 @@ const PLANS = {
     name: "Instagram Pro",
     tagline: "Unlimited convos + premium AI",
     channel: "instagram",
-    priceMonthly: 5499,
-    priceAnnual: 5499 * 10,
-    currency: "PKR",
+    priceMonthly: 19,
+    priceAnnual: 19 * 10,
+    currency: "USD",
     usd: 19,
     limits: {
       messages: -1,
@@ -193,7 +193,7 @@ const PLAN_PRICES = Object.fromEntries(
 );
 
 // USD prices used for international card billing (Xendit). Annual = 10× monthly
-// (2 months free), mirroring the PKR annual discount.
+// (2 months free).
 const PLAN_USD_PRICES = {
   free: { monthly: 0, annual: 0 },
   ig_starter: { monthly: 9, annual: 90 },
