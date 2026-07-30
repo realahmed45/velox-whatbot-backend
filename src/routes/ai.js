@@ -13,13 +13,15 @@ const productUpload = multer({
   limits: { fileSize: 40 * 1024 * 1024 },
 });
 
-router.use(protect, requireWorkspace, aiLimiter);
-
 // Diagnostic: confirm Gemini key + model are working on the live server.
+// PUBLIC (no auth) so it can be opened directly in a browser. Returns only a
+// boolean + a tiny "OK" test reply — no secrets.
 router.get("/health", async (req, res) => {
   const ai = require("../services/ai");
   res.json(await ai.healthCheck());
 });
+
+router.use(protect, requireWorkspace, aiLimiter);
 
 router.post("/caption", c.generateCaption);
 router.post("/suggest-replies", c.suggestReplies);
