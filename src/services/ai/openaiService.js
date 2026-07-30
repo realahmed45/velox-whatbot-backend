@@ -44,9 +44,8 @@ const getGroqClient = () => {
 
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 
-// Provider selection lives in the main AI service (OpenAI → Gemini → Groq).
-// Delegate to it so this utility file always matches. Returns { client, model }
-// or null.
+// AI-bot text tasks (replies, captions) run on Gemini only — delegate to the
+// main service so the model stays in sync. Returns { client, model } or null.
 const getUtilityClient = () => {
   try {
     const { getAnyClient } = require("./index");
@@ -57,14 +56,11 @@ const getUtilityClient = () => {
   }
   const gm = getGeminiClient();
   if (gm) return { client: gm, model: GEMINI_MODEL };
-  const gq = getGroqClient();
-  if (gq) return { client: gq, model: GROQ_MODEL };
   return null;
 };
 
-// Prefer Groq explicitly for lightweight text tasks (hashtags, captions) so
-// they work deterministically while OpenAI isn't configured. Falls back to the
-// general chain if Groq isn't available.
+// Hashtag Research is the ONLY feature allowed to use Groq. Prefer Groq here so
+// it works even without a Gemini key; fall back to Gemini if Groq isn't set.
 const getGroqPreferredClient = () => {
   const gq = getGroqClient();
   if (gq) return { client: gq, model: GROQ_MODEL };

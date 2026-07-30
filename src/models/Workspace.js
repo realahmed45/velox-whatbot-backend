@@ -137,14 +137,14 @@ const workspaceSchema = new mongoose.Schema(
     // Instagram connection
     instagram: instagramConnectionSchema,
 
-    // AI provider settings
+    // AI provider settings (runtime always uses Gemini; these are informational)
     aiSettings: {
       provider: {
         type: String,
-        enum: ["groq", "openai", "gemini", "none"],
-        default: "groq",
+        enum: ["gemini", "none"],
+        default: "gemini",
       },
-      model: { type: String, default: "llama-3.3-70b-versatile" },
+      model: { type: String, default: "gemini-2.5-flash" },
       systemPrompt: {
         type: String,
         default:
@@ -461,7 +461,7 @@ const workspaceSchema = new mongoose.Schema(
         type: String,
         default: "",
       },
-      model: { type: String, default: "gpt-4o-mini" },
+      model: { type: String, default: "gemini-2.5-flash" },
       maxTurnsPerConversation: { type: Number, default: 20 },
       escalateOnKeywords: {
         type: [String],

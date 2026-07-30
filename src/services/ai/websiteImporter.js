@@ -503,6 +503,7 @@ const importWebsite = async (rawUrl, onProgress) => {
     raw,
     `Website: ${root.hostname}`,
     "website",
+    true, // bulk crawl → cheaper flash-lite
   );
 
   return {
@@ -538,7 +539,12 @@ const DISTILL_CHUNK_CHARS = 28000;
  * lightly de-duplicated by a final pass. Always falls back to raw text if the
  * AI is unavailable, so we never store a tiny summary or fail outright.
  */
-const distillToKnowledge = async (rawText, label, kind = "document") => {
+const distillToKnowledge = async (
+  rawText,
+  label,
+  kind = "document",
+  lite = false,
+) => {
   const cleaned = String(rawText || "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -553,6 +559,7 @@ const distillToKnowledge = async (rawText, label, kind = "document") => {
         user: `${label}\n\nRaw content:\n${chunk}`,
         maxTokens: 4000,
         temperature: 0.2,
+        lite, // bulk website distillation uses the cheaper flash-lite model
       });
     } catch (err) {
       logger.warn("[websiteImporter] distill chunk failed", {
@@ -718,13 +725,9 @@ const importDocument = async (buffer, filename = "document", mimetype = "") => {
 
   if (!text.trim()) {
     // Surface the real cause so it's diagnosable instead of a vague message.
-    if (
-      !process.env.OPENAI_API_KEY &&
-      !process.env.GEMINI_API_KEY &&
-      isPdf(mimetype, filename)
-    ) {
+    if (!process.env.GEMINI_API_KEY && isPdf(mimetype, filename)) {
       throw new Error(
-        "This looks like an image-based PDF. Reading it needs an AI vision key (OPENAI_API_KEY or GEMINI_API_KEY) — none is configured on the server.",
+        "This looks like an image-based PDF. Reading it needs GEMINI_API_KEY, which isn't configured on the server.",
       );
     }
     const isQuota = /quota|429|rate.?limit/i.test(extractErr || "");
