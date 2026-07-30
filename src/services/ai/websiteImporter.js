@@ -72,15 +72,61 @@ const fetchText = async (url, accept = "text/html,*/*") => {
   return typeof data === "string" ? data : "";
 };
 
+// JS-rendering provider (ScrapingBee): runs a real browser and returns fully
+// rendered HTML, so client-side SPAs (Vite/React/Next without SSR) become
+// readable. Configured via SCRAPINGBEE_API_KEY. Without it, we skip rendering.
+const RENDER_API_KEY = process.env.SCRAPINGBEE_API_KEY || "";
+const hasRenderProvider = () => !!RENDER_API_KEY;
+
 /**
- * Fetch a JS-rendered version of a page via a reader proxy that executes the
- * site's JavaScript and returns clean text/markdown. Used only as a fallback
- * for client-rendered SPAs (like Vite/CRA sites) whose static HTML is nearly
- * empty — no headless browser to host on our side. Returns "" on any failure.
+ * Fetch a page's FULLY JS-RENDERED HTML via ScrapingBee (a real headless
+ * browser). Returns the rendered HTML string (run it through extractText), or
+ * "" if rendering isn't configured or fails. Falls back internally to the free
+ * reader proxy when no ScrapingBee key is set.
+ */
+const fetchRenderedHtml = async (url) => {
+  // Preferred: ScrapingBee full-browser render → complete HTML.
+  if (RENDER_API_KEY) {
+    try {
+      const { data } = await axios.get("https://app.scrapingbee.com/api/v1/", {
+        timeout: 40000,
+        maxContentLength: MAX_BYTES,
+        responseType: "text",
+        params: {
+          api_key: RENDER_API_KEY,
+          url: url.toString(),
+          render_js: "true",
+          // wait a moment for late-loading SPA content
+          wait: "2500",
+          block_resources: "false",
+        },
+        validateStatus: (s) => s >= 200 && s < 400,
+      });
+      return typeof data === "string" ? data : "";
+    } catch (err) {
+      logger.warn("[websiteImporter] ScrapingBee render failed", {
+        url: url.toString(),
+        error: err.response?.status || err.message,
+      });
+      // fall through to the free proxy
+    }
+  }
+  return "";
+};
+
+/**
+ * Get JS-rendered TEXT for a URL. Prefers ScrapingBee's rendered HTML (parsed
+ * with our extractor); falls back to the free reader proxy. "" on failure.
  */
 const fetchRenderedText = async (url) => {
+  // 1. ScrapingBee → rendered HTML → extract with cheerio (same as static path).
+  const html = await fetchRenderedHtml(url);
+  if (html) {
+    const { text } = extractText(html);
+    if (text && text.length > 40) return text;
+  }
+  // 2. Free reader proxy fallback (works when it isn't rate-limited/blocked).
   try {
-    // r.jina.ai renders the page and returns readable text. Free, no key.
     const proxied = `https://r.jina.ai/${url.toString()}`;
     const { data } = await axios.get(proxied, {
       timeout: 20000,
@@ -89,7 +135,8 @@ const fetchRenderedText = async (url) => {
       headers: { "User-Agent": UA, Accept: "text/plain,*/*" },
       validateStatus: (s) => s >= 200 && s < 400,
     });
-    const text = typeof data === "string" ? data.replace(/\s+\n/g, "\n").trim() : "";
+    const text =
+      typeof data === "string" ? data.replace(/\s+\n/g, "\n").trim() : "";
     return text;
   } catch (err) {
     logger.info("[websiteImporter] render fallback failed", {
