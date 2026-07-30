@@ -17,10 +17,15 @@ const logger = require("../../utils/logger");
 let groqClient = null;
 let geminiClient = null;
 
+// Use the "-latest" aliases, which always resolve to the current GA Flash on
+// the OpenAI-compatible endpoint. Pinning a version (e.g. gemini-2.5-flash) 404s
+// once Google rotates/retires it — which is exactly what broke the bot.
 // Primary model — full Flash: best reply quality + native PDF/image/video.
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL =
+  process.env.GEMINI_MODEL || "gemini-flash-latest";
 // Cheaper model for high-volume bulk work (deep website-crawl distillation).
-const GEMINI_LITE_MODEL = "gemini-2.5-flash-lite";
+const GEMINI_LITE_MODEL =
+  process.env.GEMINI_LITE_MODEL || "gemini-flash-lite-latest";
 
 const getGroqClient = () => {
   if (groqClient) return groqClient;

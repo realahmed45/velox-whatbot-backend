@@ -4,7 +4,7 @@
  */
 const logger = require("../../utils/logger");
 
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
+const GEMINI_MODEL = "gemini-flash-lite-latest";
 
 // Google Gemini via its OpenAI-compatible endpoint — Botlify's primary AI.
 let geminiClient = null;
@@ -89,7 +89,7 @@ const generateReply = async ({
     cfg.personality ||
     "You are a friendly, professional assistant for our Instagram business.";
   const businessInfo = cfg.businessInfo || "";
-  const model = svc?.model || "gemini-2.5-flash-lite";
+  const model = svc?.model || "gemini-flash-lite-latest";
   const escalateKeywords = cfg.escalateOnKeywords || [
     "human",
     "agent",
@@ -269,7 +269,7 @@ Return JSON: { "suggestions": ["...", "...", "..."] }`;
 
   try {
     const response = await client.chat.completions.create({
-      model: getUtilityClient()?.model || "gemini-2.5-flash-lite",
+      model: getUtilityClient()?.model || "gemini-flash-lite-latest",
       messages: [
         { role: "system", content: sys },
         ...history.slice(-8),
@@ -308,7 +308,7 @@ const analyzeSentiment = async (text) => {
 
   try {
     const response = await client.chat.completions.create({
-      model: svc?.model || "gemini-2.5-flash-lite",
+      model: svc?.model || "gemini-flash-lite-latest",
       messages: [
         {
           role: "system",
