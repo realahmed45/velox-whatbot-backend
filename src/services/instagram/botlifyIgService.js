@@ -454,6 +454,11 @@ const getSubscribedApps = async (accountIdOrToken) => {
 
 // ── Publishing ───────────────────────────────────────────────────────────────
 
+/**
+ * Publish a feed post. `imageUrl` may be a single URL (normal post) OR an array
+ * of 2–10 URLs (a carousel). Zernio's mediaItems is already an array, so a
+ * carousel is just more items.
+ */
 const publishPost = async (
   accountIdOrToken,
   _igUserId,
@@ -462,11 +467,16 @@ const publishPost = async (
 ) => {
   try {
     const accountId = stripPrefix(accountIdOrToken);
+    const urls = Array.isArray(imageUrl) ? imageUrl : [imageUrl];
+    const mediaItems = urls
+      .filter(Boolean)
+      .slice(0, 10) // Instagram carousels cap at 10
+      .map((url) => ({ type: "image", url }));
     const { data } = await client().post("/posts", {
       accountId,
       platforms: [{ platform: "instagram", accountId }],
       content: caption,
-      mediaItems: [{ type: "image", url: imageUrl }],
+      mediaItems,
       // Required by Zernio to actually publish now — without it the post is
       // created as a DRAFT and never reaches Instagram.
       publishNow: true,

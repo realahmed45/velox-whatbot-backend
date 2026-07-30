@@ -78,10 +78,15 @@ const processScheduledPosts = async () => {
         } else if (post.postType === "story") {
           result = await publishStory(accessToken, igUserId, post.imageUrl);
         } else {
+          // Carousel when imageUrls[] has 2+; otherwise a single image.
+          const media =
+            Array.isArray(post.imageUrls) && post.imageUrls.length > 1
+              ? post.imageUrls
+              : post.imageUrl;
           result = await publishPost(
             accessToken,
             igUserId,
-            post.imageUrl,
+            media,
             post.caption,
           );
         }

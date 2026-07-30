@@ -43,6 +43,10 @@ exports.getScheduledPosts = asyncHandler(async (req, res) => {
 exports.createScheduledPost = asyncHandler(async (req, res) => {
   const workspaceId = req.headers["x-workspace-id"];
   const { imageUrl, videoUrl, caption, scheduledTime } = req.body;
+  // Carousel — a clean array of 2–10 image URLs.
+  const imageUrls = Array.isArray(req.body.imageUrls)
+    ? req.body.imageUrls.filter(Boolean).slice(0, 10)
+    : undefined;
   const postType = ["story", "reel"].includes(req.body.postType)
     ? req.body.postType
     : "image";
@@ -54,7 +58,7 @@ exports.createScheduledPost = asyncHandler(async (req, res) => {
         .status(400)
         .json({ message: "videoUrl and scheduledTime are required for reels" });
     }
-  } else if (!imageUrl || !scheduledTime) {
+  } else if ((!imageUrl && !imageUrls?.length) || !scheduledTime) {
     return res
       .status(400)
       .json({ message: "imageUrl and scheduledTime are required" });
@@ -85,7 +89,8 @@ exports.createScheduledPost = asyncHandler(async (req, res) => {
   const post = await ScheduledPost.create({
     workspaceId,
     channelType: "instagram",
-    imageUrl: imageUrl || "",
+    imageUrl: imageUrl || imageUrls?.[0] || "",
+    imageUrls: imageUrls && imageUrls.length > 1 ? imageUrls : undefined,
     videoUrl: postType === "reel" ? videoUrl : undefined,
     caption: caption || "",
     postType,

@@ -16,7 +16,13 @@ const scheduledPostSchema = new mongoose.Schema(
     imageUrl: {
       type: String,
       // Cloudinary URL. Required for image/story posts; for reels the media is
-      // videoUrl (imageUrl may hold an optional thumbnail).
+      // videoUrl (imageUrl may hold an optional thumbnail). For a carousel this
+      // holds the first image and imageUrls[] holds all of them.
+    },
+    // Carousel — 2–10 Cloudinary image URLs published as one post.
+    imageUrls: {
+      type: [String],
+      default: undefined,
     },
     // Video (reel) Cloudinary URL. Audio is baked into the uploaded file —
     // Instagram's API can't attach its licensed catalog music.
