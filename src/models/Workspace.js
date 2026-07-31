@@ -87,18 +87,26 @@ const workspaceSchema = new mongoose.Schema(
     industry: {
       type: String,
       enum: [
+        // Active vertical keys (see config/verticalPacks.js — must stay in sync)
+        "ecommerce",
         "restaurant",
         "beauty_salon",
-        "retail",
+        "dental_clinic",
+        "medical",
+        "fitness",
         "real_estate",
+        "professional_services",
+        "education",
+        "automotive",
+        "hospitality",
+        "events",
+        "general",
+        // Legacy values kept so existing workspaces validate on re-save.
+        "retail",
         "healthcare",
         "freelancer",
         "auto_hardware",
-        "ecommerce",
-        "fitness",
-        "education",
         "influencer",
-        "general",
         "other",
       ],
       required: true,
@@ -625,6 +633,52 @@ const workspaceSchema = new mongoose.Schema(
       notifyPhone: { type: String, default: "" },
       monthlyOrderCount: { type: Number, default: 0 },
       monthlyResetAt: Date,
+      lastUpdatedAt: Date,
+    },
+
+    // ── Vertical / business-category config ─────────────────────────────────
+    // Whether the user has picked & applied their business category. Drives the
+    // onboarding gate (BusinessTypePage) and unlocks the tailored experience.
+    verticalConfigured: { type: Boolean, default: false },
+    // Which modules are ON for this vertical (seeded by verticalPacks, then
+    // user-editable). Drives sidebar/dashboard visibility + bot capabilities.
+    features: {
+      appointments: { type: Boolean, default: false },
+      catalog: { type: Boolean, default: false },
+      orders: { type: Boolean, default: false },
+      reservations: { type: Boolean, default: false },
+      leadCapture: { type: Boolean, default: false },
+    },
+
+    // ── Appointment Scheduling ──────────────────────────────────────────────
+    // The bot offers real open slots, books them, and sends dual confirmations.
+    appointments: {
+      enabled: { type: Boolean, default: false },
+      // Bookable services the customer can choose from.
+      services: [
+        {
+          name: { type: String, default: "" },
+          durationMinutes: { type: Number, default: 30 },
+          price: { type: Number, default: 0 },
+        },
+      ],
+      // Slot length + gap between appointments (minutes).
+      slotMinutes: { type: Number, default: 30 },
+      bufferMinutes: { type: Number, default: 10 },
+      // How many appointments can occupy the same slot (1 = single provider).
+      capacityPerSlot: { type: Number, default: 1 },
+      // How far ahead customers can book (days).
+      advanceDays: { type: Number, default: 30 },
+      // Minimum lead time before a slot can be booked (hours).
+      minNoticeHours: { type: Number, default: 2 },
+      // If true, bookings are held as "pending" until the business approves.
+      requireApproval: { type: Boolean, default: false },
+      // Optional Google Maps location — shown in confirmations & profile.
+      locationName: { type: String, default: "" },
+      locationAddress: { type: String, default: "" },
+      mapsUrl: { type: String, default: "" },
+      // Where to notify the business of new bookings (defaults to owner email).
+      notifyEmail: { type: String, default: "" },
       lastUpdatedAt: Date,
     },
   },

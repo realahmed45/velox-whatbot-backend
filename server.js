@@ -177,6 +177,12 @@ app.use("/api/drip-campaigns", dripRoutes);
 app.use("/api/integrations", integrationRoutes);
 app.use("/api/admin", adminRoutes);
 
+// Public: business-category picker list for onboarding.
+app.get("/api/verticals", require("./src/controllers/verticalController").listVerticals);
+
+// Public: "Book a Demo" lead capture from the marketing site.
+app.post("/api/demo", require("./src/controllers/demoController").bookDemo);
+
 // ─── 404 ───────────────────────────────────────────────────
 app.use("*", (req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });

@@ -137,7 +137,7 @@ const matchFaq = (faqs, message) => {
 /**
  * Build the system prompt — tuned for GPT-4o mini's superior instruction-following.
  */
-const buildSystemPrompt = (workspace, contact, extraContext) => {
+const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) => {
   const v2 = pickAiCfg(workspace);
   const legacy = workspace.aiBot || {};
   const ai = {
@@ -286,6 +286,12 @@ const buildSystemPrompt = (workspace, contact, extraContext) => {
       "The order block is never shown to the customer. Write a friendly confirmation above it.",
       "─── END SMART ORDERS ───",
     );
+  }
+
+  // Appointment scheduling — the block (open slots + services) is precomputed in
+  // generateReply so this stays synchronous.
+  if (appointmentBlock && appointmentBlock.trim()) {
+    lines.push("", appointmentBlock.trim());
   }
 
   if (Array.isArray(ai.faqs) && ai.faqs.length) {
@@ -463,6 +469,22 @@ const parseMarkers = (raw) => {
     },
   );
 
+  // Appointment booking — the model emits <<BOOK_APPOINTMENT_JSON>>{...}<<END_BOOK>>
+  // once it has collected service + time + name. Parse before the catch-all.
+  let booking = null;
+  reply = reply.replace(
+    /<<\s*BOOK_APPOINTMENT_JSON\s*>>([\s\S]*?)<<\s*END_BOOK\s*>>/i,
+    (_, json) => {
+      try {
+        const parsed = JSON.parse(String(json).trim());
+        if (parsed && parsed.startAt) booking = parsed;
+      } catch {
+        /* malformed booking block — ignore */
+      }
+      return "";
+    },
+  );
+
   // SAFETY NET: remove ANY remaining << … >> marker in any format the model
   // might invent, then tidy whitespace.
   reply = reply
@@ -471,7 +493,62 @@ const parseMarkers = (raw) => {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return { reply, imageUrls, intent, tags, lead, order };
+  return { reply, imageUrls, intent, tags, lead, order, booking };
+};
+
+/**
+ * Build the appointment-scheduling prompt block with LIVE open slots so the bot
+ * only ever offers real, bookable times. Returns "" when scheduling is off.
+ */
+const buildAppointmentBlock = async (workspace) => {
+  const cfg = workspace.appointments;
+  if (!cfg?.enabled) return "";
+  let slots = [];
+  try {
+    const { getAvailableSlots } = require("../appointments/slotEngine");
+    slots = await getAvailableSlots(workspace, { limit: 10 });
+  } catch (e) {
+    logger.warn("[AI] slot fetch failed", { err: e.message });
+  }
+
+  const services = (cfg.services || []).filter((s) => s && s.name);
+  const svcLines = services.length
+    ? services
+        .map(
+          (s) =>
+            `  • ${s.name} (${s.durationMinutes || cfg.slotMinutes || 30} min${s.price ? `, ${s.price}` : ""})`,
+        )
+        .join("\n")
+    : "  • (general appointment)";
+
+  const slotLines = slots.length
+    ? slots.map((s) => `  • ${s.label}  [${s.startAt.toISOString()}]`).join("\n")
+    : "  (no open slots in the near future — offer to take their details and have the team follow up)";
+
+  const loc = cfg.locationName || cfg.locationAddress;
+  const out = [
+    "─── APPOINTMENT SCHEDULING MODE ───",
+    "This business takes appointments. Help the customer book into a REAL open slot below. Never invent a time that isn't listed.",
+    "",
+    "SERVICES:",
+    svcLines,
+    "",
+    "OPEN SLOTS (offer 2–3 nearest that suit them; the bracketed value is the exact machine time — never show the bracket to the customer):",
+    slotLines,
+  ];
+  if (loc) out.push("", `LOCATION: ${loc}${cfg.mapsUrl ? ` — ${cfg.mapsUrl}` : ""}`);
+  out.push(
+    "",
+    "To book: collect the service, a chosen slot, the customer's name, and phone. Ask 1–2 things at a time, conversationally.",
+    "When you have service + time + name, emit ONCE on its own line (never shown to the customer):",
+    '<<BOOK_APPOINTMENT_JSON>>{"service":"<service name>","startAt":"<exact ISO time from the chosen slot bracket>","customerName":"<full name>","customerPhone":"<phone or empty>","notes":"<anything relevant>"}<<END_BOOK>>',
+    "Write a warm confirmation above the block. Use the EXACT bracketed ISO time of the slot they picked.",
+    cfg.requireApproval
+      ? "Bookings need team approval — tell the customer you've REQUESTED the slot and will confirm shortly."
+      : "Bookings are instant — tell the customer they're confirmed.",
+    "─── END APPOINTMENT SCHEDULING ───",
+  );
+  return out.join("\n");
 };
 
 /**
@@ -536,7 +613,13 @@ const generateReply = async ({
     };
   }
 
-  const systemPrompt = buildSystemPrompt(workspace, contact, extraContext);
+  const appointmentBlock = await buildAppointmentBlock(workspace);
+  const systemPrompt = buildSystemPrompt(
+    workspace,
+    contact,
+    extraContext,
+    appointmentBlock,
+  );
 
   // If the customer sent a photo, build a multimodal user turn so the vision
   // model actually looks at it. Falls back to a plain text turn otherwise.
@@ -585,10 +668,10 @@ const generateReply = async ({
     // Parse & strip ALL internal markers (image/intent/tag/lead + safety net).
     const parsed = parseMarkers(reply);
     reply = parsed.reply || fallbackReply(contact);
-    const { imageUrls, intent, tags, lead, order } = parsed;
+    const { imageUrls, intent, tags, lead, order, booking } = parsed;
 
     logger.info(
-      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} imageUrls=${imageUrls.length}`,
+      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} booking=${booking ? "yes" : "no"} imageUrls=${imageUrls.length}`,
     );
 
     return {
@@ -599,6 +682,7 @@ const generateReply = async ({
       tags,
       lead,
       order,
+      booking,
       tokens: response.usage?.total_tokens || 0,
       provider: providerUsed,
     };

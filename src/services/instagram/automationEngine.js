@@ -877,7 +877,7 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
   );
 
-  const { reply, escalate, provider, imageUrls, intent, tags, lead, order } =
+  let { reply, escalate, provider, imageUrls, intent, tags, lead, order, booking } =
     await ai.generateReply({
       workspace,
       history,
@@ -995,6 +995,28 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
           );
         } catch (e) {
           logger.warn("[AI] order save failed", { err: e.message });
+        }
+      }
+
+      // Appointment booking — persist + dual-confirm the slot the AI captured.
+      if (booking && booking.startAt) {
+        try {
+          const { saveBooking } = require("../appointments/booking");
+          const result = await saveBooking(workspace, contact, conv, booking);
+          if (result.ok) {
+            // Make sure the customer gets a solid confirmation even if the
+            // model's own wording was thin — append ours if it's missing.
+            if (result.confirmationText && !/booked|confirm|requested/i.test(reply)) {
+              reply = `${reply}\n\n${result.confirmationText}`.trim();
+            }
+          } else {
+            // Slot fell through (taken/invalid) — tell the customer honestly
+            // instead of silently pretending it worked.
+            reply =
+              `${reply}\n\nHmm, that time just became unavailable — could you pick another slot? 🙏`.trim();
+          }
+        } catch (e) {
+          logger.warn("[AI] booking save failed", { err: e.message });
         }
       }
     } catch (e) {

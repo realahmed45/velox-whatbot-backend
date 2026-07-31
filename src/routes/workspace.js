@@ -200,4 +200,18 @@ router.put(
   c.saveAiBotConfig,
 );
 
+// ── Vertical / business-category setup ──────────────────────────────────────
+const vertical = require("../controllers/verticalController");
+router.post("/:workspaceId/vertical/detect", requireOwner, vertical.detect);
+router.post("/:workspaceId/vertical/apply", requireOwner, vertical.apply);
+
+// ── Appointment scheduling ──────────────────────────────────────────────────
+const appt = require("../controllers/appointmentController");
+router.get("/:workspaceId/appointments/config", appt.getConfig);
+router.put("/:workspaceId/appointments/config", requireOwner, appt.saveConfig);
+router.get("/:workspaceId/appointments/slots", appt.slots);
+router.get("/:workspaceId/appointments", appt.list);
+router.post("/:workspaceId/appointments", requireOwner, appt.create);
+router.patch("/:workspaceId/appointments/:id", requireOwner, appt.update);
+
 module.exports = router;
