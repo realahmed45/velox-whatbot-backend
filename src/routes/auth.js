@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { authLimiter } = require("../middleware/enhancedRateLimiter");
+const { authLimiter, registerLimiter } = require("../middleware/enhancedRateLimiter");
 const { verifyTurnstile } = require("../middleware/turnstile");
 const {
   register,
@@ -19,7 +19,7 @@ const {
 const { protect } = require("../middleware/auth");
 
 // Bot/abuse protection (Turnstile) + brute-force limiting on sensitive routes.
-router.post("/register", authLimiter, verifyTurnstile, register);
+router.post("/register", registerLimiter, verifyTurnstile, register);
 router.post("/login", authLimiter, verifyTurnstile, login);
 router.post("/refresh", refreshToken);
 router.post("/forgot-password", authLimiter, verifyTurnstile, forgotPassword);

@@ -48,6 +48,15 @@ router.post("/", c.createWorkspace);
 router.post("/ensure", c.ensureOwnWorkspace);
 router.get("/", c.getWorkspaces);
 
+// Multi-account: the lean account list (switcher + login picker), deliberate
+// "add another account", and server-persisted active-account switch.
+router.get("/accounts", c.getAccounts);
+router.post("/add-account", c.addAccount);
+// switchWorkspace validates access to the target param itself (and must NOT go
+// through requireWorkspace, which prefers the x-workspace-id header — that still
+// points at the OLD active account mid-switch).
+router.post("/:workspaceId/switch", c.switchWorkspace);
+
 // Accept a team invite — the invited user isn't a member yet, so this must sit
 // BEFORE the requireWorkspace guard (it only needs auth).
 router.post("/accept-invite", c.acceptInvite);

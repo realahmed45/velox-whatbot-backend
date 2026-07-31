@@ -333,7 +333,13 @@ const resendVerificationCode = asyncHandler(async (req, res) => {
 const getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id)
     .select("+password")
-    .populate("activeWorkspace", "name industry subscription usage instagram");
+    .populate("activeWorkspace", "name industry subscription usage instagram")
+    // Populate the workspace LIST too so the account switcher / picker can show
+    // real names + IG handles + plan badges (was raw ObjectIds before).
+    .populate(
+      "workspaces",
+      "name logo industry subscription instagram verticalConfigured",
+    );
   const obj = user.toJSON();
   // Tell the client whether a password is set (Google-only accounts have none),
   // so the Security settings can offer "Set password" vs "Change password".

@@ -128,6 +128,79 @@ const getWorkspaces = asyncHandler(async (req, res) => {
   res.json({ success: true, workspaces });
 });
 
+// Shape a workspace into the lean "account" summary the switcher + account
+// picker need: handle, plan/status badge, connection state, and role.
+function toAccountSummary(ws, userId) {
+  const ownerId = String(ws.owner?._id || ws.owner || "");
+  const isOwner = ownerId === String(userId);
+  return {
+    _id: ws._id,
+    name: ws.name,
+    logo: ws.logo || "",
+    industry: ws.industry,
+    role: isOwner ? "owner" : "agent",
+    instagram: {
+      username: ws.instagram?.username || "",
+      displayName: ws.instagram?.displayName || "",
+      profilePicture: ws.instagram?.profilePicture || "",
+      status: ws.instagram?.status || "disconnected",
+    },
+    plan: ws.subscription?.plan || "free",
+    subscriptionStatus: ws.subscription?.status || "trialing",
+    lifetime: !!ws.subscription?.lifetime,
+    entitled: typeof ws.isEntitled === "function" ? ws.isEntitled() : false,
+    verticalConfigured: ws.verticalConfigured !== false,
+  };
+}
+
+// @GET /api/workspaces/accounts — the account list that powers the header
+// switcher AND the post-login account picker. One identity, many accounts.
+const getAccounts = asyncHandler(async (req, res) => {
+  const workspaces = await Workspace.find({
+    $or: [{ owner: req.user._id }, { "members.user": req.user._id }],
+  }).sort({ createdAt: 1 });
+  res.json({
+    success: true,
+    accounts: workspaces.map((ws) => toAccountSummary(ws, req.user._id)),
+    activeWorkspace: req.user.activeWorkspace || null,
+  });
+});
+
+// @POST /api/workspaces/:workspaceId/switch — server-persisted active-account
+// switch. Validates the user actually belongs to the target, then points their
+// activeWorkspace at it so the choice survives reloads and re-logins.
+const switchWorkspace = asyncHandler(async (req, res) => {
+  const targetId = req.params.workspaceId;
+  const ws = await Workspace.findOne({
+    _id: targetId,
+    $or: [{ owner: req.user._id }, { "members.user": req.user._id }],
+  });
+  if (!ws) {
+    res.status(404);
+    throw new Error("Account not found or you don't have access to it.");
+  }
+  await User.findByIdAndUpdate(req.user._id, { activeWorkspace: ws._id });
+  res.json({
+    success: true,
+    activeWorkspace: ws._id,
+    account: toAccountSummary(ws, req.user._id),
+  });
+});
+
+// @POST /api/workspaces/add-account — deliberately create ANOTHER owned
+// workspace for a new Instagram account (independent bot, billing, data) and
+// switch into it. Distinct from /ensure, which only ever returns the FIRST one.
+const addAccount = asyncHandler(async (req, res) => {
+  const name =
+    (req.body?.name || "").trim() ||
+    `${req.user.name || "My"}'s Account ${(req.user.workspaces?.length || 0) + 1}`;
+  const workspace = await createOwnedWorkspace(req.user, {
+    name,
+    industry: req.body?.industry,
+  });
+  res.status(201).json({ success: true, workspace, created: true });
+});
+
 // @GET /api/workspaces/:workspaceId — Get single workspace
 const getWorkspace = asyncHandler(async (req, res) => {
   // Populate people so the Team page can show names/emails/avatars instead of
@@ -1145,6 +1218,9 @@ module.exports = {
   createWorkspace,
   ensureOwnWorkspace,
   getWorkspaces,
+  getAccounts,
+  switchWorkspace,
+  addAccount,
   getWorkspace,
   updateWorkspace,
   updateActivation,
