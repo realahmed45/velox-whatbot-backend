@@ -201,6 +201,79 @@ const addAccount = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, workspace, created: true });
 });
 
+// @DELETE /api/workspaces/:workspaceId/account — permanently delete an account
+// (workspace) the user OWNS, with its bot config, contacts, appointments, etc.
+// Guards: owner-only, and you can never delete your LAST account. Does NOT
+// touch Creem — billing is cancelled separately by the owner (we surface that
+// clearly in the confirm dialog). If the deleted one was active, we re-point
+// activeWorkspace at another account.
+const deleteAccount = asyncHandler(async (req, res) => {
+  const targetId = req.params.workspaceId;
+  const ws = await Workspace.findById(targetId);
+  if (!ws) {
+    res.status(404);
+    throw new Error("Account not found.");
+  }
+  const isOwner = String(ws.owner) === String(req.user._id);
+  if (!isOwner) {
+    res.status(403);
+    throw new Error("Only the account owner can delete it.");
+  }
+
+  // Never leave the user with zero accounts.
+  const ownedCount = await Workspace.countDocuments({ owner: req.user._id });
+  if (ownedCount <= 1) {
+    res.status(400);
+    throw new Error(
+      "This is your only account — you can't delete it. Create another first.",
+    );
+  }
+
+  // Best-effort teardown of everything scoped to this workspace. Each is wrapped
+  // so one missing collection never blocks the delete.
+  const cleanups = [
+    ["Contact", "workspaceId"],
+    ["Conversation", "workspaceId"],
+    ["Message", "workspaceId"],
+    ["Flow", "workspaceId"],
+    ["Order", "workspaceId"],
+    ["Appointment", "workspaceId"],
+    ["Broadcast", "workspaceId"],
+    ["ScheduledPost", "workspaceId"],
+    ["DripCampaign", "workspaceId"],
+    ["Subscription", "workspaceId"],
+    ["AdminEvent", "workspaceId"],
+  ];
+  for (const [model, key] of cleanups) {
+    try {
+      const M = require(`../models/${model}`);
+      await M.deleteMany({ [key]: ws._id });
+    } catch {
+      /* model not present or nothing to delete — fine */
+    }
+  }
+
+  await Workspace.deleteOne({ _id: ws._id });
+  await User.findByIdAndUpdate(req.user._id, {
+    $pull: { workspaces: ws._id },
+  });
+
+  // Re-point active workspace if we just deleted the active one.
+  let nextActive = req.user.activeWorkspace;
+  if (String(req.user.activeWorkspace || "") === String(ws._id)) {
+    const another = await Workspace.findOne({
+      $or: [{ owner: req.user._id }, { "members.user": req.user._id }],
+    }).select("_id");
+    nextActive = another?._id || null;
+    await User.findByIdAndUpdate(req.user._id, { activeWorkspace: nextActive });
+  }
+
+  logger.info(
+    `[account] deleted ws=${ws._id} by user=${req.user._id}; nextActive=${nextActive}`,
+  );
+  res.json({ success: true, deleted: ws._id, activeWorkspace: nextActive });
+});
+
 // @GET /api/workspaces/:workspaceId — Get single workspace
 const getWorkspace = asyncHandler(async (req, res) => {
   // Populate people so the Team page can show names/emails/avatars instead of
@@ -1221,6 +1294,7 @@ module.exports = {
   getAccounts,
   switchWorkspace,
   addAccount,
+  deleteAccount,
   getWorkspace,
   updateWorkspace,
   updateActivation,

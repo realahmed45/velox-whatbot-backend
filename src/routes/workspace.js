@@ -56,6 +56,9 @@ router.post("/add-account", c.addAccount);
 // through requireWorkspace, which prefers the x-workspace-id header — that still
 // points at the OLD active account mid-switch).
 router.post("/:workspaceId/switch", c.switchWorkspace);
+// Delete an owned account (validates owner + last-account guard in the handler,
+// reads the target from the param — not the header).
+router.delete("/:workspaceId/account", c.deleteAccount);
 
 // Accept a team invite — the invited user isn't a member yet, so this must sit
 // BEFORE the requireWorkspace guard (it only needs auth).
