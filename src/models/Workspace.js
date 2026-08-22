@@ -148,6 +148,44 @@ const workspaceSchema = new mongoose.Schema(
     // Instagram connection
     instagram: instagramConnectionSchema,
 
+    // ── Additional messaging channels (hotel product) ───────────────────────
+    // WhatsApp / TikTok connections via the hosted provider (Zernio), one
+    // entry per platform. Instagram keeps its legacy subdoc above; new
+    // channels live here. accountHash = SHA-256 of the provider account id so
+    // a unique partial index can guarantee one account ↔ one workspace.
+    channels: [
+      {
+        platform: {
+          type: String,
+          enum: ["whatsapp", "tiktok"],
+          required: true,
+        },
+        status: {
+          type: String,
+          enum: ["connected", "disconnected", "pending", "error"],
+          default: "disconnected",
+        },
+        accountId: { type: String, select: false }, // encrypted provider id
+        accountHash: { type: String, default: null },
+        username: String,
+        displayName: String,
+        profilePicture: String,
+        phoneNumber: String, // WhatsApp only
+        connectedAt: Date,
+        lastWebhookAt: Date,
+        webhookError: { type: String, default: null },
+      },
+    ],
+
+    // ── Consultant attribution (hotel product) ──────────────────────────────
+    // Set once at onboarding when the hotel enters a consultant's referral
+    // code. Drives the 20%-of-revenue share for CONSULTANT_SHARE_MONTHS.
+    acquisition: {
+      consultantId: { type: mongoose.Schema.Types.ObjectId, ref: "Consultant" },
+      consultantCode: { type: String, default: null },
+      attributedAt: Date,
+    },
+
     // AI provider settings (runtime always uses Gemini; these are informational).
     // Legacy values (groq/openai) are kept in the enum so existing workspace
     // docs still validate on save — the runtime ignores this field regardless.
@@ -232,9 +270,11 @@ const workspaceSchema = new mongoose.Schema(
         type: String,
         enum: [
           "free",
+          "hotel_free",
+          "hotel_pro",
+          // legacy
           "ig_starter",
           "ig_pro",
-          // legacy
           "starter",
           "growth",
           "scale",
@@ -648,6 +688,9 @@ const workspaceSchema = new mongoose.Schema(
       orders: { type: Boolean, default: false },
       reservations: { type: Boolean, default: false },
       leadCapture: { type: Boolean, default: false },
+      // Hotel product modules
+      hotelBookings: { type: Boolean, default: true },
+      transfers: { type: Boolean, default: true },
     },
 
     // ── Appointment Scheduling ──────────────────────────────────────────────
@@ -697,6 +740,17 @@ workspaceSchema.index(
     unique: true,
     partialFilterExpression: {
       "instagram.igAccountHash": { $type: "string" },
+    },
+  },
+);
+
+// One WhatsApp/TikTok account ↔ one workspace (same guarantee as Instagram).
+workspaceSchema.index(
+  { "channels.accountHash": 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      "channels.accountHash": { $type: "string" },
     },
   },
 );

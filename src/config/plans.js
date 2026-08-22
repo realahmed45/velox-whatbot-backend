@@ -1,11 +1,35 @@
 /**
  * Botlify — Plan catalog (source of truth)
  *
- * Instagram-only pricing model.
- * Pricing in USD. 3-day free trial on every paid plan.
+ * HOTEL pivot: Botlify is an AI booking system for hotels.
+ * Two plans:
+ *   - hotel_free : $0 — full product, used during the launch/testing phase.
+ *                  Will be removed once the paid flow is fully validated.
+ *   - hotel_pro  : $49/mo — the real service fee. 3-day trial, card upfront
+ *                  (trial configured on the Creem product).
+ *
+ * For now BOTH plans grant identical features/limits by design — the only
+ * difference is billing. Booking commissions (10% on bot-closed bookings) are
+ * tracked in the commission ledger, not gated here.
  */
 
 const FEATURES = {
+  // Messaging channels
+  CHANNEL_INSTAGRAM: "channel_instagram",
+  CHANNEL_WHATSAPP: "channel_whatsapp",
+  CHANNEL_TIKTOK: "channel_tiktok",
+  // Hotel core
+  HOTEL_BOOKINGS: "hotel_bookings", // multi-night stay booking engine
+  OTA_SYNC: "ota_sync", // Booking.com/Airbnb via Channex (free sync — the hook)
+  TRANSFERS: "transfers", // airport pickup/dropoff
+  // AI + inbox
+  AI_BOT: "ai_bot",
+  AI_PREMIUM: "ai_premium",
+  TEAM_INBOX: "team_inbox",
+  BUSINESS_HOURS: "business_hours",
+  FALLBACK_AUTO_REPLY: "fallback_auto_reply",
+  CONVERSATION_STARTERS: "conversation_starters",
+  // Marketing extras kept from the IG product (still useful for hotels)
   POST_COMMENT_KEYWORD: "post_comment_keyword",
   DM_KEYWORD: "dm_keyword",
   WELCOME_DM: "welcome_dm",
@@ -14,24 +38,30 @@ const FEATURES = {
   SHARE_TO_STORY: "share_to_story",
   REF_URL: "ref_url",
   LIVE_COMMENT: "live_comment",
-  CONVERSATION_STARTERS: "conversation_starters",
-  FALLBACK_AUTO_REPLY: "fallback_auto_reply",
-  BUSINESS_HOURS: "business_hours",
-  AI_BOT: "ai_bot",
-  AI_PREMIUM: "ai_premium",
   BROADCAST: "broadcast",
   DRIP_CAMPAIGNS: "drip_campaigns",
   ANALYTICS_ADVANCED: "analytics_advanced",
-  TEAM_INBOX: "team_inbox",
   REMOVE_BRANDING: "remove_branding",
   CUSTOM_DOMAIN: "custom_domain",
+  // Legacy (kept so old plan records resolve; no hotel plan grants it)
   SMART_ORDERS: "smart_orders",
 };
 
-// Pricing is USD-only (Creem, our processor, charges in USD).
-const USD = (usd) => usd;
-
-const baseIgFeatures = [
+// Every feature the hotel product ships. Both plans get all of it for now —
+// once the free plan is retired, this list simply lives on hotel_pro.
+const hotelFeatures = [
+  FEATURES.CHANNEL_INSTAGRAM,
+  FEATURES.CHANNEL_WHATSAPP,
+  FEATURES.CHANNEL_TIKTOK,
+  FEATURES.HOTEL_BOOKINGS,
+  FEATURES.OTA_SYNC,
+  FEATURES.TRANSFERS,
+  FEATURES.AI_BOT,
+  FEATURES.AI_PREMIUM,
+  FEATURES.TEAM_INBOX,
+  FEATURES.BUSINESS_HOURS,
+  FEATURES.FALLBACK_AUTO_REPLY,
+  FEATURES.CONVERSATION_STARTERS,
   FEATURES.POST_COMMENT_KEYWORD,
   FEATURES.DM_KEYWORD,
   FEATURES.WELCOME_DM,
@@ -40,22 +70,30 @@ const baseIgFeatures = [
   FEATURES.SHARE_TO_STORY,
   FEATURES.REF_URL,
   FEATURES.LIVE_COMMENT,
-  FEATURES.CONVERSATION_STARTERS,
-  FEATURES.FALLBACK_AUTO_REPLY,
+  FEATURES.BROADCAST,
+  FEATURES.DRIP_CAMPAIGNS,
+  FEATURES.ANALYTICS_ADVANCED,
 ];
+
+const hotelLimits = {
+  messages: -1,
+  contacts: -1,
+  flows: -1,
+  teamSeats: 5,
+  aiRepliesPerDay: -1,
+  properties: 3,
+  smartOrdersPerMonth: 0,
+};
 
 const PLANS = {
   // ─── "free" = NO active subscription ────────────────────
-  // Botlify has NO free tier. This entry represents a workspace that hasn't
-  // started a paid plan yet (or whose subscription ended). It grants NO
-  // features and near-zero limits so the app paywalls until the user starts a
-  // trial (card required). Actual feature access comes from ig_starter/ig_pro
-  // once their Lemon Squeezy trial/subscription is active.
+  // A workspace that hasn't picked a plan yet (or whose subscription ended).
+  // Grants nothing; the app paywalls until a plan is chosen.
   free: {
     id: "free",
     name: "No plan",
-    tagline: "Start a plan to unlock Botlify",
-    channel: "both",
+    tagline: "Choose a plan to unlock Botlify",
+    channel: "all",
     priceMonthly: 0,
     priceAnnual: 0,
     currency: "USD",
@@ -67,94 +105,68 @@ const PLANS = {
       flows: 0,
       teamSeats: 1,
       aiRepliesPerDay: 0,
+      properties: 0,
       smartOrdersPerMonth: 0,
     },
     features: [],
-    highlights: ["Choose Basic or Pro to start your 3-day free trial"],
+    highlights: ["Choose a plan to get started"],
   },
 
-  // ─── Instagram plans ────────────────────────────────────
-  ig_starter: {
-    id: "ig_starter",
-    name: "Basic — Instagram",
-    tagline: "Instagram only · automate DMs and comments",
-    channel: "instagram",
-    priceMonthly: 9,
-    priceAnnual: 9 * 10, // 2 months free
+  // ─── Hotel plans ────────────────────────────────────────
+  hotel_free: {
+    id: "hotel_free",
+    name: "Launch (Free)",
+    tagline: "Full access while we launch — no card needed",
+    channel: "all",
+    priceMonthly: 0,
+    priceAnnual: 0,
     currency: "USD",
-    usd: 9,
+    usd: 0,
+    trialDays: 0,
+    limits: { ...hotelLimits },
+    features: [...hotelFeatures],
+    highlights: [
+      "Booking.com + Airbnb sync (free)",
+      "AI concierge on WhatsApp, Instagram & TikTok",
+      "Bot books rooms & reservations 24/7",
+      "Airport pickup & drop-off for guests",
+      "Unified inbox with human takeover",
+    ],
+  },
+  hotel_pro: {
+    id: "hotel_pro",
+    name: "Botlify for Hotels",
+    tagline: "Everything your hotel needs to take bookings on autopilot",
+    channel: "all",
+    priceMonthly: 49,
+    priceAnnual: 49 * 10, // 2 months free
+    currency: "USD",
+    usd: 49,
     trialDays: 3,
-    limits: {
-      messages: 1000,
-      contacts: 1000,
-      flows: 5,
-      teamSeats: 1,
-      aiRepliesPerDay: 200,
-      smartOrdersPerMonth: 20,
-    },
-    features: [
-      ...baseIgFeatures,
-      FEATURES.AI_BOT,
-      FEATURES.BUSINESS_HOURS,
-      FEATURES.SMART_ORDERS,
-    ],
+    recommended: true,
+    limits: { ...hotelLimits },
+    features: [...hotelFeatures],
     highlights: [
-      "1 Instagram account",
-      "1,000 conversations/month",
-      "Comment → DM, story replies, ice breakers",
-      "AI smart replies (200/day)",
-      "Basic analytics",
+      "Booking.com + Airbnb sync (free, 0% commission)",
+      "AI concierge on WhatsApp, Instagram & TikTok",
+      "Bot books rooms & reservations 24/7",
+      "Airport pickup & drop-off for guests",
+      "Unified inbox with human takeover",
+      "Only 10% on bookings the bot closes for you",
     ],
   },
-  ig_pro: {
-    id: "ig_pro",
-    name: "Instagram Pro",
-    tagline: "Unlimited convos + premium AI",
-    channel: "instagram",
-    priceMonthly: 19,
-    priceAnnual: 19 * 10,
-    currency: "USD",
-    usd: 19,
-    limits: {
-      messages: -1,
-      contacts: -1,
-      flows: -1,
-      teamSeats: 3,
-      aiRepliesPerDay: -1,
-      smartOrdersPerMonth: 200,
-    },
-    features: [
-      ...baseIgFeatures,
-      FEATURES.AI_BOT,
-      FEATURES.AI_PREMIUM,
-      FEATURES.BUSINESS_HOURS,
-      FEATURES.BROADCAST,
-      FEATURES.DRIP_CAMPAIGNS,
-      FEATURES.ANALYTICS_ADVANCED,
-      FEATURES.TEAM_INBOX,
-      FEATURES.REMOVE_BRANDING,
-      FEATURES.SMART_ORDERS,
-    ],
-    highlights: [
-      "Unlimited conversations",
-      "Unlimited contacts",
-      "Premium AI · context-aware",
-      "Broadcasts + drip campaigns",
-      "Advanced analytics",
-      "Team inbox (3 seats)",
-      "Remove Botlify branding",
-    ],
-  },
-
 };
 
 // ─── Legacy plan key aliases (back-compat for older subscriptions) ──
+// Old Instagram-era customers keep full access on the hotel product.
 const LEGACY_ALIASES = {
   starter: "free",
-  growth: "ig_starter",
-  scale: "ig_pro",
-  business: "ig_pro",
-  agency: "ig_pro",
+  growth: "hotel_pro",
+  scale: "hotel_pro",
+  business: "hotel_pro",
+  agency: "hotel_pro",
+  ig_starter: "hotel_pro",
+  ig_pro: "hotel_pro",
 };
 
 const resolvePlanId = (planId) => {
@@ -171,13 +183,19 @@ const planHasFeature = (planId, feature) => {
   return !!p && p.features.includes(feature);
 };
 
-const planSupportsChannel = (_planId, channel) => channel === "instagram";
+const SUPPORTED_CHANNELS = ["instagram", "whatsapp", "tiktok"];
+const planSupportsChannel = (planId, channel) => {
+  if (!SUPPORTED_CHANNELS.includes(channel)) return false;
+  return planHasFeature(planId, `channel_${channel}`);
+};
 
 const PLAN_KEYS_FOR_ENUM = [
   "free",
+  "hotel_free",
+  "hotel_pro",
+  // legacy
   "ig_starter",
   "ig_pro",
-  // legacy
   "starter",
   "growth",
   "scale",
@@ -192,13 +210,22 @@ const PLAN_PRICES = Object.fromEntries(
   ]),
 );
 
-// USD prices used for international card billing (Xendit). Annual = 10× monthly
-// (2 months free).
 const PLAN_USD_PRICES = {
   free: { monthly: 0, annual: 0 },
+  hotel_free: { monthly: 0, annual: 0 },
+  hotel_pro: { monthly: 49, annual: 490 },
+  // legacy — kept so old webhook events still resolve an amount
   ig_starter: { monthly: 9, annual: 90 },
   ig_pro: { monthly: 19, annual: 190 },
 };
+
+// Commission the platform takes on bookings the BOT closes (social/direct).
+// OTA-originated bookings (Booking.com/Airbnb) are always 0% — that's the deal.
+const SOCIAL_BOOKING_COMMISSION_RATE = 0.10;
+// Consultants earn this share of Botlify's revenue from hotels they signed,
+// for CONSULTANT_SHARE_MONTHS after attribution.
+const CONSULTANT_REVENUE_SHARE_RATE = 0.20;
+const CONSULTANT_SHARE_MONTHS = 12;
 
 module.exports = {
   PLANS,
@@ -207,7 +234,10 @@ module.exports = {
   PLAN_KEYS_FOR_ENUM,
   PLAN_PRICES,
   PLAN_USD_PRICES,
-  USD,
+  SUPPORTED_CHANNELS,
+  SOCIAL_BOOKING_COMMISSION_RATE,
+  CONSULTANT_REVENUE_SHARE_RATE,
+  CONSULTANT_SHARE_MONTHS,
   resolvePlanId,
   getPlan,
   planHasFeature,

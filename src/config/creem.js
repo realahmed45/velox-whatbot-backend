@@ -25,6 +25,11 @@ const API_BASE =
 
 // plan id + billing cycle → Creem product id
 const PRODUCTS = {
+  hotel_pro: {
+    monthly: process.env.CREEM_PRODUCT_HOTEL_PRO_MONTHLY || "",
+    annual: process.env.CREEM_PRODUCT_HOTEL_PRO_ANNUAL || "",
+  },
+  // Legacy IG-era products — kept so old subscriptions' webhooks still map.
   ig_starter: {
     monthly: process.env.CREEM_PRODUCT_IG_STARTER_MONTHLY || "",
     annual: process.env.CREEM_PRODUCT_IG_STARTER_ANNUAL || "",

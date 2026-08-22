@@ -35,7 +35,7 @@ const MESSAGE_LIMITS = Object.fromEntries(
   ]),
 );
 
-const PUBLIC_PLAN_IDS = ["ig_starter", "ig_pro"];
+const PUBLIC_PLAN_IDS = ["hotel_free", "hotel_pro"];
 
 // @GET /api/billing/plans — Get available plans (channel-grouped)
 const getPlans = asyncHandler(async (req, res) => {
@@ -999,6 +999,25 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Invalid plan");
   }
+  // The free launch plan needs no card — activate immediately, no Creem.
+  if (planId === "hotel_free") {
+    await activatePlan({
+      workspaceId: req.workspace._id,
+      plan: "hotel_free",
+      billingCycle: "monthly",
+      paymentMethod: "none",
+      provider: "internal",
+      txnRef: `FREE-${Date.now()}`,
+      amount: 0,
+      currency: "USD",
+    });
+    const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
+    return res.json({
+      success: true,
+      activated: true,
+      url: `${clientUrl}/dashboard/billing?checkout=success`,
+    });
+  }
   const cycle = billingCycle === "annual" ? "annual" : "monthly";
 
   if (!creemConfig.isConfigured()) {
@@ -1120,6 +1139,22 @@ const handleCreemWebhook = asyncHandler(async (req, res) => {
       "subscription.creemSubscriptionId": subId,
       "subscription.creemCustomerId": String(customerId || ""),
     });
+    // Commission ledger: record SaaS revenue (drives consultant 20% share).
+    // Only on real payments — trialing/free activations carry no amount.
+    if (statusLabel === "active") {
+      try {
+        const { recordRevenue } = require("../services/commissionService");
+        await recordRevenue({
+          workspaceId: ws,
+          type: "saas",
+          amount: PLAN_USD_PRICES[plan]?.[cycle] || 0,
+          currency: "USD",
+          reference: `creem:${subId || obj.id || ""}`,
+        });
+      } catch (e) {
+        logger.warn("[Creem webhook] ledger record failed", { err: e.message });
+      }
+    }
   };
 
   // Email the workspace owner (best-effort). Looks up the owner from the ws.
@@ -1147,7 +1182,7 @@ const handleCreemWebhook = asyncHandler(async (req, res) => {
               sendSubscriptionConfirmedEmail({
                 to: owner.email,
                 name: owner.name,
-                planName: plan === "ig_pro" ? "Instagram Pro" : "Basic",
+                planName: getPlan(plan)?.name || "Botlify for Hotels",
                 cycle,
               }),
             );

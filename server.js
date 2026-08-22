@@ -34,6 +34,10 @@ const aiRoutes = require("./src/routes/ai");
 const dripRoutes = require("./src/routes/drip");
 const integrationRoutes = require("./src/routes/integrations");
 const adminRoutes = require("./src/routes/admin");
+const hotelRoutes = require("./src/routes/hotel");
+const channelRoutes = require("./src/routes/channels");
+const consultantRoutes = require("./src/routes/consultants");
+const transferRoutes = require("./src/routes/transfers");
 
 const app = express();
 const server = http.createServer(app);
@@ -176,6 +180,16 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/drip-campaigns", dripRoutes);
 app.use("/api/integrations", integrationRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/hotel", hotelRoutes);
+app.use("/api/channels", channelRoutes);
+app.use("/api/consultants", consultantRoutes);
+app.use("/api/transfers", transferRoutes);
+
+// Public: Channex (OTA) reservation webhook — token-verified in the handler.
+app.post(
+  "/api/channex/webhook",
+  require("./src/controllers/hotelController").handleChannexWebhook,
+);
 
 // Public: business-category picker list for onboarding.
 app.get("/api/verticals", require("./src/controllers/verticalController").listVerticals);
