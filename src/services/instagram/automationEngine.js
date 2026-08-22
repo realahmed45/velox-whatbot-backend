@@ -339,6 +339,54 @@ const recentlyTriggered = async (
   return await Message.exists(filter);
 };
 
+// ── Outbound transport (multi-channel) ───────────────────────────────────────
+// Post-pivot a conversation may live on WhatsApp/TikTok (workspace.channels)
+// instead of Instagram. These helpers resolve the correct provider account for
+// a conversation so every send site routes through the right channel.
+
+const channelEntryConnected = (workspace, channelType) =>
+  (channelType === "whatsapp" || channelType === "tiktok") &&
+  (workspace.channels || []).some(
+    (c) =>
+      c.platform === channelType && ["connected", "error"].includes(c.status),
+  );
+
+/**
+ * Resolve how to send an outbound message for this conversation.
+ * Returns { channel, send(recipientId, text, opts) } — Instagram sends keep
+ * using the workspace token via the existing dispatcher; WhatsApp/TikTok
+ * conversations decrypt the workspace.channels accountId and send through
+ * zernioSocialService.
+ */
+const resolveSendTransport = async (workspace, conversation) => {
+  const channel = conversation?.channelType || "instagram";
+  if (channel === "whatsapp" || channel === "tiktok") {
+    // channels.accountId is select:false on the schema — fetch it explicitly.
+    const wsDoc = await Workspace.findById(workspace._id).select(
+      "+channels.accountId",
+    );
+    const entry = (wsDoc?.channels || []).find((c) => c.platform === channel);
+    if (entry?.accountId) {
+      const zernioSocial = require("../channels/zernioSocialService");
+      const accountId = decrypt(entry.accountId);
+      return {
+        channel,
+        send: (recipientId, text, opts) =>
+          zernioSocial.sendDM(accountId, recipientId, text, opts),
+      };
+    }
+    logger.warn(
+      `[transport] ws=${workspace._id} conversation on ${channel} but no channel accountId — falling back to Instagram`,
+    );
+  }
+  const accessToken = decrypt(workspace.instagram?.accessToken);
+  return {
+    channel: "instagram",
+    send: (recipientId, text, opts) =>
+      sendDM(accessToken, recipientId, text, opts),
+  };
+};
+
 const sendAndLog = async ({
   workspace,
   contact,
@@ -378,12 +426,12 @@ const sendAndLog = async ({
     result = { success: true, messageId: "simulated" };
     if (Array.isArray(workspace.__outbox)) workspace.__outbox.push(finalText);
   } else {
-    const accessToken = decrypt(workspace.instagram.accessToken);
+    const transport = await resolveSendTransport(workspace, conversation);
     const convId = conversation.metadata?.providerConversationId;
     logger.info(
-      `[sendDM] ws=${workspace._id} recipient=${contact.igUserId} convId=${convId || "none"} trigger=${triggerType}`,
+      `[sendDM] ws=${workspace._id} channel=${transport.channel} recipient=${contact.igUserId} convId=${convId || "none"} trigger=${triggerType}`,
     );
-    result = await sendDM(accessToken, contact.igUserId, finalText + brand, {
+    result = await transport.send(contact.igUserId, finalText + brand, {
       conversationId: convId,
     });
     logger.info(
@@ -415,9 +463,9 @@ const sendAndLog = async ({
       if (Array.isArray(workspace.__outbox))
         workspace.__outbox.push(`[image] ${imageUrl}`);
     } else {
-      const accessToken = decrypt(workspace.instagram.accessToken);
+      const transport = await resolveSendTransport(workspace, conversation);
       const convId = conversation.metadata?.providerConversationId;
-      imgResult = await sendDM(accessToken, contact.igUserId, "", {
+      imgResult = await transport.send(contact.igUserId, "", {
         conversationId: convId,
         mediaUrl: imageUrl,
       });
@@ -484,7 +532,11 @@ const guardSend = (workspace, contact, conversation) => {
   // creator can preview replies even before automation is switched on.
   if (workspace.__simulate) return null;
   if (!workspace.settings?.automationEnabled) return "automation_disabled";
-  if (workspace.instagram?.status !== "connected") return "ig_disconnected";
+  if (
+    workspace.instagram?.status !== "connected" &&
+    !channelEntryConnected(workspace, conversation?.channelType)
+  )
+    return "ig_disconnected";
   if (contact?.optedOut) return "contact_opted_out";
   if (conversation && conversation.botEnabled === false) return "bot_paused";
   return null;
@@ -877,7 +929,7 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
   );
 
-  let { reply, escalate, provider, imageUrls, intent, tags, lead, order, booking } =
+  let { reply, escalate, provider, imageUrls, intent, tags, lead, order, booking, stay, transfer } =
     await ai.generateReply({
       workspace,
       history,
@@ -1017,6 +1069,72 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
           }
         } catch (e) {
           logger.warn("[AI] booking save failed", { err: e.message });
+        }
+      }
+
+      // Hotel stay — persist the multi-night booking the AI captured.
+      // createBooking re-validates availability, so a stale/hallucinated range
+      // fails cleanly instead of overbooking.
+      if (stay && stay.roomTypeId && stay.checkIn) {
+        try {
+          const { createBooking } = require("../hotel/bookingService");
+          const source =
+            conv.channelType === "whatsapp" || conv.channelType === "wa"
+              ? "whatsapp"
+              : conv.channelType === "tiktok"
+                ? "tiktok"
+                : "instagram";
+          const result = await createBooking({
+            workspace,
+            roomTypeId: stay.roomTypeId,
+            checkIn: stay.checkIn,
+            checkOut: stay.checkOut,
+            guestName: stay.guestName || contact.name || "",
+            guestPhone: stay.guestPhone || contact.phone || "",
+            adults: Number(stay.adults) || 2,
+            children: Number(stay.children) || 0,
+            source,
+            contact,
+            conversation: conv,
+            specialRequests: stay.specialRequests || "",
+          });
+          if (result.ok) {
+            // Guarantee the guest sees the booking code even if the model's
+            // own confirmation was thin — append ours when it's missing.
+            if (
+              result.confirmationText &&
+              !(result.booking?.code && reply.includes(result.booking.code))
+            ) {
+              reply = `${reply}\n\n${result.confirmationText}`.trim();
+            }
+          } else {
+            // Range fell through (taken/invalid) — tell the guest honestly
+            // instead of silently pretending it worked.
+            logger.warn(
+              `[AI] stay booking rejected ws=${workspace._id} reason=${result.reason}`,
+            );
+            reply =
+              `${reply}\n\nAh, that room just filled up for those dates — want me to check other rooms or dates? 🙏`.trim();
+          }
+        } catch (e) {
+          logger.warn("[AI] stay booking save failed", { err: e.message });
+        }
+      }
+
+      // Airport transfer — handed to transferService. The module may not be
+      // shipped yet; a missing module only logs a warning, never breaks the
+      // reply.
+      if (transfer && transfer.pickupAt) {
+        try {
+          const { createTransfer } = require("../transfers/transferService");
+          await createTransfer({
+            workspace,
+            transfer,
+            contact,
+            conversation: conv,
+          });
+        } catch (e) {
+          logger.warn("[AI] transfer dispatch failed", { err: e.message });
         }
       }
     } catch (e) {
@@ -1639,7 +1757,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
     if (!workspace.__simulate) {
       // Allow both "connected" and "error" (credentials kept on a provider
       // blip) so the bot keeps replying until the user truly disconnects.
-      if (!["connected", "error"].includes(workspace.instagram?.status)) {
+      // Multi-channel: a WhatsApp/TikTok event (event.channel) is valid even
+      // when Instagram itself isn't connected — those send through the
+      // workspace.channels entry, not the Instagram connection.
+      if (
+        !["connected", "error"].includes(workspace.instagram?.status) &&
+        !channelEntryConnected(workspace, event.channel)
+      ) {
         logger.info(
           `[IG flow] ws=${workspaceId} not connected (status=${workspace.instagram?.status})`,
         );
@@ -1784,9 +1908,20 @@ const handleWebhookEvent = async (workspaceId, event) => {
         username: senderUsername,
         name: senderName,
         profilePic: senderProfilePic,
-        source: type,
+        // For WhatsApp/TikTok events pass the platform as the acquisition
+        // source (upsertContact normalizes it; contact.igUserId is the
+        // platform-generic external sender id post-pivot).
+        source:
+          event.channel && event.channel !== "instagram"
+            ? event.channel
+            : type,
       });
-      const conv = await getOrCreateConversation(workspace, contact);
+      // Conversation lives on the channel the event arrived on.
+      const conv = await getOrCreateConversation(
+        workspace,
+        contact,
+        event.channel || "instagram",
+      );
 
       // Persist Zernio's conversation id so the bot can reply into this thread.
       if (
@@ -1947,5 +2082,7 @@ module.exports = {
   handleWebhookEvent,
   TRIGGERS,
   processScheduledFollowups,
+  // Multi-channel outbound transport — also usable by inbox/agent send paths.
+  resolveSendTransport,
   _internal: { personalize, matchKeyword, isWithinBusinessHours },
 };

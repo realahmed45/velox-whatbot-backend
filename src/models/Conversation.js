@@ -16,7 +16,7 @@ const conversationSchema = new mongoose.Schema(
     phone: { type: String }, // optional — IG conversations use contactId.igUserId
     channelType: {
       type: String,
-      enum: ["instagram", "messenger"],
+      enum: ["instagram", "messenger", "whatsapp", "tiktok"],
       default: "instagram",
       index: true,
     },

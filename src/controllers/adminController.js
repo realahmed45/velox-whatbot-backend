@@ -281,6 +281,198 @@ const listSubscriptions = asyncHandler(async (req, res) => {
   res.json({ subscriptions: rows, total: rows.length });
 });
 
+// ── Consultants & commissions (hotel product) ───────────────────────────────
+const Consultant = require("../models/Consultant");
+const CommissionEntry = require("../models/CommissionEntry");
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// @GET /api/admin/consultants -> all consultants + per-currency earning sums
+const listConsultants = asyncHandler(async (req, res) => {
+  const consultants = await Consultant.find()
+    .populate("userId", "name email")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // One aggregate for every consultant's share ledger, folded per currency.
+  const sums = await CommissionEntry.aggregate([
+    { $match: { kind: "consultant_share" } },
+    {
+      $group: {
+        _id: {
+          consultantId: "$consultantId",
+          currency: "$currency",
+          status: "$status",
+        },
+        total: { $sum: "$amount" },
+      },
+    },
+  ]);
+  const byConsultant = {};
+  for (const row of sums) {
+    const cid = String(row._id.consultantId);
+    const cur = row._id.currency || "USD";
+    byConsultant[cid] = byConsultant[cid] || {};
+    byConsultant[cid][cur] = byConsultant[cid][cur] || {
+      currency: cur,
+      accrued: 0,
+      verified: 0,
+      paid: 0,
+    };
+    const bucket = byConsultant[cid][cur];
+    if (row._id.status === "accrued") bucket.accrued += row.total;
+    else if (["verified", "invoiced"].includes(row._id.status))
+      bucket.verified += row.total;
+    else if (row._id.status === "paid") bucket.paid += row.total;
+  }
+
+  const rows = consultants.map((c) => ({
+    ...c,
+    earnings: Object.values(byConsultant[String(c._id)] || {}).map((e) => ({
+      currency: e.currency,
+      accrued: round2(e.accrued),
+      verified: round2(e.verified),
+      paid: round2(e.paid),
+    })),
+  }));
+
+  res.json({ consultants: rows, total: rows.length });
+});
+
+// @POST /api/admin/consultants/:id/approve
+const approveConsultant = asyncHandler(async (req, res) => {
+  const consultant = await Consultant.findById(req.params.id);
+  if (!consultant) {
+    res.status(404);
+    throw new Error("Consultant not found");
+  }
+  consultant.status = "approved";
+  consultant.approvedAt = new Date();
+  consultant.approvedBy = req.admin?.email || "";
+  consultant.suspendedReason = "";
+  await consultant.save();
+  res.json({ success: true, consultant });
+});
+
+// @POST /api/admin/consultants/:id/suspend  { reason }
+const suspendConsultant = asyncHandler(async (req, res) => {
+  const consultant = await Consultant.findById(req.params.id);
+  if (!consultant) {
+    res.status(404);
+    throw new Error("Consultant not found");
+  }
+  consultant.status = "suspended";
+  consultant.suspendedReason = String(req.body?.reason || "").slice(0, 1000);
+  await consultant.save();
+  res.json({ success: true, consultant });
+});
+
+// @GET /api/admin/commissions?consultantId=&status=&period=&kind= -> ledger
+const listCommissions = asyncHandler(async (req, res) => {
+  const { consultantId, status, period, kind } = req.query;
+  const filter = {};
+  if (consultantId) filter.consultantId = consultantId;
+  if (status) filter.status = status;
+  if (period) filter.period = period;
+  if (kind) filter.kind = kind;
+
+  const entries = await CommissionEntry.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(200)
+    .populate("workspaceId", "name")
+    .populate("consultantId", "fullName code")
+    .lean();
+
+  res.json({ entries, total: entries.length });
+});
+
+// @POST /api/admin/commissions/:id/verify  (accrued → verified)
+const verifyCommission = asyncHandler(async (req, res) => {
+  const entry = await CommissionEntry.findById(req.params.id);
+  if (!entry) {
+    res.status(404);
+    throw new Error("Ledger entry not found");
+  }
+  if (entry.status !== "accrued") {
+    res.status(400);
+    throw new Error(`Only accrued entries can be verified (is: ${entry.status})`);
+  }
+  entry.status = "verified";
+  entry.verifiedAt = new Date();
+  entry.verifiedBy = req.admin?.email || "";
+  await entry.save();
+  res.json({ success: true, entry });
+});
+
+/** Shared: flip one entry to paid + sync the consultant's USD paid total. */
+async function markEntryPaid(entry, adminEmail, payoutReference) {
+  entry.status = "paid";
+  entry.paidAt = new Date();
+  entry.paidBy = adminEmail || "";
+  entry.payoutReference = String(payoutReference || "").slice(0, 200);
+  await entry.save();
+  if (
+    entry.kind === "consultant_share" &&
+    entry.currency === "USD" &&
+    entry.consultantId
+  ) {
+    await Consultant.updateOne(
+      { _id: entry.consultantId },
+      { $inc: { "totals.paid": entry.amount } },
+    );
+  }
+}
+
+// @POST /api/admin/commissions/:id/mark-paid  { payoutReference }
+const markCommissionPaid = asyncHandler(async (req, res) => {
+  const entry = await CommissionEntry.findById(req.params.id);
+  if (!entry) {
+    res.status(404);
+    throw new Error("Ledger entry not found");
+  }
+  if (!["verified", "accrued"].includes(entry.status)) {
+    res.status(400);
+    throw new Error(
+      `Only verified/accrued entries can be marked paid (is: ${entry.status})`,
+    );
+  }
+  await markEntryPaid(entry, req.admin?.email, req.body?.payoutReference);
+  res.json({ success: true, entry });
+});
+
+// @POST /api/admin/commissions/mark-paid-bulk
+//   { consultantId, period, payoutReference } -> pay out a consultant's month
+const markCommissionsPaidBulk = asyncHandler(async (req, res) => {
+  const { consultantId, period, payoutReference } = req.body || {};
+  if (!consultantId || !period) {
+    res.status(400);
+    throw new Error("consultantId and period (YYYY-MM) are required");
+  }
+
+  const entries = await CommissionEntry.find({
+    consultantId,
+    period,
+    kind: "consultant_share",
+    status: "verified",
+  });
+
+  const totals = {};
+  for (const entry of entries) {
+    await markEntryPaid(entry, req.admin?.email, payoutReference);
+    const cur = entry.currency || "USD";
+    totals[cur] = round2((totals[cur] || 0) + entry.amount);
+  }
+
+  res.json({
+    success: true,
+    count: entries.length,
+    totals: Object.entries(totals).map(([currency, amount]) => ({
+      currency,
+      amount,
+    })),
+  });
+});
+
 module.exports = {
   login,
   overview,
@@ -288,4 +480,11 @@ module.exports = {
   listSubscriptions,
   listActivity,
   timeline,
+  listConsultants,
+  approveConsultant,
+  suspendConsultant,
+  listCommissions,
+  verifyCommission,
+  markCommissionPaid,
+  markCommissionsPaidBulk,
 };

@@ -1678,6 +1678,33 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         }
       } catch {}
     }
+    // ── Multi-channel fallback (WhatsApp / TikTok via workspace.channels) ────
+    // The same Zernio webhook carries WhatsApp/TikTok events too. When no
+    // workspace matched via the Instagram fields, try the channels array:
+    // accountHash is a deterministic SHA-256 of the provider account id (same
+    // helper as igAccountHash), so one indexed query resolves the workspace —
+    // no decrypt loop needed. When matched this way, the event is processed by
+    // the SAME pipeline below with the conversation routed to that platform.
+    // Note: the Contact model's igUserId/igUsername fields are platform-generic
+    // post-pivot — igUserId simply holds the unique per-workspace external
+    // sender id, whatever the platform.
+    let channelPlatform = null;
+    if (!target) {
+      const accountHash = hashToken(String(accountId));
+      const chWs = await Workspace.findOne({
+        "channels.accountHash": accountHash,
+      });
+      const entry = chWs?.channels?.find?.(
+        (c) => c.accountHash === accountHash,
+      );
+      if (chWs && entry) {
+        target = chWs;
+        channelPlatform = entry.platform;
+        logger.info(
+          `[BotlifyIG webhook] matched via channels[] platform=${channelPlatform} ws=${chWs._id}`,
+        );
+      }
+    }
     if (!target) {
       logger.warn(
         `[BotlifyIG webhook] no workspace matched accountId=${accountId}. KnownIds=[${candidates.join(", ")}]`,
@@ -1691,20 +1718,45 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     // it just works again. A message event (not the account.disconnected event
     // handled below) proves the account is live.
     const healBack =
+      !channelPlatform &&
       target.instagram?.status === "error" &&
       evtType !== "account.disconnected";
-    Workspace.updateOne(
-      { _id: target._id },
-      {
-        $set: {
-          "instagram.lastWebhookAt": new Date(),
-          "instagram.lastWebhookType": evtType || "unknown",
-          ...(healBack
-            ? { "instagram.status": "connected", "instagram.webhookError": null }
-            : {}),
+    if (channelPlatform) {
+      // Matched through channels[] — record activity (and self-heal) on the
+      // platform entry, not on the legacy instagram subdoc.
+      const chEntry = target.channels.find(
+        (c) => c.platform === channelPlatform,
+      );
+      const chHeal =
+        chEntry?.status === "error" && evtType !== "account.disconnected";
+      Workspace.updateOne(
+        { _id: target._id, "channels.platform": channelPlatform },
+        {
+          $set: {
+            "channels.$.lastWebhookAt": new Date(),
+            ...(chHeal
+              ? {
+                  "channels.$.status": "connected",
+                  "channels.$.webhookError": null,
+                }
+              : {}),
+          },
         },
-      },
-    ).catch(() => {});
+      ).catch(() => {});
+    } else {
+      Workspace.updateOne(
+        { _id: target._id },
+        {
+          $set: {
+            "instagram.lastWebhookAt": new Date(),
+            "instagram.lastWebhookType": evtType || "unknown",
+            ...(healBack
+              ? { "instagram.status": "connected", "instagram.webhookError": null }
+              : {}),
+          },
+        },
+      ).catch(() => {});
+    }
     if (healBack) {
       logger.info(
         `[BotlifyIG webhook] self-healed workspace ${target._id} back to connected`,
@@ -1721,6 +1773,23 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
     // so it can auto-recover or be reconnected in one click. Only an explicit
     // user disconnect or a Meta deauthorize fully clears the account.
     if (evtType === "account.disconnected") {
+      if (channelPlatform) {
+        // Same persistence rule as Instagram: flag, never wipe credentials.
+        logger.warn(
+          `[BotlifyIG webhook] account.disconnected for ${channelPlatform} channel of workspace ${target._id} — flagging as needs-attention (credentials kept)`,
+        );
+        await Workspace.updateOne(
+          { _id: target._id, "channels.platform": channelPlatform },
+          {
+            $set: {
+              "channels.$.status": "error",
+              "channels.$.webhookError":
+                "Provider reported the account was disconnected. Reconnect if messages stop.",
+            },
+          },
+        ).catch(() => {});
+        continue;
+      }
       logger.warn(
         `[BotlifyIG webhook] account.disconnected for workspace ${target._id} — flagging as needs-attention (credentials kept)`,
       );
@@ -1863,6 +1932,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
         senderUsername: commenterUsername,
         text: commentText,
         postId,
+        channel: channelPlatform || "instagram",
       });
       continue;
     }
@@ -2011,6 +2081,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           incomingImageUrl,
           storyId:
             meta.storyReply?.storyId || meta.storyMention?.storyId || null,
+          channel: channelPlatform || "instagram",
         });
         break;
       }
@@ -2026,6 +2097,7 @@ exports.receiveBotlifyWebhook = asyncHandler(async (req, res) => {
           providerConversationId:
             evt.conversation?.id || msg.conversationId || null,
           text: "",
+          channel: channelPlatform || "instagram",
         });
         break;
       case "story.mention":

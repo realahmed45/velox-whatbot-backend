@@ -81,7 +81,15 @@ const contactSchema = new mongoose.Schema(
     // Extend this enum when adding a new platform — no index change needed.
     source: {
       type: String,
-      enum: ["instagram", "messenger", "telegram", "manual", "import"],
+      enum: [
+        "instagram",
+        "messenger",
+        "telegram",
+        "whatsapp",
+        "tiktok",
+        "manual",
+        "import",
+      ],
       default: "instagram",
       index: true,
     },

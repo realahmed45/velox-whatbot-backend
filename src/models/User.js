@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema(
     avatar: String,
     role: {
       type: String,
-      enum: ["owner", "agent", "agency_admin"],
+      enum: ["owner", "agent", "agency_admin", "consultant"],
       default: "owner",
     },
     isEmailVerified: {

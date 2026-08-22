@@ -187,20 +187,31 @@ const sendAgentMessage = asyncHandler(async (req, res) => {
 
   const workspace = req.workspace;
 
-  // Send via Instagram DM
-  let result = { success: false, error: "No Instagram token" };
+  // Send via the conversation's channel — Instagram, or WhatsApp/TikTok via
+  // the hosted provider. resolveSendTransport picks the right transport.
+  let result = { success: false, error: "No connected channel" };
   try {
     const wsWithToken = await require("../models/Workspace")
       .findById(workspace._id)
       .select("+instagram.accessToken");
-    if (wsWithToken?.instagram?.accessToken) {
-      const token = decrypt(wsWithToken.instagram.accessToken);
-      const contact = await require("../models/Contact")
-        .findById(conversation.contactId)
-        .select("igUserId");
-      if (contact?.igUserId) {
-        result = await ig.sendDM(token, contact.igUserId, text || "");
-      }
+    const contact = await require("../models/Contact")
+      .findById(conversation.contactId)
+      .select("igUserId");
+    if (contact?.igUserId) {
+      const {
+        resolveSendTransport,
+      } = require("../services/instagram/automationEngine");
+      const transport = await resolveSendTransport(
+        wsWithToken || workspace,
+        conversation,
+      );
+      result = await transport.send(contact.igUserId, text || "", {
+        conversationId:
+          conversation.metadata?.providerConversationId ||
+          conversation.providerConversationId ||
+          undefined,
+        ...(mediaUrl ? { mediaUrl, mediaType } : {}),
+      });
     }
   } catch (e) {
     result = { success: false, error: e.message };
@@ -215,7 +226,7 @@ const sendAgentMessage = asyncHandler(async (req, res) => {
     sender: "agent",
     text,
     mediaUrl,
-    channelType: "instagram",
+    channelType: conversation.channelType || "instagram",
     status: result.success ? "sent" : "failed",
     sentBy: req.user._id,
     failureReason: result.success ? undefined : result.error,
@@ -340,18 +351,24 @@ const toggleBot = asyncHandler(async (req, res) => {
     conv.status = "human_active";
 
     // Send system message to customer when agent takes over
-    if (wasEnabled && conv.contactId && req.workspace.instagramConnected) {
+    if (wasEnabled && conv.contactId) {
       try {
         const agentName = req.user.name || "our team";
         const systemMessage = `👋 ${agentName} is now handling your conversation. How can we help you?`;
 
-        // Send via Instagram provider. Signature is
-        // sendDM(accountIdOrToken, recipientIgId, text, opts).
-        const accessToken = decrypt(req.workspace.instagram.accessToken);
+        // Send via the conversation's channel (IG token, or WhatsApp/TikTok
+        // through the hosted provider).
+        const {
+          resolveSendTransport,
+        } = require("../services/instagram/automationEngine");
+        const transport = await resolveSendTransport(req.workspace, conv);
         const recipientIgId =
           conv.contactId.igUserId || conv.contactId.instagramId;
-        await ig.sendDM(accessToken, recipientIgId, systemMessage, {
-          conversationId: conv.providerConversationId || undefined,
+        await transport.send(recipientIgId, systemMessage, {
+          conversationId:
+            conv.metadata?.providerConversationId ||
+            conv.providerConversationId ||
+            undefined,
         });
 
         // Save message to database

@@ -1,0 +1,323 @@
+/**
+ * Botlify — Multi-channel Controller (WhatsApp / TikTok via Zernio)
+ *
+ * Mirrors the Instagram hosted-auth flow (see instagramController) but stores
+ * connections in the workspace `channels` array instead of the legacy
+ * `instagram` subdoc. Same Zernio account, same per-workspace profile, same
+ * webhook endpoint — the webhook receiver routes events by account hash.
+ */
+const asyncHandler = require("express-async-handler");
+const Workspace = require("../models/Workspace");
+const zernioSocial = require("../services/channels/zernioSocialService");
+const { encrypt, decrypt } = require("../utils/encryption");
+const { hashToken } = require("../utils/crypto");
+const logger = require("../utils/logger");
+
+const CLIENT_URL = () => process.env.CLIENT_URL || "https://botlify.site";
+
+const normalizePlatform = (p) => String(p || "").toLowerCase();
+
+/**
+ * Resolve (or lazily create) the workspace's Zernio profile — the SAME one the
+ * Instagram flow uses (instagram.botlifyProfileId), so every platform for a
+ * workspace lives under one tenant profile.
+ */
+const resolveWorkspaceProfileId = async (workspaceId) => {
+  const wsDoc = await Workspace.findById(workspaceId).select(
+    "+instagram.botlifyProfileId name",
+  );
+  let profileId = wsDoc?.instagram?.botlifyProfileId
+    ? decrypt(wsDoc.instagram.botlifyProfileId)
+    : null;
+  if (!profileId) {
+    profileId = await zernioSocial.createProfile({
+      name: `ws_${workspaceId}`,
+      description: wsDoc?.name || "Botlify workspace",
+    });
+    await Workspace.findByIdAndUpdate(workspaceId, {
+      "instagram.botlifyProfileId": encrypt(String(profileId)),
+    });
+    logger.info("[Channels] created Zernio profile for workspace", {
+      workspaceId,
+      profileId,
+    });
+  }
+  return profileId;
+};
+
+// ── GET /api/channels/status ─────────────────────────────────────────────────
+// One call for the dashboard: connection state of every messaging channel.
+exports.getStatus = asyncHandler(async (req, res) => {
+  const ws = req.workspace; // set by requireWorkspace
+  const out = {
+    instagram: {
+      status: ws.instagram?.status || "disconnected",
+      username: ws.instagram?.username || null,
+    },
+  };
+  for (const platform of zernioSocial.PLATFORMS) {
+    const entry = (ws.channels || []).find((c) => c.platform === platform);
+    out[platform] = {
+      status: entry?.status || "disconnected",
+      username: entry?.username || null,
+      displayName: entry?.displayName || null,
+      profilePicture: entry?.profilePicture || null,
+      phoneNumber: entry?.phoneNumber || null,
+      connectedAt: entry?.connectedAt || null,
+      lastWebhookAt: entry?.lastWebhookAt || null,
+      webhookError: entry?.webhookError || null,
+    };
+  }
+  res.json(out);
+});
+
+// ── GET /api/channels/:platform/connect ──────────────────────────────────────
+// Returns the hosted-auth URL the browser is redirected to (owner only).
+exports.getConnectUrl = asyncHandler(async (req, res) => {
+  const platform = normalizePlatform(req.params.platform);
+  if (!zernioSocial.isSupportedPlatform(platform)) {
+    return res.status(400).json({ message: `Unsupported channel: ${platform}` });
+  }
+  if (!zernioSocial.isConfigured()) {
+    return res.status(503).json({
+      message: "Messaging provider not yet configured on this server.",
+    });
+  }
+  const workspaceId = req.workspace._id;
+
+  // Per-workspace Zernio profile (tenant isolation) — same as the IG flow.
+  let profileId = null;
+  try {
+    profileId = await resolveWorkspaceProfileId(workspaceId);
+  } catch (err) {
+    logger.warn("[Channels] profile setup failed, using default profile", {
+      err: err.response?.data || err.message,
+    });
+    profileId = null; // fall back to shared default inside the service
+  }
+
+  const base =
+    process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+  // Embed workspace id in the callback so it knows which workspace to attach.
+  const callbackUrl =
+    `${base}/api/channels/${platform}/callback` +
+    `?ws=${encodeURIComponent(workspaceId)}`;
+
+  try {
+    const { url } = await zernioSocial.createHostedAuthLink({
+      platform,
+      profileId,
+      callbackUrl,
+    });
+    res.json({ url });
+  } catch (err) {
+    logger.error(`[Channels] ${platform} hosted auth link failed`, {
+      err: err.response?.data || err.message,
+    });
+    res.status(502).json({
+      message: "Could not start the connection. Please try again shortly.",
+    });
+  }
+});
+
+// ── GET /api/channels/:platform/callback ─────────────────────────────────────
+// PUBLIC — Zernio redirects the browser here with ?accountId= (mirrors the IG
+// callback). Attach the account to the workspace named in ?ws=.
+exports.oauthCallback = asyncHandler(async (req, res) => {
+  const platform = normalizePlatform(req.params.platform);
+  const { ws, accountId, error, error_description } = req.query;
+  const dash = `${CLIENT_URL()}/dashboard/channels`;
+
+  if (!zernioSocial.isSupportedPlatform(platform)) {
+    return res.redirect(302, `${dash}?error=unsupported_platform`);
+  }
+  if (error) {
+    logger.warn(`[Channels] ${platform} connect cancelled`, {
+      error,
+      error_description,
+    });
+    return res.redirect(302, `${dash}?error=cancelled`);
+  }
+  if (!ws) {
+    logger.warn(`[Channels] ${platform} callback missing workspace id`, {
+      query: req.query,
+    });
+    return res.redirect(302, `${dash}?error=invalid_state`);
+  }
+
+  try {
+    const workspace = await Workspace.findById(ws).select(
+      "+instagram.botlifyProfileId channels",
+    );
+    if (!workspace) {
+      return res.redirect(302, `${dash}?error=invalid_state`);
+    }
+
+    // Resolve the just-connected account. Prefer the accountId Zernio put in
+    // the redirect (source of truth — same fast path as the IG callback);
+    // fall back to the newest account in this workspace's profile.
+    let info = null;
+    let acc = accountId ? String(accountId) : null;
+    if (acc) {
+      try {
+        info = await zernioSocial.getAccountInfo(acc);
+      } catch (err) {
+        logger.warn(
+          `[Channels] ${platform} direct account lookup failed, trying list`,
+          { accountId: acc, err: err.response?.data || err.message },
+        );
+      }
+    }
+    if (!info) {
+      let profileId = null;
+      try {
+        profileId = workspace.instagram?.botlifyProfileId
+          ? decrypt(workspace.instagram.botlifyProfileId)
+          : null;
+      } catch {
+        /* unscoped lookup below */
+      }
+      const accounts = await zernioSocial.listAccounts(platform, profileId);
+      const match = acc
+        ? accounts.find((a) => String(a.accountId) === acc)
+        : accounts.sort(
+            (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
+          )[0];
+      if (match) {
+        acc = String(match.accountId);
+        info = match;
+      }
+    }
+    if (!acc) {
+      logger.warn(`[Channels] ${platform} callback: no account resolved`);
+      return res.redirect(302, `${dash}?error=no_account`);
+    }
+    // The provider API can lag right after connect — save a minimal record now.
+    if (!info) info = { accountId: acc, user_id: acc };
+
+    // One provider account → one workspace (same guarantee as Instagram).
+    // The unique partial index on channels.accountHash enforces it; pre-check
+    // here so the user gets a clear message instead of a raw E11000.
+    const accountHash = hashToken(String(acc));
+    const conflict = await Workspace.findOne({
+      "channels.accountHash": accountHash,
+      _id: { $ne: workspace._id },
+    }).select("_id");
+    if (conflict) {
+      logger.warn(
+        `[Channels] ${platform} account already connected to another workspace`,
+        { accountHash },
+      );
+      return res.redirect(302, `${dash}?error=already_connected`);
+    }
+
+    // Subscribe the provider webhook (same endpoint as Instagram — the
+    // receiver routes by account hash).
+    let webhookError = null;
+    try {
+      await zernioSocial.subscribeWebhook(acc);
+    } catch (e) {
+      webhookError = e.response?.data?.error || e.message;
+    }
+
+    // Upsert the platform entry in workspace.channels. accountId is encrypted
+    // with the same AES helpers as instagram.botlifyAccountId; accountHash is
+    // the same SHA-256 helper as igAccountHash (used for webhook routing).
+    const fields = {
+      status: "connected",
+      accountId: encrypt(String(acc)),
+      accountHash,
+      username: info.username || null,
+      displayName: info.name || info.username || null,
+      profilePicture: info.profile_picture_url || null,
+      phoneNumber: info.phone_number || null,
+      connectedAt: new Date(),
+      webhookError,
+    };
+    const hasEntry = (workspace.channels || []).some(
+      (c) => c.platform === platform,
+    );
+    try {
+      if (hasEntry) {
+        await Workspace.updateOne(
+          { _id: workspace._id, "channels.platform": platform },
+          {
+            $set: Object.fromEntries(
+              Object.entries(fields).map(([k, v]) => [`channels.$.${k}`, v]),
+            ),
+          },
+        );
+      } else {
+        await Workspace.updateOne(
+          { _id: workspace._id },
+          { $push: { channels: { platform, ...fields } } },
+        );
+      }
+    } catch (e) {
+      // Duplicate accountHash (raced past the pre-check) — clear message.
+      if (e.code === 11000 || /E11000/.test(e.message || "")) {
+        logger.warn(
+          `[Channels] ${platform} duplicate account hash on save — already connected elsewhere`,
+        );
+        return res.redirect(302, `${dash}?error=already_connected`);
+      }
+      throw e;
+    }
+
+    logger.info(
+      `[Channels] ${platform} connected ws=${workspace._id} account=${acc} webhook=${webhookError ? "failed" : "ok"}`,
+    );
+    return res.redirect(
+      302,
+      `${dash}?connected=${platform}${webhookError ? "&webhook=failed" : ""}`,
+    );
+  } catch (err) {
+    logger.error(`[Channels] ${platform} callback failed`, {
+      err: err.response?.data || err.message,
+    });
+    return res.redirect(302, `${dash}?error=connect_failed`);
+  }
+});
+
+// ── DELETE /api/channels/:platform ───────────────────────────────────────────
+// Owner disconnects a channel: best-effort provider cleanup, then clear the
+// entry (keep the row so the dashboard remembers the last username).
+exports.disconnect = asyncHandler(async (req, res) => {
+  const platform = normalizePlatform(req.params.platform);
+  if (!zernioSocial.isSupportedPlatform(platform)) {
+    return res.status(400).json({ message: `Unsupported channel: ${platform}` });
+  }
+  const workspaceId = req.workspace._id;
+
+  const ws = await Workspace.findById(workspaceId).select("+channels.accountId");
+  const entry = (ws?.channels || []).find((c) => c.platform === platform);
+  if (!entry) {
+    return res.status(404).json({ message: `${platform} is not connected.` });
+  }
+
+  // Best-effort: tell the provider to drop the account too (same pattern as
+  // botlifyIgService.disconnectAccount usage in the IG disconnect).
+  if (entry.accountId) {
+    try {
+      const acc = decrypt(entry.accountId);
+      if (acc) await zernioSocial.disconnectAccount(acc);
+    } catch (e) {
+      logger.warn(`[Channels] ${platform} provider cleanup failed`, {
+        err: e.message,
+      });
+    }
+  }
+
+  await Workspace.updateOne(
+    { _id: workspaceId, "channels.platform": platform },
+    {
+      $set: {
+        "channels.$.status": "disconnected",
+        "channels.$.accountId": null,
+        "channels.$.accountHash": null,
+        "channels.$.webhookError": null,
+      },
+    },
+  );
+  res.json({ success: true });
+});

@@ -485,6 +485,37 @@ const parseMarkers = (raw) => {
     },
   );
 
+  // Hotel stay — the model emits <<BOOK_STAY_JSON>>{...}<<END_STAY>> once it
+  // has room + dates + guest details. Parse before the catch-all.
+  let stay = null;
+  reply = reply.replace(
+    /<<\s*BOOK_STAY_JSON\s*>>([\s\S]*?)<<\s*END_STAY\s*>>/i,
+    (_, json) => {
+      try {
+        const parsed = JSON.parse(String(json).trim());
+        if (parsed && parsed.checkIn && parsed.roomTypeId) stay = parsed;
+      } catch {
+        /* malformed stay block — ignore */
+      }
+      return "";
+    },
+  );
+
+  // Airport transfer — <<BOOK_TRANSFER_JSON>>{...}<<END_TRANSFER>>.
+  let transfer = null;
+  reply = reply.replace(
+    /<<\s*BOOK_TRANSFER_JSON\s*>>([\s\S]*?)<<\s*END_TRANSFER\s*>>/i,
+    (_, json) => {
+      try {
+        const parsed = JSON.parse(String(json).trim());
+        if (parsed && parsed.pickupAt) transfer = parsed;
+      } catch {
+        /* malformed transfer block — ignore */
+      }
+      return "";
+    },
+  );
+
   // SAFETY NET: remove ANY remaining << … >> marker in any format the model
   // might invent, then tidy whitespace.
   reply = reply
@@ -493,7 +524,7 @@ const parseMarkers = (raw) => {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return { reply, imageUrls, intent, tags, lead, order, booking };
+  return { reply, imageUrls, intent, tags, lead, order, booking, stay, transfer };
 };
 
 /**
@@ -613,12 +644,17 @@ const generateReply = async ({
     };
   }
 
-  const appointmentBlock = await buildAppointmentBlock(workspace);
+  // Hotel mode replaces slot appointments — a hotel books stays, not slots.
+  const { buildHotelBlock } = require("./hotelBlock");
+  const hotelBlock = await buildHotelBlock(workspace);
+  const appointmentBlock = hotelBlock
+    ? ""
+    : await buildAppointmentBlock(workspace);
   const systemPrompt = buildSystemPrompt(
     workspace,
     contact,
     extraContext,
-    appointmentBlock,
+    hotelBlock || appointmentBlock,
   );
 
   // If the customer sent a photo, build a multimodal user turn so the vision
@@ -668,10 +704,11 @@ const generateReply = async ({
     // Parse & strip ALL internal markers (image/intent/tag/lead + safety net).
     const parsed = parseMarkers(reply);
     reply = parsed.reply || fallbackReply(contact);
-    const { imageUrls, intent, tags, lead, order, booking } = parsed;
+    const { imageUrls, intent, tags, lead, order, booking, stay, transfer } =
+      parsed;
 
     logger.info(
-      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} booking=${booking ? "yes" : "no"} imageUrls=${imageUrls.length}`,
+      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} booking=${booking ? "yes" : "no"} stay=${stay ? "yes" : "no"} transfer=${transfer ? "yes" : "no"} imageUrls=${imageUrls.length}`,
     );
 
     return {
@@ -683,6 +720,8 @@ const generateReply = async ({
       lead,
       order,
       booking,
+      stay,
+      transfer,
       tokens: response.usage?.total_tokens || 0,
       provider: providerUsed,
     };
