@@ -35,6 +35,11 @@ const OFF = {
   orders: false,
   reservations: false,
   leadCapture: false,
+  // Hotel product modules — every pack must state them explicitly, otherwise
+  // applying a vertical would wipe the schema defaults (features is replaced,
+  // not merged, in verticalService.applyVertical).
+  hotelBookings: false,
+  transfers: false,
 };
 
 /**
@@ -474,7 +479,13 @@ const PACKS = {
     emoji: "🏨",
     tagline: "Handle bookings & enquiries, capture guests.",
     goal: "bookings",
-    features: { ...OFF, reservations: true, leadCapture: true },
+    features: {
+      ...OFF,
+      reservations: true,
+      leadCapture: true,
+      hotelBookings: true,
+      transfers: true,
+    },
     flowTemplateKey: "restaurant",
     detectionHints: [
       "hotel", "resort", "guesthouse", "hostel", "travel", "tour",

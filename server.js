@@ -279,8 +279,18 @@ cron.schedule("15 * * * *", () => {
   );
 });
 
+// Email each hotel its monthly booking-commission statement and close the
+// period in the ledger. 06:00 UTC on the 1st, after the month has fully rolled
+// over in every timezone we serve.
+const { sendCommissionInvoices } = require("./src/jobs/commissionInvoiceJob");
+cron.schedule("0 6 1 * *", () => {
+  sendCommissionInvoices().catch((e) =>
+    logger.warn("[Cron] sendCommissionInvoices error: " + e.message),
+  );
+});
+
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), commission-invoices (monthly)",
 );
 
 // ─── Start Server ──────────────────────────────────────────

@@ -59,12 +59,15 @@ async function applyPendingReferral(userId, workspace) {
  * a member[] too so permission checks and the Team page stay consistent.
  */
 async function createOwnedWorkspace(user, { name, industry, logo, timezone }) {
+  // Botlify is a hotels-only product — every new workspace is a hospitality
+  // business unless explicitly told otherwise, so the hotel modules (booking
+  // engine, transfers) and the reservations persona are on from the start.
   const workspace = await Workspace.create({
     name,
-    industry: industry || "other",
+    industry: industry || "hospitality",
     logo,
     businessHours: DEFAULT_BUSINESS_HOURS,
-    timezone: timezone || "Asia/Karachi",
+    timezone: timezone || "Asia/Makassar",
     owner: user._id,
     members: [{ user: user._id, role: "owner" }],
   });
