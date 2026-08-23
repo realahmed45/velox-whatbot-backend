@@ -61,6 +61,12 @@ const guestSchema = new mongoose.Schema(
 );
 
 guestSchema.index({ workspaceId: 1, "stats.lastStayAt": -1 });
-guestSchema.index({ workspaceId: 1, name: "text" });
+// `language` is a reserved field name for text indexes (Mongo reads it as the
+// per-document language override and rejects unknown/empty values), so point
+// the override at a field we never set.
+guestSchema.index(
+  { workspaceId: 1, name: "text" },
+  { language_override: "_textLanguage" },
+);
 
 module.exports = mongoose.model("Guest", guestSchema);

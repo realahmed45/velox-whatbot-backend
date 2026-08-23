@@ -142,19 +142,40 @@ const TOOLS = [
   {
     name: "get_revenue",
     description:
-      "Revenue and booking counts for a period, split by source. Use for 'how did we do last month', 'revenue this week'.",
+      "Revenue and booking counts for a period, split by source. Covers past stays AND future confirmed bookings. Use for 'how did we do last month', 'revenue this week', 'what is booked for next month'.",
     confirm: false,
     parameters: {
       type: "object",
       properties: {
         from: { type: "string", description: "YYYY-MM-DD" },
         to: { type: "string", description: "YYYY-MM-DD" },
+        upcoming: {
+          type: "boolean",
+          description:
+            "true to report bookings ahead of today instead of the last 30 days",
+        },
       },
     },
     async run(args, ctx) {
       const HotelBooking = require("../../models/HotelBooking");
-      const to = day(args.to) || new Date(Date.now() + DAY);
-      const from = day(args.from) || new Date(to.getTime() - 30 * DAY);
+      // Default window: the last 30 days of stays ("how did we do?"). When the
+      // owner asks about what is coming up, look forward instead.
+      const today = day(new Date());
+      let from = day(args.from);
+      let to = day(args.to);
+      if (!from && !to) {
+        if (args.upcoming) {
+          from = today;
+          to = new Date(today.getTime() + 30 * DAY);
+        } else {
+          to = new Date(today.getTime() + DAY);
+          from = new Date(to.getTime() - 30 * DAY);
+        }
+      } else if (!to) {
+        to = new Date(from.getTime() + 30 * DAY);
+      } else if (!from) {
+        from = new Date(to.getTime() - 30 * DAY);
+      }
       const rows = await HotelBooking.aggregate([
         {
           $match: {
