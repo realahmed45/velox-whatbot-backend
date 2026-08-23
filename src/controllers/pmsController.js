@@ -390,7 +390,80 @@ const demand = asyncHandler(async (req, res) => {
   });
 });
 
+
+// ─── Guests ─────────────────────────────────────────────────────────────────
+
+// @GET /api/pms/guests?query=&page=&limit=
+// Unified guest profiles — one row per person across every channel and OTA.
+const listGuestProfiles = asyncHandler(async (req, res) => {
+  const { listGuests } = require("../services/hotel/guestService");
+  const result = await listGuests({
+    workspaceId: req.workspace._id,
+    query: req.query.query || "",
+    page: req.query.page,
+    limit: req.query.limit,
+  });
+  res.json({ success: true, ...result });
+});
+
+// @GET /api/pms/guests/:id — profile plus their full stay history.
+const getGuestProfile = asyncHandler(async (req, res) => {
+  const Guest = require("../models/Guest");
+  const HotelBooking = require("../models/HotelBooking");
+  const guest = await Guest.findOne({
+    _id: req.params.id,
+    workspaceId: req.workspace._id,
+  }).lean();
+  if (!guest) {
+    res.status(404);
+    throw new Error("Guest not found");
+  }
+  // Match their bookings the same way the profile was built: any identity's
+  // contact, or the normalized phone/email on the booking itself.
+  const { normalizePhone } = require("../services/hotel/guestService");
+  const contactIds = (guest.identities || [])
+    .map((i) => i.contactId)
+    .filter(Boolean);
+  const or = [];
+  if (contactIds.length) or.push({ contactId: { $in: contactIds } });
+  if (guest.email) or.push({ guestEmail: guest.email });
+  if (guest.name) or.push({ guestName: guest.name });
+  const candidates = or.length
+    ? await HotelBooking.find({ workspaceId: req.workspace._id, $or: or })
+        .sort({ checkIn: -1 })
+        .limit(100)
+        .populate("roomTypeId", "name")
+        .lean()
+    : [];
+  // Phone comparison happens in JS because bookings store it as typed.
+  const digits = normalizePhone(guest.phone || "");
+  const stays = candidates.filter(
+    (b) =>
+      !digits ||
+      !b.guestPhone ||
+      normalizePhone(b.guestPhone) === digits ||
+      (guest.email && b.guestEmail === guest.email) ||
+      (guest.name && b.guestName === guest.name),
+  );
+  res.json({ success: true, guest, stays });
+});
+
+// @POST /api/pms/guests/:id/preferences — { text }
+const addGuestPreference = asyncHandler(async (req, res) => {
+  const { addPreference } = require("../services/hotel/guestService");
+  const text = String(req.body.text || "").trim();
+  if (!text) {
+    res.status(400);
+    throw new Error("Preference text required");
+  }
+  const guest = await addPreference(req.params.id, text);
+  res.json({ success: true, guest });
+});
+
 module.exports = {
+  listGuestProfiles,
+  getGuestProfile,
+  addGuestPreference,
   today,
   checkIn,
   checkOut,

@@ -11,6 +11,9 @@ const {
   updateUnit,
   propertySlug,
   demand,
+  listGuestProfiles,
+  getGuestProfile,
+  addGuestPreference,
 } = require("../controllers/pmsController");
 
 router.use(protect);
@@ -34,5 +37,10 @@ router.put("/property/slug", propertySlug);
 
 // Anonymous city demand
 router.get("/demand", demand);
+
+// Unified guest profiles (one person across every channel and OTA).
+router.get("/guests", listGuestProfiles);
+router.get("/guests/:id", getGuestProfile);
+router.post("/guests/:id/preferences", addGuestPreference);
 
 module.exports = router;
