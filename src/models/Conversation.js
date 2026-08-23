@@ -66,6 +66,10 @@ const conversationSchema = new mongoose.Schema(
 
     // Metadata
     lastMessageAt: { type: Date, default: Date.now },
+    // When the GUEST last messaged us. WhatsApp only allows free-form replies
+    // within 24h of this; outside it Meta requires a pre-approved template.
+    // Tracked separately from lastMessageAt, which also moves when WE send.
+    lastInboundAt: { type: Date, default: null },
     lastMessagePreview: String,
     unreadCount: { type: Number, default: 0 },
     unreadByAgentCount: { type: Number, default: 0 },

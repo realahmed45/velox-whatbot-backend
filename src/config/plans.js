@@ -17,6 +17,8 @@ const FEATURES = {
   // Messaging channels
   CHANNEL_INSTAGRAM: "channel_instagram",
   CHANNEL_WHATSAPP: "channel_whatsapp",
+  // TikTok: posting/analytics only — the provider has no TikTok DM API, so it
+  // cannot carry the concierge. Kept for a future posting feature.
   CHANNEL_TIKTOK: "channel_tiktok",
   // Hotel core
   HOTEL_BOOKINGS: "hotel_bookings", // multi-night stay booking engine
@@ -127,7 +129,7 @@ const PLANS = {
     features: [...hotelFeatures],
     highlights: [
       "Booking.com + Airbnb sync (free)",
-      "AI concierge on WhatsApp, Instagram & TikTok",
+      "AI concierge on WhatsApp & Instagram",
       "Bot books rooms & reservations 24/7",
       "Airport pickup & drop-off for guests",
       "Unified inbox with human takeover",
@@ -148,7 +150,7 @@ const PLANS = {
     features: [...hotelFeatures],
     highlights: [
       "Booking.com + Airbnb sync (free, 0% commission)",
-      "AI concierge on WhatsApp, Instagram & TikTok",
+      "AI concierge on WhatsApp & Instagram",
       "Bot books rooms & reservations 24/7",
       "Airport pickup & drop-off for guests",
       "Unified inbox with human takeover",

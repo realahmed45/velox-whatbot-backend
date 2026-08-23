@@ -76,7 +76,13 @@ exports.getStatus = asyncHandler(async (req, res) => {
 exports.getConnectUrl = asyncHandler(async (req, res) => {
   const platform = normalizePlatform(req.params.platform);
   if (!zernioSocial.isSupportedPlatform(platform)) {
-    return res.status(400).json({ message: `Unsupported channel: ${platform}` });
+    // TikTok is the common case here: it has no DM API, so the concierge
+    // cannot work there. Say that plainly instead of a generic rejection.
+    const message =
+      platform === "tiktok"
+        ? "TikTok does not offer a messaging API, so the AI concierge cannot answer TikTok DMs. Connect WhatsApp or Instagram instead."
+        : `Unsupported channel: ${platform}`;
+    return res.status(400).json({ message });
   }
   if (!zernioSocial.isConfigured()) {
     return res.status(503).json({
@@ -285,7 +291,13 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
 exports.disconnect = asyncHandler(async (req, res) => {
   const platform = normalizePlatform(req.params.platform);
   if (!zernioSocial.isSupportedPlatform(platform)) {
-    return res.status(400).json({ message: `Unsupported channel: ${platform}` });
+    // TikTok is the common case here: it has no DM API, so the concierge
+    // cannot work there. Say that plainly instead of a generic rejection.
+    const message =
+      platform === "tiktok"
+        ? "TikTok does not offer a messaging API, so the AI concierge cannot answer TikTok DMs. Connect WhatsApp or Instagram instead."
+        : `Unsupported channel: ${platform}`;
+    return res.status(400).json({ message });
   }
   const workspaceId = req.workspace._id;
 

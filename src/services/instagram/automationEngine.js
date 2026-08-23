@@ -322,6 +322,37 @@ const getOrCreateConversation = async (
   return conv;
 };
 
+/**
+ * Stamp the moment a GUEST messaged us. WhatsApp only permits free-form replies
+ * within 24 hours of this; after that Meta requires a pre-approved template, so
+ * we must know when the window opened. Cheap targeted write — no full save().
+ */
+const markInbound = async (conversation) => {
+  if (!conversation?._id) return;
+  const now = new Date();
+  conversation.lastInboundAt = now;
+  try {
+    await Conversation.updateOne(
+      { _id: conversation._id },
+      { $set: { lastInboundAt: now } },
+    );
+  } catch {
+    /* non-fatal: the window check falls back to lastMessageAt */
+  }
+};
+
+/**
+ * Is this conversation inside WhatsApp's 24-hour customer-service window?
+ * Non-WhatsApp channels are always "open" — the limit is Meta's, not ours.
+ */
+const isInsideServiceWindow = (conversation) => {
+  if (!conversation) return false;
+  if (conversation.channelType !== "whatsapp") return true;
+  const last = conversation.lastInboundAt || conversation.lastMessageAt;
+  if (!last) return false;
+  return Date.now() - new Date(last).getTime() < 24 * 60 * 60 * 1000;
+};
+
 const recentlyTriggered = async (
   conv,
   triggerType,
@@ -1970,6 +2001,10 @@ const handleWebhookEvent = async (workspaceId, event) => {
         event.channel || "instagram",
       );
 
+      // The guest just messaged us — this opens (or reopens) WhatsApp's 24-hour
+      // free-form reply window. Stamp it before any reply is attempted.
+      await markInbound(conv);
+
       // Persist Zernio's conversation id so the bot can reply into this thread.
       if (
         providerConversationId &&
@@ -2131,5 +2166,7 @@ module.exports = {
   processScheduledFollowups,
   // Multi-channel outbound transport — also usable by inbox/agent send paths.
   resolveSendTransport,
+  markInbound,
+  isInsideServiceWindow,
   _internal: { personalize, matchKeyword, isWithinBusinessHours },
 };

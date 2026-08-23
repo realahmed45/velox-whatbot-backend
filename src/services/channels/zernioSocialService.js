@@ -26,7 +26,14 @@ const BASE = (
 ).replace(/\/$/, "");
 const KEY = process.env.BOTLIFY_IG_PROVIDER_API_KEY;
 
-const PLATFORMS = ["whatsapp", "tiktok"];
+// Platforms this service can connect. TikTok is deliberately absent: Zernio's
+// API has NO TikTok DM or comment support (their spec excludes tiktok from the
+// inbox platform enum entirely), so a TikTok account cannot power the
+// concierge. TikTok remains possible later for posting/analytics only.
+const PLATFORMS = ["whatsapp"];
+
+// Platforms whose inbound messages the concierge can answer.
+const DM_PLATFORMS = ["whatsapp", "instagram"];
 
 const isConfigured = () =>
   !!KEY && KEY !== "your_zernio_api_key" && !KEY.startsWith("your_");
@@ -56,7 +63,7 @@ const client = () =>
  * @param {string} [opts.callbackUrl] our /api/channels/:platform/callback
  * @returns {Promise<{url: string}>}
  */
-const createHostedAuthLink = async ({ platform, profileId, callbackUrl }) => {
+const createHostedAuthLink = async ({ platform, profileId, callbackUrl, ...opts }) => {
   if (!isConfigured()) {
     throw new Error("Messaging provider not configured");
   }
@@ -65,7 +72,17 @@ const createHostedAuthLink = async ({ platform, profileId, callbackUrl }) => {
   }
   const pid = profileId || (await getDefaultProfileId());
   const params = { profileId: pid };
-  if (callbackUrl) params.redirectUrl = callbackUrl;
+  // Zernio's OpenAPI spec documents `redirect_url`; our production Instagram
+  // flow has always sent `redirectUrl` and works. Send both so we match the
+  // spec without breaking the shape that is proven in production.
+  if (callbackUrl) {
+    params.redirectUrl = callbackUrl;
+    params.redirect_url = callbackUrl;
+  }
+  // WhatsApp only: `api` runs Meta's Embedded Signup (WABA + number picker).
+  // Omitting it defaults to coexistence with the consumer WhatsApp Business
+  // app, which is not what a hotel connecting a business number wants.
+  if (platform === "whatsapp") params.onboarding = opts.onboarding || "api";
 
   logger.info(`[ZernioSocial] creating ${platform} auth link`, {
     profileId: pid,
@@ -178,6 +195,22 @@ const resolveConversationId = async (accountId, recipientId) => {
  * Zernio endpoint: POST /inbox/conversations/{conversationId}/messages
  *   body: { accountId, message, attachments? }
  */
+/**
+ * Meta rejects free-form WhatsApp messages sent more than 24h after the guest's
+ * last message. The raw error is opaque, so detect it and say something the
+ * hotel can act on.
+ */
+const isOutsideWindowError = (apiErr = {}) => {
+  const blob = JSON.stringify(apiErr || {}).toLowerCase();
+  return (
+    blob.includes("re-engagement") ||
+    blob.includes("outside the allowed window") ||
+    blob.includes("131047") ||
+    blob.includes("template required") ||
+    blob.includes("template_required")
+  );
+};
+
 const sendDM = async (accountId, recipientId, text, opts = {}) => {
   try {
     let conversationId = opts.conversationId || null;
@@ -233,10 +266,14 @@ const sendDM = async (accountId, recipientId, text, opts = {}) => {
       conversationId: opts.conversationId,
       rateLimited: isRateLimit,
     });
+    const outsideWindow = isOutsideWindowError(apiErr);
     return {
       success: false,
       rateLimited: isRateLimit,
-      error: apiErr.error || apiErr.message || err.message,
+      outsideWindow,
+      error: outsideWindow
+        ? "This guest last messaged over 24 hours ago, so WhatsApp only allows an approved template message. Ask them to message again, or send a template."
+        : apiErr.error || apiErr.message || err.message,
     };
   }
 };
@@ -305,6 +342,7 @@ const disconnectAccount = async (accountId) => {
 
 module.exports = {
   PLATFORMS,
+  DM_PLATFORMS,
   isConfigured,
   isSupportedPlatform,
   // profiles (multi-tenant) — re-exported from the IG service, single source
