@@ -165,6 +165,14 @@ const workspaceSchema = new mongoose.Schema(
           enum: ["connected", "disconnected", "pending", "error"],
           default: "disconnected",
         },
+        // Which upstream provider carries this channel. WhatsApp rides Zernio;
+        // TikTok needs a different one (Zernio has no TikTok messaging API), so
+        // the transport is chosen per channel rather than assumed.
+        provider: {
+          type: String,
+          enum: ["zernio", "qiscus", "respondio"],
+          default: "zernio",
+        },
         accountId: { type: String, select: false }, // encrypted provider id
         accountHash: { type: String, default: null },
         username: String,

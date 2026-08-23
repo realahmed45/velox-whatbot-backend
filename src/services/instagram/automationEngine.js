@@ -398,13 +398,38 @@ const resolveSendTransport = async (workspace, conversation) => {
     );
     const entry = (wsDoc?.channels || []).find((c) => c.platform === channel);
     if (entry?.accountId) {
-      const zernioSocial = require("../channels/zernioSocialService");
       const accountId = decrypt(entry.accountId);
-      return {
-        channel,
-        send: (recipientId, text, opts) =>
-          zernioSocial.sendDM(accountId, recipientId, text, opts),
+      // Each channel names the provider that carries it — WhatsApp rides
+      // Zernio, TikTok needs a provider with a TikTok messaging API. Resolving
+      // it per channel keeps the AI and booking code provider-agnostic.
+      const providerModules = {
+        zernio: "../channels/zernioSocialService",
+        qiscus: "../channels/qiscusService",
+        respondio: "../channels/respondIoService",
       };
+      const modPath = providerModules[entry.provider || "zernio"];
+      try {
+        const provider = require(modPath);
+        return {
+          channel,
+          provider: entry.provider || "zernio",
+          send: (recipientId, text, opts) =>
+            provider.sendDM(accountId, recipientId, text, opts),
+        };
+      } catch (err) {
+        logger.error(
+          `[transport] provider "${entry.provider}" for ${channel} is not installed yet`,
+          { err: err.message },
+        );
+        return {
+          channel,
+          provider: entry.provider,
+          send: async () => ({
+            success: false,
+            error: `${channel} is not connected to a messaging provider yet.`,
+          }),
+        };
+      }
     }
     logger.warn(
       `[transport] ws=${workspace._id} conversation on ${channel} but no channel accountId — falling back to Instagram`,
