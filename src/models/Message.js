@@ -81,7 +81,7 @@ const messageSchema = new mongoose.Schema(
     // Channel — for inbox
     channelType: {
       type: String,
-      enum: ["instagram", "messenger", "whatsapp", "tiktok"],
+      enum: ["instagram", "messenger", "whatsapp", "telegram", "tiktok"],
       default: "instagram",
     },
 

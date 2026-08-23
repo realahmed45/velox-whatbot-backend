@@ -25,6 +25,22 @@ router.get(
   requireOwner,
   channelCtrl.getConnectUrl,
 );
+// Telegram pairs by code (bot admin + code), not OAuth — its own two routes.
+router.get(
+  "/telegram/code",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.telegramCode,
+);
+router.get(
+  "/telegram/status",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.telegramStatus,
+);
+
 // Disconnect a channel (owner only).
 router.delete(
   "/:platform",

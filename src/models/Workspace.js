@@ -149,7 +149,7 @@ const workspaceSchema = new mongoose.Schema(
     instagram: instagramConnectionSchema,
 
     // ── Additional messaging channels (hotel product) ───────────────────────
-    // WhatsApp / TikTok connections via the hosted provider (Zernio), one
+    // WhatsApp / Messenger / Telegram connections via the hosted provider, one
     // entry per platform. Instagram keeps its legacy subdoc above; new
     // channels live here. accountHash = SHA-256 of the provider account id so
     // a unique partial index can guarantee one account ↔ one workspace.
@@ -157,7 +157,7 @@ const workspaceSchema = new mongoose.Schema(
       {
         platform: {
           type: String,
-          enum: ["whatsapp", "tiktok"],
+          enum: ["whatsapp", "messenger", "telegram", "tiktok"],
           required: true,
         },
         status: {

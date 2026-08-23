@@ -285,6 +285,125 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * Persist a connected channel account onto the workspace. Shared by the OAuth
+ * callback and the Telegram pairing flow, which arrive at the same end state by
+ * different routes.
+ * @returns {Promise<{ok: boolean, reason?: string, webhookError?: string}>}
+ */
+async function saveChannelAccount({ workspace, platform, accountId, info = {} }) {
+  const accountHash = hashToken(String(accountId));
+  const conflict = await Workspace.findOne({
+    "channels.accountHash": accountHash,
+    _id: { $ne: workspace._id },
+  }).select("_id");
+  if (conflict) return { ok: false, reason: "already_connected" };
+
+  let webhookError = null;
+  try {
+    await zernioSocial.subscribeWebhook(accountId);
+  } catch (e) {
+    webhookError = e.response?.data?.error || e.message;
+  }
+
+  const fields = {
+    status: "connected",
+    provider: "zernio",
+    accountId: encrypt(String(accountId)),
+    accountHash,
+    username: info.username || null,
+    displayName: info.name || info.title || info.username || null,
+    profilePicture: info.profile_picture_url || null,
+    phoneNumber: info.phone_number || null,
+    connectedAt: new Date(),
+    webhookError,
+  };
+  const hasEntry = (workspace.channels || []).some(
+    (c) => c.platform === platform,
+  );
+  try {
+    if (hasEntry) {
+      await Workspace.updateOne(
+        { _id: workspace._id, "channels.platform": platform },
+        {
+          $set: Object.fromEntries(
+            Object.entries(fields).map(([k, v]) => [`channels.$.${k}`, v]),
+          ),
+        },
+      );
+    } else {
+      await Workspace.updateOne(
+        { _id: workspace._id },
+        { $push: { channels: { platform, ...fields } } },
+      );
+    }
+  } catch (e) {
+    if (e.code === 11000 || /E11000/.test(e.message || "")) {
+      return { ok: false, reason: "already_connected" };
+    }
+    throw e;
+  }
+  return { ok: true, webhookError };
+}
+
+// ── Telegram pairing ─────────────────────────────────────────────────────────
+// Telegram bots can't be OAuth'd like a Meta app. The hotel adds our bot as an
+// admin of their channel/group and sends it a short code; we poll for the link.
+
+// @GET /api/channels/telegram/code — start pairing, returns the code + bot name
+exports.telegramCode = asyncHandler(async (req, res) => {
+  const profileId = await resolveWorkspaceProfileId(req.workspace._id);
+  const result = await zernioSocial.createTelegramCode(profileId);
+  if (!result.code) {
+    res.status(502);
+    throw new Error("Could not start Telegram pairing. Please try again.");
+  }
+  res.json({
+    success: true,
+    code: result.code,
+    botUsername: result.botUsername,
+    expiresAt: result.expiresAt,
+    instructions: [
+      result.botUsername
+        ? `Add @${result.botUsername} to your Telegram group or channel as an admin.`
+        : "Add our Telegram bot to your group or channel as an admin.",
+      `Send this code to the bot: ${result.code}`,
+      "Come back here — we'll detect it automatically.",
+    ],
+  });
+});
+
+// @GET /api/channels/telegram/status?code=... — poll pairing (client every ~3s)
+exports.telegramStatus = asyncHandler(async (req, res) => {
+  const code = String(req.query.code || "").trim();
+  if (!code) {
+    res.status(400);
+    throw new Error("Pairing code required");
+  }
+  const result = await zernioSocial.checkTelegramCode(code);
+  if (result.status !== "connected" || !result.accountId) {
+    return res.json({ success: true, status: result.status });
+  }
+  const saved = await saveChannelAccount({
+    workspace: req.workspace,
+    platform: "telegram",
+    accountId: result.accountId,
+    info: { username: result.username, title: result.username },
+  });
+  if (!saved.ok) {
+    return res.json({ success: false, status: "error", reason: saved.reason });
+  }
+  logger.info(
+    `[Channels] telegram connected ws=${req.workspace._id} account=${result.accountId}`,
+  );
+  res.json({
+    success: true,
+    status: "connected",
+    username: result.username,
+    webhookError: saved.webhookError || null,
+  });
+});
+
 // ── DELETE /api/channels/:platform ───────────────────────────────────────────
 // Owner disconnects a channel: best-effort provider cleanup, then clear the
 // entry (keep the row so the dashboard remembers the last username).

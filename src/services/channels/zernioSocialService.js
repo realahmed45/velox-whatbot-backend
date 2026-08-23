@@ -26,14 +26,22 @@ const BASE = (
 ).replace(/\/$/, "");
 const KEY = process.env.BOTLIFY_IG_PROVIDER_API_KEY;
 
-// Platforms this service can connect. TikTok is deliberately absent: Zernio's
-// API has NO TikTok DM or comment support (their spec excludes tiktok from the
-// inbox platform enum entirely), so a TikTok account cannot power the
-// concierge. TikTok remains possible later for posting/analytics only.
-const PLATFORMS = ["whatsapp"];
+// Platforms this service can connect. Verified against Zernio's OpenAPI spec:
+// only these carry INBOUND direct messages, which is what the concierge needs.
+// TikTok is deliberately absent — Zernio has no TikTok DM or comment API
+// (TikTok is missing from their inbox platform enum entirely). LinkedIn,
+// Twitter, YouTube, Threads, Pinterest etc. are posting/analytics only.
+const PLATFORMS = ["whatsapp", "messenger", "telegram"];
 
-// Platforms whose inbound messages the concierge can answer.
-const DM_PLATFORMS = ["whatsapp", "instagram"];
+// Every platform whose inbound messages the concierge can answer (Instagram
+// rides the legacy workspace.instagram subdoc, not the channels[] array).
+const DM_PLATFORMS = ["whatsapp", "instagram", "messenger", "telegram"];
+
+// Zernio names Facebook Messenger "facebook" on its connect + platform enums;
+// we call it "messenger" everywhere user-facing because that is the product a
+// hotel recognises. Translate at the API boundary only.
+const toProviderPlatform = (platform) =>
+  platform === "messenger" ? "facebook" : platform;
 
 const isConfigured = () =>
   !!KEY && KEY !== "your_zernio_api_key" && !KEY.startsWith("your_");
@@ -58,7 +66,7 @@ const client = () =>
  * GET /connect/{platform}?profileId=...&redirectUrl=... → { authUrl }.
  *
  * @param {object} opts
- * @param {string} opts.platform     "whatsapp" | "tiktok"
+ * @param {string} opts.platform     "whatsapp" | "messenger"
  * @param {string} [opts.profileId]  per-workspace Zernio profile (tenant isolation)
  * @param {string} [opts.callbackUrl] our /api/channels/:platform/callback
  * @returns {Promise<{url: string}>}
@@ -88,8 +96,10 @@ const createHostedAuthLink = async ({ platform, profileId, callbackUrl, ...opts 
     profileId: pid,
     callbackUrl,
   });
+  // Messenger is "facebook" on Zernio's side.
+  const providerPlatform = toProviderPlatform(platform);
   const { data } = await client().get(
-    `/connect/${encodeURIComponent(platform)}`,
+    `/connect/${encodeURIComponent(providerPlatform)}`,
     { params },
   );
 
@@ -340,9 +350,75 @@ const disconnectAccount = async (accountId) => {
   }
 };
 
+// ── Telegram: code pairing, not OAuth ────────────────────────────────────────
+// Telegram bots cannot be "authorized" like a Meta app. The hotel adds our bot
+// as an admin of their channel/group, then sends it a short-lived code. These
+// three calls wrap that dance.
+
+/**
+ * Ask Zernio for a pairing code (valid ~15 minutes).
+ * @returns {Promise<{code: string, botUsername?: string, expiresAt?: string}>}
+ */
+const createTelegramCode = async (profileId) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const pid = profileId || (await getDefaultProfileId());
+  const { data } = await client().get("/connect/telegram", {
+    params: { profileId: pid },
+  });
+  return {
+    code: data?.code || data?.accessCode || data?.data?.code,
+    botUsername:
+      data?.botUsername || data?.bot?.username || data?.data?.botUsername || null,
+    expiresAt: data?.expiresAt || data?.expires_at || null,
+    raw: data,
+  };
+};
+
+/**
+ * Poll pairing status. Returns "pending" | "connected" | "expired".
+ * On "connected" the account id is included so we can persist it.
+ */
+const checkTelegramCode = async (code) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const { data } = await client().patch("/connect/telegram", null, {
+    params: { code },
+  });
+  const status = data?.status || data?.data?.status || "pending";
+  const account = data?.account || data?.data?.account || data?.data || {};
+  return {
+    status,
+    accountId: account?._id || account?.id || account?.accountId || null,
+    username: account?.username || account?.title || null,
+    raw: data,
+  };
+};
+
+/**
+ * Connect a Telegram chat directly when the hotel already knows their chat id
+ * (our bot must already be an admin there). Skips the code dance entirely.
+ */
+const connectTelegramChat = async ({ chatId, profileId }) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const pid = profileId || (await getDefaultProfileId());
+  const { data } = await client().post("/connect/telegram", {
+    chatId,
+    profileId: pid,
+  });
+  const account = data?.account || data?.data || {};
+  return {
+    accountId: account?._id || account?.id || account?.accountId || null,
+    username: account?.username || account?.title || null,
+    raw: data,
+  };
+};
+
 module.exports = {
   PLATFORMS,
   DM_PLATFORMS,
+  toProviderPlatform,
+  createTelegramCode,
+  checkTelegramCode,
+  connectTelegramChat,
   isConfigured,
   isSupportedPlatform,
   // profiles (multi-tenant) — re-exported from the IG service, single source
