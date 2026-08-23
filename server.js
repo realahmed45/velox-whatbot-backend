@@ -38,6 +38,7 @@ const hotelRoutes = require("./src/routes/hotel");
 const channelRoutes = require("./src/routes/channels");
 const consultantRoutes = require("./src/routes/consultants");
 const transferRoutes = require("./src/routes/transfers");
+const agentRoutes = require("./src/routes/agent");
 
 const app = express();
 const server = http.createServer(app);
@@ -184,6 +185,7 @@ app.use("/api/hotel", hotelRoutes);
 app.use("/api/channels", channelRoutes);
 app.use("/api/consultants", consultantRoutes);
 app.use("/api/transfers", transferRoutes);
+app.use("/api/agent", agentRoutes);
 
 // Public: Channex (OTA) reservation webhook — token-verified in the handler.
 app.post(
@@ -279,6 +281,15 @@ cron.schedule("15 * * * *", () => {
   );
 });
 
+// Regenerate pricing suggestions every morning so the owner opens Today to a
+// fresh, short list. Nothing is pushed to the OTAs — each one needs a tap.
+const { generateAll } = require("./src/services/revenue/revenueService");
+cron.schedule("0 5 * * *", () => {
+  generateAll().catch((e) =>
+    logger.warn("[Cron] revenue generateAll error: " + e.message),
+  );
+});
+
 // Email each hotel its monthly booking-commission statement and close the
 // period in the ledger. 06:00 UTC on the 1st, after the month has fully rolled
 // over in every timezone we serve.
@@ -290,7 +301,7 @@ cron.schedule("0 6 1 * *", () => {
 });
 
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), commission-invoices (monthly)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am)",
 );
 
 // ─── Start Server ──────────────────────────────────────────

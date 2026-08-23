@@ -929,7 +929,20 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     `[AI] ws=${workspace._id} calling generateReply provider=${aiCfg.provider || "auto"} text="${(text || "").slice(0, 60)}"`,
   );
 
-  let { reply, escalate, provider, imageUrls, intent, tags, lead, order, booking, stay, transfer } =
+  let {
+    reply,
+    escalate,
+    provider,
+    imageUrls,
+    intent,
+    tags,
+    lead,
+    order,
+    booking,
+    stay,
+    transfer,
+    upsell,
+  } =
     await ai.generateReply({
       workspace,
       history,
@@ -1118,6 +1131,40 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
           }
         } catch (e) {
           logger.warn("[AI] stay booking save failed", { err: e.message });
+        }
+      }
+
+      // Upsell accepted — attach the extra to the guest's current stay and
+      // let them know it landed. Needs an active booking; without one there is
+      // nothing to charge, so we quietly skip.
+      if (upsell && upsell.key) {
+        try {
+          const HotelBooking = require("../../models/HotelBooking");
+          const activeBooking = await HotelBooking.findOne({
+            workspaceId: workspace._id,
+            contactId: contact._id,
+            status: { $in: ["confirmed", "pending"] },
+          }).sort({ checkIn: -1 });
+          if (activeBooking) {
+            const { acceptUpsell } = require("../hotel/upsellService");
+            const res = await acceptUpsell({
+              workspace,
+              bookingId: activeBooking._id,
+              key: upsell.key,
+              quantity: upsell.quantity,
+            });
+            if (res.ok && res.confirmationText) {
+              reply = `${reply}
+
+${res.confirmationText}`.trim();
+            } else if (!res.ok) {
+              logger.warn(
+                `[AI] upsell accept rejected ws=${workspace._id} key=${upsell.key} reason=${res.reason}`,
+              );
+            }
+          }
+        } catch (e) {
+          logger.warn("[AI] upsell dispatch failed", { err: e.message });
         }
       }
 

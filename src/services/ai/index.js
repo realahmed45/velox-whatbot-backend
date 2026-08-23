@@ -516,6 +516,21 @@ const parseMarkers = (raw) => {
     },
   );
 
+  // Upsell accepted — <<UPSELL_JSON>>{"key":"...","quantity":1}<<END_UPSELL>>.
+  let upsell = null;
+  reply = reply.replace(
+    /<<\s*UPSELL_JSON\s*>>([\s\S]*?)<<\s*END_UPSELL\s*>>/i,
+    (_, json) => {
+      try {
+        const parsed = JSON.parse(String(json).trim());
+        if (parsed && parsed.key) upsell = parsed;
+      } catch {
+        /* malformed upsell block — ignore */
+      }
+      return "";
+    },
+  );
+
   // SAFETY NET: remove ANY remaining << … >> marker in any format the model
   // might invent, then tidy whitespace.
   reply = reply
@@ -524,7 +539,18 @@ const parseMarkers = (raw) => {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return { reply, imageUrls, intent, tags, lead, order, booking, stay, transfer };
+  return {
+    reply,
+    imageUrls,
+    intent,
+    tags,
+    lead,
+    order,
+    booking,
+    stay,
+    transfer,
+    upsell,
+  };
 };
 
 /**
@@ -704,11 +730,20 @@ const generateReply = async ({
     // Parse & strip ALL internal markers (image/intent/tag/lead + safety net).
     const parsed = parseMarkers(reply);
     reply = parsed.reply || fallbackReply(contact);
-    const { imageUrls, intent, tags, lead, order, booking, stay, transfer } =
-      parsed;
+    const {
+      imageUrls,
+      intent,
+      tags,
+      lead,
+      order,
+      booking,
+      stay,
+      transfer,
+      upsell,
+    } = parsed;
 
     logger.info(
-      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} booking=${booking ? "yes" : "no"} stay=${stay ? "yes" : "no"} transfer=${transfer ? "yes" : "no"} imageUrls=${imageUrls.length}`,
+      `[AI:reply] ws=${workspace?._id} intent=${intent || "-"} tags=[${tags.join(",")}] lead=${lead ? "yes" : "no"} order=${order ? "yes" : "no"} booking=${booking ? "yes" : "no"} stay=${stay ? "yes" : "no"} transfer=${transfer ? "yes" : "no"} upsell=${upsell ? "yes" : "no"} imageUrls=${imageUrls.length}`,
     );
 
     return {
@@ -722,6 +757,7 @@ const generateReply = async ({
       booking,
       stay,
       transfer,
+      upsell,
       tokens: response.usage?.total_tokens || 0,
       provider: providerUsed,
     };
