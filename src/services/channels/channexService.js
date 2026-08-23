@@ -20,9 +20,24 @@ const logger = require("../../utils/logger");
 const Property = require("../../models/Property");
 const RoomType = require("../../models/RoomType");
 
-const BASE = (
-  process.env.CHANNEX_BASE_URL || "https://staging.channex.io/api/v1"
-).replace(/\/$/, "");
+// In production we NEVER silently fall back to staging: a live hotel syncing to
+// a sandbox would look like it worked while bookings went nowhere. Production
+// must set CHANNEX_BASE_URL explicitly; only dev falls back to staging.
+const DEFAULT_BASE =
+  process.env.NODE_ENV === "production"
+    ? "https://app.channex.io/api/v1"
+    : "https://staging.channex.io/api/v1";
+
+const BASE = (process.env.CHANNEX_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
+
+// Loud warning if production is pointed at the sandbox — almost always a
+// misconfiguration, and the symptom (bookings that never arrive) is invisible.
+if (process.env.NODE_ENV === "production" && /staging\.channex/.test(BASE)) {
+  logger.warn(
+    "[Channex] PRODUCTION is pointed at the STAGING API. Real OTA bookings will NOT sync. " +
+      "Set CHANNEX_BASE_URL=https://app.channex.io/api/v1",
+  );
+}
 const KEY = process.env.CHANNEX_API_KEY || "";
 const WEBHOOK_TOKEN = process.env.CHANNEX_WEBHOOK_TOKEN || "";
 

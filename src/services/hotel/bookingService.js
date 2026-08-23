@@ -20,6 +20,18 @@ const { SOCIAL_BOOKING_COMMISSION_RATE } = require("../../config/plans");
 const BOT_SOURCES = ["whatsapp", "instagram", "tiktok", "direct"];
 const OTA_SOURCES = ["booking_com", "airbnb", "other_ota"];
 
+/** Short, human-quotable booking reference (matches the model's pre-save hook). */
+function generateBookingCode() {
+  return (
+    "BK-" +
+    Math.random()
+      .toString(36)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6)
+  );
+}
+
 /** Human label for a stay, e.g. "Fri, 12 Sep → Mon, 15 Sep (3 nights)". */
 function stayLabel(checkIn, checkOut, nights) {
   const fmt = (d) =>
@@ -201,9 +213,15 @@ async function ingestOtaBooking({
     "commission.amount": 0,
   };
 
+  // findOneAndUpdate bypasses the pre("save") hook that generates `code`, so an
+  // upserted OTA booking would be created with code:null — and the second one
+  // would then collide on the unique index. Generate it here for inserts.
   const booking = await HotelBooking.findOneAndUpdate(
     { otaReservationId },
-    { $set: update, $setOnInsert: { otaReservationId } },
+    {
+      $set: update,
+      $setOnInsert: { otaReservationId, code: generateBookingCode() },
+    },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 

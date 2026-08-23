@@ -332,6 +332,15 @@ logger.info(
   "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am)",
 );
 
+// ─── Configuration readiness ───────────────────────────────
+// Say plainly at boot what is and isn't wired up. Silent misconfiguration
+// (e.g. OTA sync pointed at staging) is the expensive kind.
+try {
+  require("./src/utils/readiness").checkReadiness();
+} catch (e) {
+  logger.warn("[readiness] check failed: " + e.message);
+}
+
 // ─── Start Server ──────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
