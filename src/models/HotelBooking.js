@@ -126,6 +126,11 @@ const hotelBookingSchema = new mongoose.Schema(
       },
     ],
 
+    // Stamped when the post-checkout review request goes out, so a guest is
+    // never asked twice. Declared here (not written loosely) because Mongoose
+    // strict mode silently drops undeclared fields on $set.
+    reviewRequestedAt: Date,
+
     specialRequests: { type: String, default: "" },
     notes: { type: String, default: "" },
     cancelledAt: Date,

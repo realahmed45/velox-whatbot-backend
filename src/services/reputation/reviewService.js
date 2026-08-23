@@ -207,13 +207,10 @@ async function requestReview({ booking }) {
     });
 
     // Mark first-and-only-once regardless of send outcome — a retry loop that
-    // spams a guest is worse than one missed request. reviewRequestedAt is not
-    // declared on the HotelBooking schema (owned elsewhere), so this write has
-    // to opt out of strict mode or Mongoose would silently drop it.
+    // spams a guest is worse than one missed request.
     await HotelBooking.updateOne(
       { _id: booking._id },
       { $set: { reviewRequestedAt: new Date() } },
-      { strict: false },
     );
 
     if (!result?.success) {

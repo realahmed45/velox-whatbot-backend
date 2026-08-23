@@ -1,0 +1,1141 @@
+2026-08-24 00:29:41 [[32minfo[39m]: [errorMonitor] SENTRY_DSN not set — using local logging only
+2026-08-24 00:29:41 [[32minfo[39m]: Email service init {"BREVO_API_KEY":"SET (xkeysib-e03b...)"}
+2026-08-24 00:29:44 [[32minfo[39m]: Socket.io initialized
+2026-08-24 00:29:44 [[32minfo[39m]: [IGTokenRefresh] worker started, scheduled daily 03:15 UTC
+2026-08-24 00:29:44 [[32minfo[39m]: Webhook queue initialized with retry support
+2026-08-24 00:29:44 [[32minfo[39m]: BullMQ queues initialized (broadcasts, usage-reset, webhooks) with reduced Redis polling
+2026-08-24 00:29:44 [[32minfo[39m]: Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am)
+2026-08-24 00:29:45 [[32minfo[39m]: Botlify API running on port 5099 [development]
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:45 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:46 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:46 [[32minfo[39m]: MongoDB connected: ac-vm2bh1p-shard-00-02.upxxwu6.mongodb.net
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:46 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:46 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:46 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:46 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:47 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:47 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:47 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:47 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:47 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:47 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:48 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:48 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:49 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:49 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:49 [[31merror[39m]: 404 - This booking page isn't available - GET /api/book/does-not-exist
+2026-08-24 00:29:49 [[33mwarn[39m]: API Client Error: GET /api/book/does-not-exist {"method":"GET","path":"/api/book/does-not-exist","status":404,"duration":"886ms","userId":null,"workspaceId":null,"ip":"::ffff:127.0.0.1","userAgent":"curl/8.7.1"}
+2026-08-24 00:29:49 [[32minfo[39m]: ::ffff:127.0.0.1 - - [23/Aug/2026:19:29:49 +0000] "GET /api/book/does-not-exist HTTP/1.1" 404 388 "-" "curl/8.7.1"
+2026-08-24 00:29:49 [[31merror[39m]: 401 - Not authorized — no token - POST /api/agent/chat
+2026-08-24 00:29:49 [[33mwarn[39m]: API Client Error: POST /api/agent/chat {"method":"POST","path":"/api/agent/chat","status":401,"duration":"7ms","userId":null,"workspaceId":null,"ip":"::ffff:127.0.0.1","userAgent":"curl/8.7.1"}
+2026-08-24 00:29:49 [[32minfo[39m]: ::ffff:127.0.0.1 - - [23/Aug/2026:19:29:49 +0000] "POST /api/agent/chat HTTP/1.1" 401 1053 "-" "curl/8.7.1"
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:49 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:49 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+Error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'welcomed-hedgehog-98896.upstash.io'
+}
+2026-08-24 00:29:49 [[31merror[39m]: 401 - Not authorized — no token - GET /api/pms/today
+2026-08-24 00:29:49 [[33mwarn[39m]: API Client Error: GET /api/pms/today {"method":"GET","path":"/api/pms/today","status":401,"duration":"3ms","userId":null,"workspaceId":null,"ip":"::ffff:127.0.0.1","userAgent":"curl/8.7.1"}
+2026-08-24 00:29:49 [[32minfo[39m]: ::ffff:127.0.0.1 - - [23/Aug/2026:19:29:49 +0000] "GET /api/pms/today HTTP/1.1" 401 1053 "-" "curl/8.7.1"
+2026-08-24 00:29:49 [[31merror[39m]: 401 - Not authorized — no token - GET /api/growth/upsells
+2026-08-24 00:29:49 [[33mwarn[39m]: API Client Error: GET /api/growth/upsells {"method":"GET","path":"/api/growth/upsells","status":401,"duration":"2ms","userId":null,"workspaceId":null,"ip":"::ffff:127.0.0.1","userAgent":"curl/8.7.1"}
+2026-08-24 00:29:49 [[32minfo[39m]: ::ffff:127.0.0.1 - - [23/Aug/2026:19:29:49 +0000] "GET /api/growth/upsells HTTP/1.1" 401 1053 "-" "curl/8.7.1"
+2026-08-24 00:29:49 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
+2026-08-24 00:29:50 [[31merror[39m]: Redis error: getaddrinfo ENOTFOUND welcomed-hedgehog-98896.upstash.io
