@@ -5,7 +5,12 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testV2Flow.js",
+    "test:booking": "node scripts/testBookingEngine.js",
+    "test:revenue": "node scripts/testRevenueEngine.js",
+    "test:flow": "node scripts/testV2Flow.js",
+    "migrate:hotels": "node scripts/migrateToHotels.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
