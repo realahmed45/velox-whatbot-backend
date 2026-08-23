@@ -379,6 +379,82 @@ async function handleBookingEvent(payload) {
   return { ok: true, results };
 }
 
+/** Review.source enum is narrower than the booking one — "other_ota" → "other". */
+function reviewSourceFromOta(otaName = "") {
+  const s = sourceFromOta(otaName);
+  return s === "other_ota" ? "other" : s;
+}
+
+/**
+ * Handle an inbound REVIEW event. Channex has shipped review payloads in a few
+ * shapes over time (flat, JSON:API `attributes`, nested under `review`), so we
+ * probe the usual field names and log anything we can't read rather than
+ * guessing. Maps onto reputation/reviewService.ingestReview().
+ */
+async function handleReviewEvent(payload) {
+  const outer = payload?.payload || payload?.data || payload || {};
+  const r = outer.attributes ? flat(outer) : outer.review || outer;
+  if (!r || typeof r !== "object") return { ok: false, reason: "empty_payload" };
+
+  const channexPropertyId =
+    r.property_id || outer.property_id || payload?.property_id;
+  const property = await Property.findOne({
+    "channel.channexPropertyId": channexPropertyId,
+  });
+  if (!property) {
+    logger.warn("[Channex] review for unknown property", { channexPropertyId });
+    return { ok: false, reason: "unknown_property" };
+  }
+
+  // Channex OTA reviews are usually /10 (Booking.com) or /5 (Airbnb). Trust an
+  // explicit scale when present, else infer from the value.
+  const rating = Number(
+    r.rating ?? r.score ?? r.overall_rating ?? r.average_score,
+  );
+  if (!Number.isFinite(rating)) {
+    logger.warn("[Channex] review payload without a readable rating", {
+      keys: Object.keys(r).slice(0, 20),
+    });
+    return { ok: false, reason: "no_rating" };
+  }
+  const scale = Number(r.rating_scale || r.scale) || (rating > 5 ? 10 : 5);
+
+  const externalId =
+    r.review_id || r.id || outer.review_id || outer.id || null;
+
+  // Best-effort link back to the stay this review is about.
+  let bookingId;
+  const otaReservationId =
+    r.booking_unique_id || r.unique_id || r.ota_reservation_code || null;
+  if (otaReservationId) {
+    const HotelBooking = require("../../models/HotelBooking");
+    const booking = await HotelBooking.findOne({
+      otaReservationId: String(otaReservationId),
+    })
+      .select("_id")
+      .lean();
+    if (booking) bookingId = booking._id;
+  }
+
+  const { ingestReview } = require("../reputation/reviewService");
+  return ingestReview({
+    workspaceId: property.workspaceId,
+    propertyId: property._id,
+    // sourceFromOta() speaks the BOOKING enum; Review has no "other_ota".
+    source: reviewSourceFromOta(r.ota_name || r.channel_name || outer.ota_name),
+    externalId: externalId ? String(externalId) : null,
+    guestName:
+      r.guest_name || r.author || r.customer?.name || r.reviewer_name || "",
+    rating,
+    ratingScale: scale,
+    title: r.title || r.headline || "",
+    text: r.text || r.comment || r.content || r.public_review || "",
+    language: r.language || r.locale || "",
+    reviewedAt: r.created_at || r.review_date || r.submitted_at || undefined,
+    bookingId,
+  });
+}
+
 module.exports = {
   isConfigured,
   listProperties,
@@ -392,5 +468,6 @@ module.exports = {
   registerWebhook,
   verifyWebhookToken,
   handleBookingEvent,
+  handleReviewEvent,
   sourceFromOta,
 };

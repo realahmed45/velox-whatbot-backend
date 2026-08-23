@@ -185,6 +185,11 @@ app.use("/api/hotel", hotelRoutes);
 app.use("/api/channels", channelRoutes);
 app.use("/api/consultants", consultantRoutes);
 app.use("/api/transfers", transferRoutes);
+app.use("/api/pms", require("./src/routes/pms"));
+app.use("/api/growth", require("./src/routes/growth"));
+
+// Public: the hotel's own direct-booking page at /book/<slug> (no auth).
+app.use("/api/book", require("./src/routes/publicBooking"));
 app.use("/api/agent", agentRoutes);
 
 // Public: Channex (OTA) reservation webhook — token-verified in the handler.
@@ -293,6 +298,13 @@ cron.schedule("0 5 * * *", () => {
 // Email each hotel its monthly booking-commission statement and close the
 // period in the ledger. 06:00 UTC on the 1st, after the month has fully rolled
 // over in every timezone we serve.
+// Fold recent bookings into unified Guest profiles hourly. Recomputes stats
+// from scratch each pass, so re-seeing a booking is a no-op, not a double count.
+const { syncGuests } = require("./src/jobs/guestSyncJob");
+cron.schedule("35 * * * *", () => {
+  syncGuests().catch((e) => logger.warn("[Cron] syncGuests error: " + e.message));
+});
+
 const { sendCommissionInvoices } = require("./src/jobs/commissionInvoiceJob");
 cron.schedule("0 6 1 * *", () => {
   sendCommissionInvoices().catch((e) =>
@@ -300,8 +312,24 @@ cron.schedule("0 6 1 * *", () => {
   );
 });
 
+// Nudge guests arriving in 2 days with the hotel's extras. 10:00 UTC daily.
+const { runUpsellNudges } = require("./src/jobs/upsellNudgeJob");
+cron.schedule("0 10 * * *", () => {
+  runUpsellNudges().catch((e) =>
+    logger.warn("[Cron] runUpsellNudges error: " + e.message),
+  );
+});
+
+// Ask yesterday's checkouts for a review. 08:00 UTC daily.
+const { runReviewRequests } = require("./src/jobs/reviewRequestJob");
+cron.schedule("0 8 * * *", () => {
+  runReviewRequests().catch((e) =>
+    logger.warn("[Cron] runReviewRequests error: " + e.message),
+  );
+});
+
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am)",
 );
 
 // ─── Start Server ──────────────────────────────────────────

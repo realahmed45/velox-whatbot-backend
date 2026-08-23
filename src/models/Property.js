@@ -147,4 +147,34 @@ propertySchema.index(
   },
 );
 
+/**
+ * Seed sensible defaults on creation so a brand-new property is immediately
+ * useful: the extras the bot may sell, and a public booking slug. Done here
+ * (not in a controller) so every creation path — manual, Channex import,
+ * migration — gets the same result.
+ */
+propertySchema.pre("save", function (next) {
+  if (this.isNew) {
+    if (!this.upsells || !this.upsells.length) {
+      this.upsells = [
+        { key: "early_checkin", label: "Early check-in", price: 0, enabled: true },
+        { key: "late_checkout", label: "Late check-out", price: 0, enabled: true },
+        { key: "breakfast", label: "Breakfast", price: 0, enabled: true },
+        { key: "airport_pickup", label: "Airport pickup", price: 0, enabled: true },
+        { key: "room_upgrade", label: "Room upgrade", price: 0, enabled: true },
+      ];
+    }
+    if (this.directBooking && !this.directBooking.slug && this.name) {
+      const base = String(this.name)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40);
+      const suffix = Math.random().toString(36).slice(2, 7);
+      this.directBooking.slug = (base || "stay") + "-" + suffix;
+    }
+  }
+  next();
+});
+
 module.exports = mongoose.model("Property", propertySchema);

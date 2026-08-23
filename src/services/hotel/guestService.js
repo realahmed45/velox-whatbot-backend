@@ -128,10 +128,14 @@ function mergeIdentity(guest, identity) {
  */
 async function recomputeStats(guest) {
   const or = [];
+  // Bookings store the phone exactly as the guest typed it ("+62 812 3456"),
+  // so it can't be matched in Mongo against our digits-only key. Pull the
+  // candidates on the fields we CAN match, then filter phone in JS below.
   if (guest.phone) {
-    // Bookings store the raw phone the guest typed; match on the tail so
-    // "+62812…" and "0812…" both hit.
-    or.push({ guestPhone: new RegExp(escapeRegex(guest.phone) + "$") });
+    // Prefilter: the guest's digits in order, tolerating any separators the
+    // guest may have typed between them ("812-3456", "812 3456", "8123456").
+    const loose = guest.phone.split("").map(escapeRegex).join("[^0-9]*");
+    or.push({ guestPhone: new RegExp(loose) });
   }
   if (guest.email) or.push({ guestEmail: guest.email });
   if (guest.name) {
@@ -139,13 +143,23 @@ async function recomputeStats(guest) {
   }
   if (!or.length) return;
 
-  const bookings = await HotelBooking.find({
+  const candidates = await HotelBooking.find({
     workspaceId: guest.workspaceId,
     $or: or,
   })
-    .select("status nights totalAmount currency checkIn source")
+    .select("status nights totalAmount currency checkIn source guestPhone guestEmail guestName")
     .sort({ checkIn: 1 })
     .lean();
+
+  // Keep only the bookings that really are this guest, comparing phones on the
+  // same normalized key we matched them by in the first place.
+  const name = guest.name ? guest.name.toLowerCase() : "";
+  const bookings = candidates.filter((b) => {
+    if (guest.phone && normalizePhone(b.guestPhone) === guest.phone) return true;
+    if (guest.email && normalizeEmail(b.guestEmail) === guest.email) return true;
+    if (name && normalizeName(b.guestName).toLowerCase() === name) return true;
+    return false;
+  });
 
   const stats = {
     staysCount: 0,
