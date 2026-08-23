@@ -109,6 +109,23 @@ const hotelBookingSchema = new mongoose.Schema(
       notes: { type: String, default: "" },
     },
 
+    // ── PMS-lite ────────────────────────────────────────────────────────────
+    // Which physical unit the guest is in, and the front-desk timestamps.
+    unitLabel: { type: String, default: "" },
+    checkedInAt: Date,
+    checkedOutAt: Date,
+    // Folio: extras charged during the stay (upsells, minibar, laundry...).
+    // The room charge itself is totalAmount above; this is everything on top.
+    folio: [
+      {
+        label: { type: String, default: "" },
+        amount: { type: Number, default: 0 },
+        quantity: { type: Number, default: 1 },
+        upsellId: { type: mongoose.Schema.Types.ObjectId, ref: "Upsell" },
+        addedAt: { type: Date, default: Date.now },
+      },
+    ],
+
     specialRequests: { type: String, default: "" },
     notes: { type: String, default: "" },
     cancelledAt: Date,

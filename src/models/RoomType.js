@@ -43,6 +43,23 @@ const roomTypeSchema = new mongoose.Schema(
     // for direct/social bookings.
     baseRate: { type: Number, default: 0 },
     currency: { type: String, default: "USD" },
+    // ── Housekeeping (PMS-lite) ─────────────────────────────────────────────
+    // One entry per physical unit of this room type. Staff flip status from a
+    // phone; the Calendar screen shows the board. Kept here (not a separate
+    // model) because a unit only ever belongs to one room type.
+    units: [
+      {
+        label: { type: String, default: "" }, // "101", "Villa 2"
+        housekeeping: {
+          type: String,
+          enum: ["clean", "dirty", "inspected", "out_of_service"],
+          default: "clean",
+        },
+        note: { type: String, default: "" },
+        updatedAt: Date,
+      },
+    ],
+
     // Channex mapping
     channexRoomTypeId: { type: String, default: null },
     channexRatePlanId: { type: String, default: null },

@@ -237,6 +237,33 @@ async function pushAvailabilityRange(property, roomType, from, to) {
   );
 }
 
+/**
+ * Push a nightly rate for [from, to) to the OTAs. Called when the owner
+ * approves a pricing suggestion (or the engine runs in auto mode).
+ * Channex wants one value row per rate plan + date range.
+ */
+async function pushRateRange(property, roomType, from, to, rate) {
+  if (!isConfigured()) return;
+  if (!roomType.channexRatePlanId) {
+    logger.warn("[Channex] no rate plan mapped for room " + roomType._id);
+    return;
+  }
+  const last = new Date(to.getTime() - 24 * 60 * 60 * 1000); // inclusive end
+  const values = [
+    {
+      property_id: property.channel.channexPropertyId,
+      rate_plan_id: roomType.channexRatePlanId,
+      date_from: dateStr(from),
+      date_to: dateStr(last),
+      rate: Math.round(rate * 100), // Channex expects minor units
+    },
+  ];
+  await client().post("/restrictions", { values });
+  logger.info(
+    "[Channex] rate pushed plan=" + roomType.channexRatePlanId + " rate=" + rate,
+  );
+}
+
 // ── Webhook registration + inbound handling ─────────────────────────────────
 
 function webhookCallbackUrl() {
@@ -361,6 +388,7 @@ module.exports = {
   listPhotos,
   importProperty,
   pushAvailabilityRange,
+  pushRateRange,
   registerWebhook,
   verifyWebhookToken,
   handleBookingEvent,

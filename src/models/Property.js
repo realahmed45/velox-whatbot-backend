@@ -93,9 +93,48 @@ const propertySchema = new mongoose.Schema(
       airportCode: { type: String, default: "DPS" }, // nearest airport (IATA)
     },
 
+    // ── Upsell catalog ──────────────────────────────────────────────────────
+    // What the bot may offer on top of a stay. Seeded with sensible defaults at
+    // onboarding; the hotel edits prices or switches items off.
+    upsells: [
+      {
+        key: { type: String, required: true }, // early_checkin, upgrade, ...
+        label: { type: String, required: true },
+        price: { type: Number, default: 0 },
+        enabled: { type: Boolean, default: true },
+        description: { type: String, default: "" },
+      },
+    ],
+
+    // ── Direct booking page ─────────────────────────────────────────────────
+    // Public page at /book/<slug> — their rooms, their photos, 0% OTA fee.
+    directBooking: {
+      enabled: { type: Boolean, default: true },
+      slug: { type: String, default: null },
+    },
+
+    // ── Revenue manager ─────────────────────────────────────────────────────
+    revenue: {
+      enabled: { type: Boolean, default: true },
+      // Owner-approved guard rails the engine may never price outside of.
+      minRate: { type: Number, default: 0 },
+      maxRate: { type: Number, default: 0 },
+      // "suggest" = owner taps approve (default). "auto" = engine pushes itself.
+      mode: { type: String, enum: ["suggest", "auto"], default: "suggest" },
+    },
+
     active: { type: Boolean, default: true },
   },
   { timestamps: true },
+);
+
+// Public direct-booking slug must be globally unique when set.
+propertySchema.index(
+  { "directBooking.slug": 1 },
+  {
+    unique: true,
+    partialFilterExpression: { "directBooking.slug": { $type: "string" } },
+  },
 );
 
 propertySchema.index(
