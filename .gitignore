@@ -14,3 +14,7 @@ Thumbs.db
 %TEMP%gitcreds.txt
 *gitcreds*
 *.secret
+
+# local debug artifacts
+boot_log.txt
+boot_result.txt
