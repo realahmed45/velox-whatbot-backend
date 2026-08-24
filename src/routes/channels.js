@@ -58,6 +58,38 @@ router.post(
   channelCtrl.selectMessengerPage,
 );
 
+// WhatsApp: buy a number when the hotel has no WhatsApp yet (owner only).
+router.get(
+  "/whatsapp/number-options",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.whatsappNumberOptions,
+);
+router.post(
+  "/whatsapp/number",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.whatsappBuyNumber,
+);
+
+// WhatsApp health + PIN recovery (owner only).
+router.get(
+  "/whatsapp/health",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.whatsappHealth,
+);
+router.post(
+  "/whatsapp/pin",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.whatsappPin,
+);
+
 // Disconnect a channel (owner only).
 router.delete(
   "/:platform",

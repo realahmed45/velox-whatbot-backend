@@ -363,6 +363,139 @@ const disconnectAccount = async (accountId) => {
   }
 };
 
+// ── WhatsApp numbers (for hotels with no WhatsApp yet) ──────────────────────
+// A hotelier whose number isn't on WhatsApp can't use coexistence, so we give
+// them a fresh number instead — the most reliable path there is, because the
+// number is provisioned and registered by us with no OTP for them to fumble.
+
+/** Countries we can sell a WhatsApp-capable number in. */
+const listNumberCountries = async () => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const { data } = await client().get("/phone-numbers/countries");
+  const rows = Array.isArray(data) ? data : data?.countries || data?.data || [];
+  return rows.map((c) => ({
+    code: c.code || c.country || c.iso2,
+    name: c.name || c.country_name || c.code,
+    // toll-free can NEVER carry WhatsApp — filter it out upstream of the UI.
+    types: (c.types || c.numberTypes || []).filter((t) => t !== "toll_free"),
+    monthlyPrice: c.price || c.monthlyPrice || null,
+    currency: c.currency || "USD",
+  }));
+};
+
+/** Numbers available to buy right now in a country. */
+const listAvailableNumbers = async ({ country, type = "local", prefix } = {}) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const { data } = await client().get("/phone-numbers/available", {
+    params: { country, type, ...(prefix ? { prefix } : {}) },
+  });
+  const rows = Array.isArray(data) ? data : data?.numbers || data?.data || [];
+  return rows.map((n) => ({
+    phoneNumber: n.phoneNumber || n.number || n.e164,
+    locality: n.locality || n.region || "",
+    monthlyPrice: n.price || n.monthlyPrice || null,
+    currency: n.currency || "USD",
+  }));
+};
+
+/**
+ * Buy a number and connect it to WhatsApp in one call. `connectWhatsapp`
+ * defaults true on the provider side; we send it explicitly so the intent is
+ * obvious at the call site.
+ */
+const purchaseWhatsAppNumber = async ({ profileId, country, numberType = "local", areaCode }) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const pid = profileId || (await getDefaultProfileId());
+  try {
+    const { data } = await client().post("/phone-numbers/purchase", {
+      profileId: pid,
+      country,
+      numberType,
+      ...(areaCode ? { areaCode } : {}),
+      connectWhatsapp: true,
+      wantsWhatsapp: true,
+    });
+    const d = data?.data || data || {};
+    return {
+      ok: true,
+      phoneNumber: d.phoneNumber || d.number || null,
+      accountId: d.accountId || d.account?._id || d.account?.id || null,
+      // Regulated countries return 202 + a KYC link rather than a number.
+      kycRequired: d.status === "kyc_required",
+      kycUrl: d.kycUrl || null,
+      raw: d,
+    };
+  } catch (err) {
+    const detail =
+      err.response?.data?.message || err.response?.data?.error || err.message;
+    logger.warn("[ZernioSocial] number purchase failed", {
+      status: err.response?.status,
+      detail: String(detail).slice(0, 200),
+    });
+    return { ok: false, error: String(detail).slice(0, 200) };
+  }
+};
+
+// ── WhatsApp health + recovery ───────────────────────────────────────────────
+
+/**
+ * Live snapshot of a connected WhatsApp number straight from Meta: display
+ * name, quality rating, messaging tier, and — critically — whether Meta still
+ * serves the number at all. A token can look valid while the number is dead on
+ * Meta's side (e.g. the hotel disconnected coexistence from their phone), so
+ * this is the only honest liveness check.
+ */
+const getWhatsAppNumberInfo = async (accountId) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const { data } = await client().get("/whatsapp/number-info", {
+    params: { accountId },
+  });
+  const d = data?.data || data || {};
+  const phone = d.phoneNumber || d.phone_number || {};
+  return {
+    displayNumber: phone.display_phone_number || phone.displayNumber || null,
+    displayName: phone.verified_name || phone.displayName || null,
+    qualityRating: phone.quality_rating || phone.qualityRating || null,
+    messagingTier: phone.messaging_limit_tier || phone.messagingTier || null,
+    status: phone.status || d.status || null,
+    healthStatus: phone.health_status || d.healthStatus || null,
+    raw: d,
+  };
+};
+
+/**
+ * Re-register a number with its own two-step PIN.
+ *
+ * The connect flows register with a default PIN. If the hotel had already set
+ * their own PIN, Meta rejects it with error 133005 and every send then fails
+ * with a misleading permissions error — while the account still shows as
+ * "connected". This is the fix, and it's the single most common WhatsApp
+ * failure after a successful-looking connect.
+ */
+const registerWhatsAppPin = async (accountId, pin) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  if (!/^[0-9]{6}$/.test(String(pin || ""))) {
+    throw new Error("Enter the 6-digit PIN for this WhatsApp number.");
+  }
+  try {
+    const { data } = await client().post(
+      `/accounts/${encodeURIComponent(accountId)}/whatsapp/register`,
+      { pin: String(pin) },
+    );
+    return { ok: true, raw: data };
+  } catch (err) {
+    const detail =
+      err.response?.data?.message ||
+      err.response?.data?.error ||
+      err.message;
+    logger.warn("[ZernioSocial] whatsapp re-register failed", {
+      status: err.response?.status,
+      detail: String(detail).slice(0, 200),
+    });
+    return { ok: false, error: String(detail).slice(0, 200) };
+  }
+};
+
 // ── Telegram: code pairing, not OAuth ────────────────────────────────────────
 // Telegram bots cannot be "authorized" like a Meta app. The hotel adds our bot
 // as an admin of their channel/group, then sends it a short-lived code. These
@@ -492,6 +625,11 @@ module.exports = {
   toProviderPlatform,
   listFacebookPages,
   selectFacebookPage,
+  listNumberCountries,
+  listAvailableNumbers,
+  purchaseWhatsAppNumber,
+  getWhatsAppNumberInfo,
+  registerWhatsAppPin,
   createTelegramCode,
   checkTelegramCode,
   connectTelegramChat,

@@ -593,6 +593,138 @@ exports.selectMessengerPage = asyncHandler(async (req, res) => {
   });
 });
 
+// ── WhatsApp: get a number (for hotels with no WhatsApp) ────────────────────
+
+// @GET /api/channels/whatsapp/number-options?country=ID
+// What a hotel can buy. Without a country, returns the country list.
+exports.whatsappNumberOptions = asyncHandler(async (req, res) => {
+  const country = String(req.query.country || "").trim();
+  if (!country) {
+    const countries = await zernioSocial.listNumberCountries();
+    return res.json({ success: true, countries });
+  }
+  const numbers = await zernioSocial.listAvailableNumbers({
+    country,
+    type: req.query.type || "local",
+    prefix: req.query.prefix,
+  });
+  res.json({ success: true, numbers });
+});
+
+// @POST /api/channels/whatsapp/number — { country, numberType?, areaCode? }
+// Buys a number, connects it to WhatsApp, and attaches it to the workspace.
+exports.whatsappBuyNumber = asyncHandler(async (req, res) => {
+  const { country, numberType, areaCode } = req.body || {};
+  if (!country) {
+    res.status(400);
+    throw new Error("Choose a country for your new number.");
+  }
+  const profileId = await resolveWorkspaceProfileId(req.workspace._id);
+  const result = await zernioSocial.purchaseWhatsAppNumber({
+    profileId,
+    country,
+    numberType,
+    areaCode,
+  });
+  if (!result.ok) {
+    res.status(400);
+    throw new Error(result.error || "Could not get a number just now.");
+  }
+  // Some countries require KYC before the number activates — surface that
+  // rather than pretending the channel is live.
+  if (result.kycRequired) {
+    return res.json({
+      success: true,
+      kycRequired: true,
+      kycUrl: result.kycUrl,
+      message:
+        "This country needs a quick identity check before the number activates.",
+    });
+  }
+  if (!result.accountId) {
+    res.status(502);
+    throw new Error("The number was created but did not connect. Contact support.");
+  }
+  const saved = await saveChannelAccount({
+    workspace: req.workspace,
+    platform: "whatsapp",
+    accountId: result.accountId,
+    info: { phone_number: result.phoneNumber, name: result.phoneNumber },
+  });
+  if (!saved.ok) {
+    res.status(409);
+    throw new Error("That number is already connected to another account.");
+  }
+  logger.info(
+    `[Channels] whatsapp number provisioned ws=${req.workspace._id} number=${result.phoneNumber}`,
+  );
+  res.json({
+    success: true,
+    phoneNumber: result.phoneNumber,
+    webhookError: saved.webhookError || null,
+  });
+});
+
+// ── WhatsApp health + recovery ───────────────────────────────────────────────
+
+// @GET /api/channels/whatsapp/health — is this number actually alive on Meta?
+exports.whatsappHealth = asyncHandler(async (req, res) => {
+  const wsDoc = await Workspace.findById(req.workspace._id).select(
+    "+channels.accountId",
+  );
+  const entry = (wsDoc?.channels || []).find((c) => c.platform === "whatsapp");
+  if (!entry?.accountId) {
+    res.status(404);
+    throw new Error("WhatsApp isn't connected yet.");
+  }
+  try {
+    const info = await zernioSocial.getWhatsAppNumberInfo(
+      decrypt(entry.accountId),
+    );
+    res.json({ success: true, health: info });
+  } catch (err) {
+    logger.warn("[Channels] whatsapp health check failed", {
+      err: err.response?.data || err.message,
+    });
+    res.json({
+      success: true,
+      health: { status: "unknown", error: "Could not reach WhatsApp just now." },
+    });
+  }
+});
+
+// @POST /api/channels/whatsapp/pin — { pin }
+// Recovery for the most common post-connect failure: the number already had a
+// two-step PIN, connect registered a default one, Meta returned 133005, and
+// every send now fails while the channel still looks connected.
+exports.whatsappPin = asyncHandler(async (req, res) => {
+  const { pin } = req.body || {};
+  const wsDoc = await Workspace.findById(req.workspace._id).select(
+    "+channels.accountId",
+  );
+  const entry = (wsDoc?.channels || []).find((c) => c.platform === "whatsapp");
+  if (!entry?.accountId) {
+    res.status(404);
+    throw new Error("WhatsApp isn't connected yet.");
+  }
+  const result = await zernioSocial.registerWhatsAppPin(
+    decrypt(entry.accountId),
+    pin,
+  );
+  if (!result.ok) {
+    res.status(400);
+    throw new Error(
+      result.error ||
+        "That PIN wasn't accepted. Check the 6-digit code in WhatsApp > Settings > Two-step verification.",
+    );
+  }
+  await Workspace.updateOne(
+    { _id: req.workspace._id, "channels.platform": "whatsapp" },
+    { $set: { "channels.$.webhookError": null } },
+  );
+  res.json({ success: true });
+});
+
 // ── DELETE /api/channels/:platform ───────────────────────────────────────────
 // Owner disconnects a channel: best-effort provider cleanup, then clear the
 // entry (keep the row so the dashboard remembers the last username).
