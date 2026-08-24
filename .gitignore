@@ -18,3 +18,4 @@ Thumbs.db
 # local debug artifacts
 boot_log.txt
 boot_result.txt
+scripts/_*.js
