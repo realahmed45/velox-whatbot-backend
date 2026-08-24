@@ -81,12 +81,14 @@ const propertySchema = new mongoose.Schema(
     email: { type: String, default: "" },
 
     // ── OTA connectivity (channel-provider abstraction) ─────────────────────
-    // provider "channex" = real-time API sync; "ical" = free availability-only
-    // tier for single-unit properties; "none" = direct/social only.
+    // provider "channex" and "beds24" = real-time API sync (a property uses one
+    // or the other, never both); "ical" = free availability-only tier for
+    // single-unit properties; "none" = direct/social only.
+    // See services/channels/index.js for the router that maps this to a module.
     channel: {
       provider: {
         type: String,
-        enum: ["none", "channex", "ical"],
+        enum: ["none", "channex", "beds24", "ical"],
         default: "none",
       },
       status: {
@@ -97,6 +99,8 @@ const propertySchema = new mongoose.Schema(
       // Channex ids
       channexPropertyId: { type: String, default: null },
       channexGroupId: { type: String, default: null },
+      // Beds24 id (their numeric property id, stored as a string for parity)
+      beds24PropertyId: { type: String, default: null },
       // Which OTAs are live on the Channex side (informational, from import).
       // Written from REAL connection state — never from user intent.
       connectedOtas: [{ type: String }], // e.g. ["booking_com", "airbnb"]
@@ -179,6 +183,18 @@ propertySchema.index(
     unique: true,
     partialFilterExpression: {
       "channel.channexPropertyId": { $type: "string" },
+    },
+  },
+);
+
+// Same guarantee for Beds24: one remote property maps to exactly one of ours,
+// so a second workspace can't quietly hijack a connected hotel.
+propertySchema.index(
+  { "channel.beds24PropertyId": 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      "channel.beds24PropertyId": { $type: "string" },
     },
   },
 );

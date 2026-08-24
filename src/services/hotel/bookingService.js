@@ -268,20 +268,27 @@ async function cancelBooking(bookingId, { reason = "", workspaceId } = {}) {
 /** Shared side effects: Channex availability push, socket, email, webhooks. */
 async function afterBookingChange(property, roomType, booking, event) {
   // Push fresh availability to the OTAs so social bookings block OTA calendars
-  // (and vice versa the OTAs already decremented on their side).
-  if (
-    property.channel?.provider === "channex" &&
-    property.channel?.channexPropertyId &&
-    roomType.channexRoomTypeId &&
-    // OTA-originated events don't need a push for their own range — Channex
-    // already knows. Push anyway is harmless but wasteful; skip it.
-    event !== "ota_synced"
-  ) {
+  // (and vice versa the OTAs already decremented on their side). Which channel
+  // manager that means is the property's business, not ours — the router picks
+  // it and hands back null when there's nothing connected.
+  //
+  // OTA-originated events don't need a push for their own range — the provider
+  // already knows. Push anyway is harmless but wasteful; skip it.
+  if (event !== "ota_synced") {
     try {
-      const { pushAvailabilityRange } = require("../channels/channexService");
-      await pushAvailabilityRange(property, roomType, booking.checkIn, booking.checkOut);
+      const { getProvider, providerRoomId } = require("../channels");
+      const channel = getProvider(property);
+      if (channel && providerRoomId(property, roomType)) {
+        await channel.pushAvailabilityRange(
+          property,
+          roomType,
+          booking.checkIn,
+          booking.checkOut,
+        );
+      }
     } catch (e) {
-      logger.warn("[hotelBooking] channex availability push failed", {
+      logger.warn("[hotelBooking] availability push failed", {
+        provider: property.channel?.provider,
         err: e.message,
       });
     }

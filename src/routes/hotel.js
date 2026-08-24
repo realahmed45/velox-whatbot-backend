@@ -12,6 +12,8 @@ const {
   updateProperty,
   listChannexProperties,
   importChannexProperty,
+  listBeds24Properties,
+  importBeds24Property,
   listRoomTypes,
   createRoomType,
   updateRoomType,
@@ -33,6 +35,10 @@ router.put("/properties/:id", requireOwner, updateProperty);
 // Channex (OTA) connect/import
 router.get("/channex/properties", requireOwner, listChannexProperties);
 router.post("/channex/import", requireOwner, importChannexProperty);
+
+// Beds24 (OTA) connect/import — the alternative channel manager
+router.get("/beds24/properties", requireOwner, listBeds24Properties);
+router.post("/beds24/import", requireOwner, importBeds24Property);
 
 // Rooms
 router.get("/properties/:id/rooms", listRoomTypes);

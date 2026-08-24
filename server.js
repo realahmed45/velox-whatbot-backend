@@ -198,6 +198,15 @@ app.post(
   require("./src/controllers/hotelController").handleChannexWebhook,
 );
 
+// Public: Beds24 (OTA) booking webhook — token-verified in the handler.
+// Beds24 cannot register this over its API, so the hotel pastes the URL into
+// Settings > Properties > Access > Booking webhooks. The 2-minute poll job
+// below covers them until they do (and if a webhook is ever dropped).
+app.post(
+  "/api/beds24/webhook",
+  require("./src/controllers/hotelController").handleBeds24Webhook,
+);
+
 // Public: business-category picker list for onboarding.
 app.get("/api/verticals", require("./src/controllers/verticalController").listVerticals);
 
@@ -328,8 +337,18 @@ cron.schedule("0 8 * * *", () => {
   );
 });
 
+// Pull Beds24 bookings modified in the last 10 minutes, every 2. The webhook
+// is the fast path; this is the one that guarantees a reservation still lands
+// when the hotel hasn't set the webhook up yet, or a delivery was dropped.
+const { pollBeds24Bookings } = require("./src/jobs/beds24PollJob");
+cron.schedule("*/2 * * * *", () => {
+  pollBeds24Bookings().catch((e) =>
+    logger.warn("[Cron] pollBeds24Bookings error: " + e.message),
+  );
+});
+
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am), beds24-poll (2min)",
 );
 
 // ─── Configuration readiness ───────────────────────────────

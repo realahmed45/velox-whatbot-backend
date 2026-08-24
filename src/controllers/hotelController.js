@@ -3,6 +3,7 @@ const Property = require("../models/Property");
 const RoomType = require("../models/RoomType");
 const HotelBooking = require("../models/HotelBooking");
 const channexService = require("../services/channels/channexService");
+const beds24Service = require("../services/channels/beds24Service");
 const {
   createBooking,
   cancelBooking,
@@ -181,6 +182,69 @@ const importChannexProperty = asyncHandler(async (req, res) => {
     });
   }
   res.json({ success: true, property, roomTypes });
+});
+
+// ─── Beds24 connect / import ────────────────────────────────────────────────
+
+// @GET /api/hotel/beds24/properties — properties visible on our Beds24 token
+// that aren't imported into a workspace yet (onboarding picker).
+const listBeds24Properties = asyncHandler(async (req, res) => {
+  if (!beds24Service.isConfigured()) {
+    res.status(503);
+    throw new Error(
+      "Beds24 sync isn't configured yet. Add your rooms manually for now.",
+    );
+  }
+  const [remote, local] = await Promise.all([
+    beds24Service.listProperties(),
+    Property.find({ "channel.beds24PropertyId": { $ne: null } })
+      .select("channel.beds24PropertyId")
+      .lean(),
+  ]);
+  const taken = new Set(local.map((p) => p.channel.beds24PropertyId));
+  res.json({
+    success: true,
+    properties: remote.map((p) => ({
+      beds24Id: String(p.id),
+      name: p.name || p.propertyName,
+      city: p.city,
+      country: p.country,
+      currency: p.currency,
+      rooms: (p.roomTypes || []).length,
+      alreadyImported: taken.has(String(p.id)),
+    })),
+  });
+});
+
+// @POST /api/hotel/beds24/import — { beds24PropertyId } → import content
+// (property, rooms). Beds24 booking webhooks can't be registered over API V2,
+// so we hand back the callback URL for the owner to paste into their panel;
+// the poll job covers them until they do.
+const importBeds24Property = asyncHandler(async (req, res) => {
+  const { beds24PropertyId } = req.body;
+  if (!beds24PropertyId) {
+    res.status(400);
+    throw new Error("beds24PropertyId is required");
+  }
+  const existing = await Property.findOne({
+    "channel.beds24PropertyId": String(beds24PropertyId),
+    workspaceId: { $ne: req.workspace._id },
+  });
+  if (existing) {
+    res.status(409);
+    throw new Error("This property is already connected to another account.");
+  }
+  const { property, roomTypes } = await beds24Service.importProperty(
+    req.workspace._id,
+    String(beds24PropertyId),
+  );
+  let webhook = null;
+  try {
+    webhook = await beds24Service.registerWebhook(String(beds24PropertyId));
+  } catch (err) {
+    logger.warn("[hotel] beds24 webhook setup failed", { err: err.message });
+  }
+  res.json({ success: true, property, roomTypes, webhook });
 });
 
 // ─── Room types ─────────────────────────────────────────────────────────────
@@ -447,12 +511,41 @@ const handleChannexWebhook = asyncHandler(async (req, res) => {
   }
 });
 
+// ─── Beds24 inbound webhook (public route) ──────────────────────────────────
+
+// @POST /api/beds24/webhook?token=...
+// Beds24 posts the booking itself as JSON in the body, so there's usually no
+// follow-up API call. Two flavours arrive on this URL depending on which
+// webhook the hotel enabled: the BOOKING webhook (a booking object) and the
+// INVENTORY one ({roomId, propId, action:"SYNC_ROOM"}), which only says "this
+// room changed" and carries no booking to ingest — we ack and ignore it.
+const handleBeds24Webhook = asyncHandler(async (req, res) => {
+  if (!beds24Service.verifyWebhookToken(req.query.token)) {
+    logger.warn("[Beds24 webhook] bad token — dropping");
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200); // ack fast, process async
+
+  const payload = req.body || {};
+  if (payload.action === "SYNC_ROOM") {
+    logger.info(`[Beds24 webhook] inventory sync room=${payload.roomId}`);
+    return;
+  }
+  try {
+    await beds24Service.handleBookingEvent(payload);
+  } catch (err) {
+    logger.error("[Beds24 webhook] processing failed", { err: err.message });
+  }
+});
+
 module.exports = {
   listProperties,
   createProperty,
   updateProperty,
   listChannexProperties,
   importChannexProperty,
+  listBeds24Properties,
+  importBeds24Property,
   listRoomTypes,
   createRoomType,
   updateRoomType,
@@ -462,4 +555,5 @@ module.exports = {
   createManualBooking,
   updateBookingStatus,
   handleChannexWebhook,
+  handleBeds24Webhook,
 };

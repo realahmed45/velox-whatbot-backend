@@ -295,26 +295,30 @@ async function applySuggestion(suggestion, opts = {}) {
   await rt.save();
 
   let error = "";
-  if (
-    property.channel &&
-    property.channel.provider === "channex" &&
-    rt.channexRoomTypeId
-  ) {
-    try {
-      const channex = require("../channels/channexService");
-      if (typeof channex.pushRateRange === "function") {
-        await channex.pushRateRange(
-          property,
-          rt,
-          doc.dateFrom,
-          doc.dateTo,
-          doc.suggestedRate,
-        );
-      }
-    } catch (e) {
-      error = e.message;
-      logger.warn("[revenue] rate push failed", { err: e.message });
+  try {
+    // Whichever channel manager this property is on (Channex, Beds24, …) — or
+    // none, in which case the local rate is simply the whole story.
+    const { getProvider, providerRoomId } = require("../channels");
+    const channel = getProvider(property);
+    if (
+      channel &&
+      providerRoomId(property, rt) &&
+      typeof channel.pushRateRange === "function"
+    ) {
+      await channel.pushRateRange(
+        property,
+        rt,
+        doc.dateFrom,
+        doc.dateTo,
+        doc.suggestedRate,
+      );
     }
+  } catch (e) {
+    error = e.message;
+    logger.warn("[revenue] rate push failed", {
+      provider: property.channel?.provider,
+      err: e.message,
+    });
   }
 
   doc.status = "approved";

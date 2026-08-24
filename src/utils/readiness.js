@@ -69,6 +69,29 @@ function checkReadiness() {
     }
   }
 
+  // Beds24 — the second, optional channel provider. Never critical: Channex is
+  // the production path, and a hotel on neither simply syncs nothing.
+  if (!isSet(env.BEDS24_REFRESH_TOKEN) && !isSet(env.BEDS24_INVITE_CODE)) {
+    warnings.push(
+      "BEDS24_REFRESH_TOKEN — Beds24 OTA sync is OFF (optional; Channex is the main provider)",
+    );
+  } else if (!isSet(env.BEDS24_REFRESH_TOKEN)) {
+    warnings.push(
+      "BEDS24_INVITE_CODE is set but BEDS24_REFRESH_TOKEN is not — the code is " +
+        "single-use and expires in 24h; exchange it and save the refresh token",
+    );
+  } else {
+    ready.push("OTA sync (Beds24)");
+    // Not critical the way the Channex one is: the 2-minute poll job still
+    // brings bookings in, so a missing token degrades latency, not delivery.
+    if (!isSet(env.BEDS24_WEBHOOK_TOKEN)) {
+      warnings.push(
+        "BEDS24_WEBHOOK_TOKEN missing — Beds24 booking webhooks will be REJECTED " +
+          "(the 2-minute poll job still picks bookings up)",
+      );
+    }
+  }
+
   // ── Billing ──────────────────────────────────────────────────────────────
   if (!isSet(env.CREEM_API_KEY)) {
     warnings.push("CREEM_API_KEY — the paid plan cannot be purchased (free plan works)");

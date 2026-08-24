@@ -284,31 +284,74 @@ const listSubscriptions = asyncHandler(async (req, res) => {
 // ── Consultants & commissions (hotel product) ───────────────────────────────
 const Consultant = require("../models/Consultant");
 const CommissionEntry = require("../models/CommissionEntry");
+const Property = require("../models/Property");
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// @GET /api/admin/consultants -> all consultants + per-currency earning sums
+// @GET /api/admin/consultants -> all consultants + per-currency earning sums,
+// the hotels they signed (count + names), and their last payout date.
+//
+// Three queries total regardless of how many consultants exist: the consultant
+// list, one ledger aggregate, and one attributed-workspace lookup (+ one
+// property lookup for the hotel names). Never a query per consultant.
 const listConsultants = asyncHandler(async (req, res) => {
   const consultants = await Consultant.find()
     .populate("userId", "name email")
     .sort({ createdAt: -1 })
     .lean();
 
+  const consultantIds = consultants.map((c) => c._id);
+
   // One aggregate for every consultant's share ledger, folded per currency.
-  const sums = await CommissionEntry.aggregate([
-    { $match: { kind: "consultant_share" } },
-    {
-      $group: {
-        _id: {
-          consultantId: "$consultantId",
-          currency: "$currency",
-          status: "$status",
+  // $max paidAt in the same pass gives us the last payout date for free.
+  const [sums, workspaces] = await Promise.all([
+    CommissionEntry.aggregate([
+      { $match: { kind: "consultant_share" } },
+      {
+        $group: {
+          _id: {
+            consultantId: "$consultantId",
+            currency: "$currency",
+            status: "$status",
+          },
+          total: { $sum: "$amount" },
+          lastPaidAt: { $max: "$paidAt" },
         },
-        total: { $sum: "$amount" },
       },
-    },
+    ]),
+    consultantIds.length
+      ? Workspace.find({
+          "acquisition.consultantId": { $in: consultantIds },
+        })
+          .select("name acquisition.consultantId subscription.plan")
+          .lean()
+      : [],
   ]);
+
+  // Prefer the property name over the workspace name for the hotel label.
+  const wsIds = workspaces.map((w) => w._id);
+  const properties = wsIds.length
+    ? await Property.find({ workspaceId: { $in: wsIds } })
+        .select("workspaceId name city country")
+        .lean()
+    : [];
+  const propByWs = new Map(properties.map((p) => [String(p.workspaceId), p]));
+
+  const hotelsByConsultant = {};
+  for (const w of workspaces) {
+    const cid = String(w.acquisition?.consultantId);
+    const p = propByWs.get(String(w._id));
+    (hotelsByConsultant[cid] = hotelsByConsultant[cid] || []).push({
+      workspaceId: w._id,
+      name: p?.name || w.name,
+      workspaceName: w.name,
+      location: [p?.city, p?.country].filter(Boolean).join(", "),
+      plan: w.subscription?.plan || "free",
+    });
+  }
+
   const byConsultant = {};
+  const lastPayoutByConsultant = {};
   for (const row of sums) {
     const cid = String(row._id.consultantId);
     const cur = row._id.currency || "USD";
@@ -324,17 +367,30 @@ const listConsultants = asyncHandler(async (req, res) => {
     else if (["verified", "invoiced"].includes(row._id.status))
       bucket.verified += row.total;
     else if (row._id.status === "paid") bucket.paid += row.total;
+    if (
+      row.lastPaidAt &&
+      (!lastPayoutByConsultant[cid] || row.lastPaidAt > lastPayoutByConsultant[cid])
+    ) {
+      lastPayoutByConsultant[cid] = row.lastPaidAt;
+    }
   }
 
-  const rows = consultants.map((c) => ({
-    ...c,
-    earnings: Object.values(byConsultant[String(c._id)] || {}).map((e) => ({
-      currency: e.currency,
-      accrued: round2(e.accrued),
-      verified: round2(e.verified),
-      paid: round2(e.paid),
-    })),
-  }));
+  const rows = consultants.map((c) => {
+    const cid = String(c._id);
+    const hotels = hotelsByConsultant[cid] || [];
+    return {
+      ...c,
+      hotels,
+      hotelsSigned: hotels.length,
+      lastPayoutAt: lastPayoutByConsultant[cid] || null,
+      earnings: Object.values(byConsultant[cid] || {}).map((e) => ({
+        currency: e.currency,
+        accrued: round2(e.accrued),
+        verified: round2(e.verified),
+        paid: round2(e.paid),
+      })),
+    };
+  });
 
   res.json({ consultants: rows, total: rows.length });
 });

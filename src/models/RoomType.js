@@ -90,9 +90,13 @@ const roomTypeSchema = new mongoose.Schema(
       },
     ],
 
-    // Channex mapping
+    // Channel-manager mapping — whichever provider the parent property uses.
+    // Channex
     channexRoomTypeId: { type: String, default: null },
     channexRatePlanId: { type: String, default: null },
+    // Beds24 (no rate-plan equivalent: prices live per-date on the room's
+    // calendar, in the price1..price16 slots, so one id is enough).
+    beds24RoomId: { type: String, default: null },
     active: { type: Boolean, default: true },
   },
   { timestamps: true },
