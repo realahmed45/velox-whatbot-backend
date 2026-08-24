@@ -347,8 +347,18 @@ cron.schedule("*/2 * * * *", () => {
   );
 });
 
+// Move OTA connections forward while nobody is watching. Booking.com's own
+// approval takes 1–5 days; this is what lets the hotelier forget about it and
+// simply get an email when their channel goes live.
+const { runConnectionWatch } = require("./src/jobs/connectionWatchJob");
+cron.schedule("*/15 * * * *", () => {
+  runConnectionWatch().catch((e) =>
+    logger.warn("[Cron] runConnectionWatch error: " + e.message),
+  );
+});
+
 logger.info(
-  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am), beds24-poll (2min)",
+  "Cron jobs registered: follow-ups (30min), scheduled-posts (5min), drip (1min), followers (6h), knowledge-resync (daily), trial-reminders (daily 9am), expire-trials (hourly), guest-sync (hourly), commission-invoices (monthly), pricing-suggestions (daily 5am), review-requests (daily 8am), upsell-nudges (daily 10am), beds24-poll (2min), connection-watch (15min)",
 );
 
 // ─── Configuration readiness ───────────────────────────────

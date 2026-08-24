@@ -110,6 +110,58 @@ const propertySchema = new mongoose.Schema(
       requestedOtas: [{ type: String }],
       lastSyncAt: Date,
       lastError: { type: String, default: null },
+
+      // ── Connection lifecycle ──────────────────────────────────────────────
+      // The honest, narratable state of the OTA connection. `status` above is
+      // a coarse flag written by the import; this is the story the UI tells
+      // the hotelier while the (unavoidable, 1–5 day) OTA approval runs in the
+      // background. Written ONLY by services/hotel/connectionService.js from
+      // what the provider actually reports — never from user intent.
+      //
+      //   not_started           → nothing imported yet
+      //   importing             → import in flight
+      //   imported              → content is ours; no OTA is live yet
+      //   awaiting_ota_approval → provider has the mapping, OTA hasn't said yes
+      //   live                  → at least one OTA is genuinely syncing
+      //   error                 → provider reported a failure (see `message`)
+      sync: {
+        state: {
+          type: String,
+          enum: [
+            "not_started",
+            "importing",
+            "imported",
+            "awaiting_ota_approval",
+            "live",
+            "error",
+          ],
+          default: "not_started",
+        },
+        // Per-OTA truth, so the card can say "Booking.com pending, Airbnb live"
+        // rather than collapsing both into one misleading badge.
+        otaStatus: [
+          {
+            ota: { type: String, default: "" },
+            status: {
+              type: String,
+              enum: ["pending", "live", "error"],
+              default: "pending",
+            },
+            message: { type: String, default: "" },
+            updatedAt: Date,
+          },
+        ],
+        // May we hand rate/availability control to the OTAs yet? False until
+        // every blocker below is cleared — this is the guard rail that stops
+        // us pushing a zero rate onto a live Booking.com listing.
+        readyToActivate: { type: Boolean, default: false },
+        // Plain-language things the hotelier must fix, e.g.
+        // "Set a nightly rate for Deluxe Double". Never codes.
+        blockers: [{ type: String }],
+        lastCheckedAt: Date,
+        message: { type: String, default: "" },
+      },
+
       // iCal tier
       icalImportUrls: [
         {

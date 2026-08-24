@@ -14,6 +14,9 @@ const {
   importChannexProperty,
   listBeds24Properties,
   importBeds24Property,
+  getConnection,
+  refreshConnection,
+  importByConnection,
   listRoomTypes,
   createRoomType,
   updateRoomType,
@@ -39,6 +42,12 @@ router.post("/channex/import", requireOwner, importChannexProperty);
 // Beds24 (OTA) connect/import — the alternative channel manager
 router.get("/beds24/properties", requireOwner, listBeds24Properties);
 router.post("/beds24/import", requireOwner, importBeds24Property);
+
+// Connection state machine — provider-agnostic. `connection` is readable by
+// any team member (the status card appears on Today); changing it is owner-only.
+router.get("/connection", getConnection);
+router.post("/connection/refresh", requireOwner, refreshConnection);
+router.post("/connection/import", requireOwner, importByConnection);
 
 // Rooms
 router.get("/properties/:id/rooms", listRoomTypes);

@@ -13,6 +13,10 @@ const {
   getAvailableUnits,
   toDay,
 } = require("../services/hotel/availability");
+const {
+  evaluateReadiness,
+  refreshConnectionState,
+} = require("../services/hotel/connectionService");
 const logger = require("../utils/logger");
 
 // ─── Properties ─────────────────────────────────────────────────────────────
@@ -245,6 +249,264 @@ const importBeds24Property = asyncHandler(async (req, res) => {
     logger.warn("[hotel] beds24 webhook setup failed", { err: err.message });
   }
   res.json({ success: true, property, roomTypes, webhook });
+});
+
+// ─── Connection state ───────────────────────────────────────────────────────
+//
+// One place the UI can ask "where is my OTA connection, really?" — used by the
+// onboarding review screen, the Today card and Settings. Deliberately reads
+// stored state by default and only hits the provider on an explicit refresh,
+// so a screen that polls doesn't hammer the channel manager.
+
+/** The workspace's property — the one named by ?propertyId=, or the first. */
+const resolveProperty = async (req) => {
+  const q = { workspaceId: req.workspace._id };
+  if (req.query.propertyId || req.body?.propertyId) {
+    q._id = req.query.propertyId || req.body.propertyId;
+  }
+  return Property.findOne(q).sort({ createdAt: 1 });
+};
+
+/** Shape the state machine for the client, with everything the card needs. */
+const connectionPayload = (property, sync, readiness) => ({
+  propertyId: property._id,
+  propertyName: property.name,
+  provider: property.channel?.provider || "none",
+  providerConfigured: !!(
+    property.channel?.channexPropertyId || property.channel?.beds24PropertyId
+  ),
+  state: sync?.state || "not_started",
+  message: sync?.message || "",
+  otaStatus: sync?.otaStatus || [],
+  connectedOtas: property.channel?.connectedOtas || [],
+  requestedOtas: property.channel?.requestedOtas || [],
+  readyToActivate: readiness ? readiness.ready : !!sync?.readyToActivate,
+  blockers: readiness ? readiness.blockers : sync?.blockers || [],
+  // Lets the card say "Imported — 12 rooms" instead of a bare "Imported".
+  roomCount: readiness?.roomCount ?? undefined,
+  lastCheckedAt: sync?.lastCheckedAt || null,
+  lastSyncAt: property.channel?.lastSyncAt || null,
+});
+
+// @GET /api/hotel/connection — stored state + freshly evaluated readiness.
+// Readiness is recomputed on every read because it depends on rooms the owner
+// may have just edited in another tab; provider state is not, because that
+// costs a network call.
+const getConnection = asyncHandler(async (req, res) => {
+  const property = await resolveProperty(req);
+  if (!property) {
+    return res.json({
+      success: true,
+      connection: {
+        state: "not_started",
+        message: "Add your property to get started.",
+        otaStatus: [],
+        blockers: [],
+        readyToActivate: false,
+      },
+    });
+  }
+  const readiness = await evaluateReadiness(property);
+  res.json({
+    success: true,
+    connection: connectionPayload(property, property.channel?.sync, readiness),
+  });
+});
+
+// @POST /api/hotel/connection/refresh — force a provider re-check (owner).
+const refreshConnection = asyncHandler(async (req, res) => {
+  const property = await resolveProperty(req);
+  if (!property) {
+    res.status(404);
+    throw new Error("No property to check yet.");
+  }
+  const sync = await refreshConnectionState(property);
+  // Re-read readiness rather than trusting the snapshot: it's cheap, and it
+  // carries the room count the card needs.
+  const readiness = await evaluateReadiness(property);
+  res.json({
+    success: true,
+    connection: connectionPayload(property, sync, readiness),
+  });
+});
+
+// ─── Import by OTA id ───────────────────────────────────────────────────────
+//
+// @POST /api/hotel/connection/import
+// body { provider?, otaPropertyId?, providerPropertyId? }
+//
+// The hotelier's mental model is "my Booking.com hotel ID is 1234567". The
+// provider's model is its own property id. When we're given the provider id we
+// import directly. When we're only given an OTA id we try to match it against
+// what the provider's property list actually exposes — and when that can't be
+// done we say so plainly rather than guessing, because importing the WRONG
+// hotel is far worse than asking one more question.
+
+/** Which provider to use: the one asked for, else whichever is configured. */
+const pickProvider = (requested) => {
+  if (requested === "channex") {
+    return channexService.isConfigured() ? { name: "channex", svc: channexService } : null;
+  }
+  if (requested === "beds24") {
+    return beds24Service.isConfigured() ? { name: "beds24", svc: beds24Service } : null;
+  }
+  if (channexService.isConfigured()) return { name: "channex", svc: channexService };
+  if (beds24Service.isConfigured()) return { name: "beds24", svc: beds24Service };
+  return null;
+};
+
+/**
+ * Try to find the provider property that corresponds to an OTA property id.
+ *
+ * What we can honestly match on: an exact id match against the provider's own
+ * property id (many hoteliers paste that), and any external/OTA id fields the
+ * provider's list payload happens to carry. Neither provider documents a
+ * Booking.com hotel-id field, so this frequently returns null — by design, the
+ * caller then asks the hotelier to pick from the list instead of us importing
+ * a hotel we merely suspect is theirs.
+ */
+const resolveByOtaId = (list, otaPropertyId, providerName) => {
+  const needle = String(otaPropertyId).trim().toLowerCase();
+  if (!needle) return null;
+
+  const idOf = (p) => String(providerName === "beds24" ? p.id : p.id ?? "");
+
+  // 1. The id IS the provider id (very common — people paste what they have).
+  const direct = list.find((p) => idOf(p).toLowerCase() === needle);
+  if (direct) return direct;
+
+  // 2. Any field on the payload that looks like an external/OTA identifier.
+  //    Scanned rather than hardcoded because the shape differs per provider
+  //    and per how the account was set up.
+  const EXTERNAL_KEYS = [
+    "external_id",
+    "externalId",
+    "ota_id",
+    "otaId",
+    "booking_com_id",
+    "bookingComId",
+    "hotel_id",
+    "hotelId",
+    "propertyCode",
+    "code",
+  ];
+  const scan = list.find((p) =>
+    EXTERNAL_KEYS.some(
+      (k) => p?.[k] != null && String(p[k]).trim().toLowerCase() === needle,
+    ),
+  );
+  return scan || null;
+};
+
+const importByConnection = asyncHandler(async (req, res) => {
+  const { provider: wanted, otaPropertyId, providerPropertyId } = req.body || {};
+
+  const chosen = pickProvider(wanted);
+  if (!chosen) {
+    res.status(503);
+    throw new Error(
+      "Channel sync isn't switched on for your account yet. Add your rooms manually — " +
+        "we'll connect your channels for you in the background.",
+    );
+  }
+  const { name, svc } = chosen;
+
+  // Resolve which provider-side property we're importing.
+  let targetId = providerPropertyId ? String(providerPropertyId) : null;
+  let choices = null;
+
+  if (!targetId) {
+    if (!otaPropertyId) {
+      res.status(400);
+      throw new Error("Enter your hotel ID, or pick your property from the list.");
+    }
+    let list = [];
+    try {
+      list = await svc.listProperties();
+    } catch (err) {
+      logger.warn(`[hotel] ${name} listProperties failed`, { err: err.message });
+      res.status(502);
+      throw new Error(
+        "We couldn't reach your channel manager just now. Please try again in a moment.",
+      );
+    }
+    const match = resolveByOtaId(list, otaPropertyId, name);
+    if (match) {
+      targetId = String(match.id);
+    } else {
+      // Honest failure. Neither provider exposes a Booking.com hotel-id field
+      // we can look up, so rather than importing a hotel we merely suspect is
+      // theirs, we hand back what we CAN see and let them pick. Returned as a
+      // 200 with resolved:false — it's a normal branch of the flow, not an
+      // error, and the error middleware would strip `choices` off a thrown one.
+      choices = list.map((p) => ({
+        providerPropertyId: String(p.id),
+        name: p.title || p.name || p.propertyName || "Property",
+        city: p.city || "",
+        country: p.country || "",
+        rooms: Array.isArray(p.roomTypes) ? p.roomTypes.length : undefined,
+      }));
+      return res.json({
+        success: true,
+        resolved: false,
+        provider: name,
+        choices,
+        message: choices.length
+          ? "We couldn't match that hotel ID to a property on your channel account — " +
+            "pick your property below and we'll bring it across."
+          : "We couldn't find any properties on your channel account yet. Once your OTA " +
+            "listing is linked to the channel manager it'll show up here.",
+      });
+    }
+  }
+
+  // Don't let one workspace hijack another's connected hotel.
+  const idField =
+    name === "channex" ? "channel.channexPropertyId" : "channel.beds24PropertyId";
+  const existing = await Property.findOne({
+    [idField]: targetId,
+    workspaceId: { $ne: req.workspace._id },
+  });
+  if (existing) {
+    res.status(409);
+    throw new Error("This property is already connected to another account.");
+  }
+
+  const { property, roomTypes } = await svc.importProperty(
+    req.workspace._id,
+    targetId,
+  );
+
+  // Best-effort webhook — a missed registration is covered by the poll job.
+  try {
+    await svc.registerWebhook(targetId);
+  } catch (err) {
+    logger.warn(`[hotel] ${name} webhook registration failed`, {
+      err: err.message,
+    });
+  }
+
+  // Give the caller the real state immediately, so the review screen can show
+  // blockers (a room with no rate) the moment the import lands.
+  let connection = null;
+  try {
+    const sync = await refreshConnectionState(property);
+    const readiness = await evaluateReadiness(property);
+    connection = connectionPayload(property, sync, readiness);
+  } catch (err) {
+    logger.warn("[hotel] post-import connection refresh failed", {
+      err: err.message,
+    });
+  }
+
+  res.json({
+    success: true,
+    resolved: true,
+    provider: name,
+    property,
+    roomTypes,
+    connection,
+  });
 });
 
 // ─── Room types ─────────────────────────────────────────────────────────────
@@ -546,6 +808,9 @@ module.exports = {
   importChannexProperty,
   listBeds24Properties,
   importBeds24Property,
+  getConnection,
+  refreshConnection,
+  importByConnection,
   listRoomTypes,
   createRoomType,
   updateRoomType,

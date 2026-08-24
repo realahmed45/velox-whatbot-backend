@@ -164,6 +164,12 @@ async function importProperty(workspaceId, channexPropertyId) {
         "channel.connectedOtas": connectedOtas,
         "channel.lastSyncAt": new Date(),
         "channel.lastError": null,
+        // Enter the connection state machine. `imported` (not `live`) even
+        // when channels came back connected — connectionService decides that
+        // from the provider on its next pass, and it is the only thing allowed
+        // to say a channel is live. See services/hotel/connectionService.js.
+        "channel.sync.state": "imported",
+        "channel.sync.lastCheckedAt": new Date(),
       },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
