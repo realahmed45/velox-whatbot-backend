@@ -40,28 +40,43 @@ const today = asyncHandler(async (req, res) => {
   const d = toDay(new Date());
   const activeStatuses = ["pending", "confirmed"];
 
+  // Group accounts hold several properties; ?propertyId= narrows Today to one.
+  // Without it the screen covers the whole account — right for the common case
+  // of a single hotel.
+  const scopedProperty = req.query.propertyId
+    ? await Property.findOne({
+        _id: req.query.propertyId,
+        workspaceId: wsId,
+        active: true,
+      })
+    : null;
+  const scope = scopedProperty ? { propertyId: scopedProperty._id } : {};
+
   const [arrivals, departures, inHouse, suggestions, property] =
     await Promise.all([
-      HotelBooking.find({ workspaceId: wsId, status: { $in: activeStatuses }, checkIn: d })
+      HotelBooking.find({ workspaceId: wsId, ...scope, status: { $in: activeStatuses }, checkIn: d })
         .select("code guestName guestPhone nights source unitLabel checkedInAt roomTypeId")
         .populate("roomTypeId", "name")
         .lean(),
-      HotelBooking.find({ workspaceId: wsId, status: { $in: activeStatuses }, checkOut: d })
+      HotelBooking.find({ workspaceId: wsId, ...scope, status: { $in: activeStatuses }, checkOut: d })
         .select("code guestName unitLabel checkedOutAt roomTypeId")
         .populate("roomTypeId", "name")
         .lean(),
       HotelBooking.countDocuments({
         workspaceId: wsId,
+        ...scope,
         status: { $in: activeStatuses },
         checkIn: { $lte: d },
         checkOut: { $gt: d },
       }),
-      RateSuggestion.find({ workspaceId: wsId, status: "pending" })
+      RateSuggestion.find({ workspaceId: wsId, ...scope, status: "pending" })
         .sort({ dateFrom: 1 })
         .limit(5)
         .populate("roomTypeId", "name")
         .lean(),
-      Property.findOne({ workspaceId: wsId, active: true }).lean(),
+      scopedProperty
+        ? Promise.resolve(scopedProperty)
+        : Property.findOne({ workspaceId: wsId, active: true }).lean(),
     ]);
 
   // Month-to-date revenue by source (cheap single aggregate).
@@ -70,6 +85,7 @@ const today = asyncHandler(async (req, res) => {
     {
       $match: {
         workspaceId: wsId,
+        ...scope,
         status: { $in: ["confirmed", "completed"] },
         checkIn: { $gte: monthStart },
       },
