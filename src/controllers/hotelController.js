@@ -324,6 +324,28 @@ const listBookings = asyncHandler(async (req, res) => {
   if (req.query.status) q.status = req.query.status;
   if (req.query.source) q.source = req.query.source;
   if (req.query.propertyId) q.propertyId = req.query.propertyId;
+  // Free-text search over guest name, phone and booking code. Phone matching is
+  // separator-tolerant because guestPhone is stored exactly as the guest typed
+  // it ("+62 812 3456" must match a search for "628123456").
+  const term = String(req.query.search || req.query.query || "").trim();
+  if (term) {
+    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const digits = term.replace(/\D/g, "");
+    const or = [
+      { guestName: new RegExp(esc, "i") },
+      { code: new RegExp(esc, "i") },
+      { guestEmail: new RegExp(esc, "i") },
+    ];
+    if (digits.length >= 4) {
+      // Allow any separators between the digits the caller typed.
+      or.push({ guestPhone: new RegExp(digits.split("").join("[^0-9]*"), "i") });
+    }
+    q.$or = or;
+  }
+  // Resolve the booking(s) tied to a chat, so the inbox can show booking
+  // context beside the conversation.
+  if (req.query.contactId) q.contactId = req.query.contactId;
+  if (req.query.conversationId) q.conversationId = req.query.conversationId;
   if (req.query.from || req.query.to) {
     q.checkIn = {};
     if (req.query.from) q.checkIn.$gte = toDay(req.query.from);
