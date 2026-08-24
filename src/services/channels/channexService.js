@@ -311,6 +311,16 @@ function sourceFromOta(otaName = "") {
   const s = String(otaName).toLowerCase().replace(/[\s.]/g, "_");
   if (s.includes("booking")) return "booking_com";
   if (s.includes("airbnb")) return "airbnb";
+  if (s.includes("agoda")) return "agoda";
+  if (s.includes("expedia")) return "expedia";
+  if (s.includes("vrbo") || s.includes("homeaway")) return "vrbo";
+  if (s.includes("traveloka")) return "traveloka";
+  if (s.includes("tiket")) return "tiket";
+  if (s.includes("trip") || s.includes("ctrip")) return "trip_com";
+  if (s.includes("hostelworld")) return "hostelworld";
+  if (s.includes("google")) return "google_hotel";
+  // Any other Channex channel still syncs — it just lands under a generic
+  // label rather than being unsupported.
   return "other_ota";
 }
 

@@ -68,8 +68,19 @@ const hotelBookingSchema = new mongoose.Schema(
         "tiktok",
         "direct",
         "manual",
+        // OTA sources. Channex connects 60+ channels; these are the ones we
+        // label explicitly (biggest globally + the ones that matter in SEA).
+        // Anything else still syncs correctly and lands as "other_ota".
         "booking_com",
         "airbnb",
+        "agoda",
+        "expedia",
+        "vrbo",
+        "traveloka",
+        "tiket",
+        "trip_com",
+        "hostelworld",
+        "google_hotel",
         "other_ota",
       ],
       required: true,
