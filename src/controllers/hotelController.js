@@ -97,6 +97,13 @@ const updateProperty = asyncHandler(async (req, res) => {
     "transfers",
     "active",
   ];
+  // Nested field: the OTAs the hotel says they're listed on (intent, not state).
+  if (Array.isArray(req.body.requestedOtas)) {
+    req.body["channel.requestedOtas"] = req.body.requestedOtas
+      .filter((v) => typeof v === "string")
+      .slice(0, 60);
+    allowed.push("channel.requestedOtas");
+  }
   const update = {};
   for (const k of allowed) {
     if (req.body[k] !== undefined) update[k] = req.body[k];

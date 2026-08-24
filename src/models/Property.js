@@ -66,8 +66,13 @@ const propertySchema = new mongoose.Schema(
       // Channex ids
       channexPropertyId: { type: String, default: null },
       channexGroupId: { type: String, default: null },
-      // Which OTAs are live on the Channex side (informational, from import)
+      // Which OTAs are live on the Channex side (informational, from import).
+      // Written from REAL connection state — never from user intent.
       connectedOtas: [{ type: String }], // e.g. ["booking_com", "airbnb"]
+      // Which OTAs the hotel told us they're listed on, captured at onboarding
+      // before any connection exists. Kept separate from connectedOtas so the
+      // UI can never claim a channel is synced when it merely was requested.
+      requestedOtas: [{ type: String }],
       lastSyncAt: Date,
       lastError: { type: String, default: null },
       // iCal tier

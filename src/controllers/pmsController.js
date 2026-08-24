@@ -65,10 +65,18 @@ const today = asyncHandler(async (req, res) => {
   const day = toDay(new Date());
   const tomorrow = new Date(day.getTime() + DAY_MS);
 
+  // A group account holds several properties; ?propertyId= picks one. Without
+  // it we show the whole account, which is what a single-property hotel wants.
+  const scoped = req.query.propertyId
+    ? await getProperty(workspaceId, req.query.propertyId)
+    : null;
+  const propertyFilter = scoped ? { propertyId: scoped._id } : {};
+
   const [arrivals, departures, inHouse, roomTypes] = await Promise.all([
     // Arriving today and not yet cancelled.
     HotelBooking.find({
       workspaceId,
+      ...propertyFilter,
       status: { $in: ["pending", "confirmed"] },
       checkIn: { $gte: day, $lt: tomorrow },
     })
@@ -78,6 +86,7 @@ const today = asyncHandler(async (req, res) => {
     // Leaving today (still checked in, or due out).
     HotelBooking.find({
       workspaceId,
+      ...propertyFilter,
       status: { $in: ["pending", "confirmed"] },
       checkOut: { $gte: day, $lt: tomorrow },
     })
@@ -87,6 +96,7 @@ const today = asyncHandler(async (req, res) => {
     // Staying tonight: arrived on or before today, leaving after today.
     HotelBooking.find({
       workspaceId,
+      ...propertyFilter,
       status: { $in: ["pending", "confirmed"] },
       checkIn: { $lte: day },
       checkOut: { $gt: tomorrow },
@@ -94,7 +104,7 @@ const today = asyncHandler(async (req, res) => {
       .populate("roomTypeId", "name")
       .sort({ unitLabel: 1 })
       .lean(),
-    RoomType.find({ workspaceId, active: true }).lean(),
+    RoomType.find({ workspaceId, ...propertyFilter, active: true }).lean(),
   ]);
 
   // Housekeeping board — flattened across room types.
@@ -290,8 +300,12 @@ const removeFolioLine = asyncHandler(async (req, res) => {
 
 // @GET /api/pms/units
 const listUnits = asyncHandler(async (req, res) => {
+  const scoped = req.query.propertyId
+    ? await getProperty(req.workspace._id, req.query.propertyId)
+    : null;
   const roomTypes = await RoomType.find({
     workspaceId: req.workspace._id,
+    ...(scoped ? { propertyId: scoped._id } : {}),
     active: true,
   }).sort({ name: 1 });
 
