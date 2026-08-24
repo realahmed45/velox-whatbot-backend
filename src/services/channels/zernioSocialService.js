@@ -453,12 +453,31 @@ const selectFacebookPage = async ({
 }) => {
   if (!isConfigured()) throw new Error("Messaging provider not configured");
   const pid = profileId || (await getDefaultProfileId());
-  const { data } = await client().post("/connect/facebook/select-page", {
-    profileId: pid,
-    pageId,
-    tempToken,
-    userProfile,
-  });
+  let data;
+  try {
+    ({ data } = await client().post("/connect/facebook/select-page", {
+      profileId: pid,
+      pageId,
+      tempToken,
+      userProfile,
+    }));
+  } catch (err) {
+    // Surface WHY the provider refused — a bare "status code 400" in the UI is
+    // useless for support and for us.
+    const detail =
+      err.response?.data?.message ||
+      err.response?.data?.error ||
+      (typeof err.response?.data === "string" ? err.response.data : "") ||
+      err.message;
+    logger.error("[ZernioSocial] selectFacebookPage rejected", {
+      status: err.response?.status,
+      detail: String(detail).slice(0, 300),
+      sentKeys: Object.keys({ profileId: pid, pageId, tempToken, userProfile }),
+    });
+    const e = new Error(detail || "The provider refused that Page.");
+    e.status = err.response?.status;
+    throw e;
+  }
   const account = data?.account || data?.data || data || {};
   return {
     accountId: account?._id || account?.id || account?.accountId || null,

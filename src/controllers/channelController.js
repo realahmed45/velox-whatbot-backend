@@ -139,6 +139,41 @@ exports.getConnectUrl = asyncHandler(async (req, res) => {
 });
 
 // ── GET /api/channels/:platform/callback ─────────────────────────────────────
+/**
+ * Short-lived store for the Facebook OAuth profile.
+ *
+ * The provider requires `userProfile` when we post the chosen Page back, but it
+ * arrives on a browser redirect where it can be truncated, re-encoded or
+ * dropped by the browser — which is exactly what made their API return an
+ * opaque 400. We stash it here keyed by tempToken and never put it in a URL.
+ * In-memory is fine: it's single-use and valid for minutes, and a lost entry
+ * just means the hotel reconnects.
+ */
+const fbProfileCache = new Map();
+const FB_PROFILE_TTL_MS = 15 * 60 * 1000;
+
+const stashFbProfile = (tempToken, profile) => {
+  if (!tempToken || !profile) return;
+  fbProfileCache.set(String(tempToken), {
+    profile,
+    expiresAt: Date.now() + FB_PROFILE_TTL_MS,
+  });
+  // Opportunistic sweep so the map can't grow unbounded.
+  for (const [k, v] of fbProfileCache) {
+    if (v.expiresAt < Date.now()) fbProfileCache.delete(k);
+  }
+};
+
+const takeFbProfile = (tempToken) => {
+  const hit = fbProfileCache.get(String(tempToken));
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    fbProfileCache.delete(String(tempToken));
+    return null;
+  }
+  return hit.profile;
+};
+
 // PUBLIC — Zernio redirects the browser here with ?accountId= (mirrors the IG
 // callback). Attach the account to the workspace named in ?ws=.
 exports.oauthCallback = asyncHandler(async (req, res) => {
@@ -164,12 +199,33 @@ exports.oauthCallback = asyncHandler(async (req, res) => {
   // finished account, so the user picks their Page in OUR UI. Hand the
   // short-lived token to the frontend and let it call the endpoints below.
   if (platform === "messenger" && req.query.tempToken) {
+    // Keep userProfile server-side; only the token travels in the URL.
+    if (req.query.userProfile) {
+      let profile = req.query.userProfile;
+      if (typeof profile === "string") {
+        for (const decode of [
+          (v) => JSON.parse(v),
+          (v) => JSON.parse(decodeURIComponent(v)),
+          (v) => JSON.parse(Buffer.from(v, "base64").toString("utf8")),
+        ]) {
+          try {
+            const out = decode(profile);
+            if (out && typeof out === "object") {
+              profile = out;
+              break;
+            }
+          } catch {
+            /* next shape */
+          }
+        }
+      }
+      if (profile && typeof profile === "object") {
+        stashFbProfile(req.query.tempToken, profile);
+      }
+    }
     const params = new URLSearchParams({
       pick: "facebook",
       tempToken: String(req.query.tempToken),
-      ...(req.query.userProfile
-        ? { userProfile: String(req.query.userProfile) }
-        : {}),
     });
     return res.redirect(302, `${dash}?${params.toString()}`);
   }
@@ -463,13 +519,42 @@ exports.selectMessengerPage = asyncHandler(async (req, res) => {
     throw new Error("Pick a Page to connect.");
   }
   const profileId = await resolveWorkspaceProfileId(req.workspace._id);
-  let parsedProfile = userProfile;
-  if (typeof userProfile === "string") {
-    try {
-      parsedProfile = JSON.parse(userProfile);
-    } catch {
-      parsedProfile = undefined;
+  // The provider REQUIRES userProfile as an object {id, name, profilePicture}.
+  // It reaches us through a browser redirect, so it can arrive as raw JSON,
+  // URL-encoded JSON, or base64 — decode all three rather than silently
+  // dropping it, which is what produced their opaque 400.
+  // Prefer the profile we cached during the callback; fall back to whatever
+  // the client sent (older clients, or a server restart between the two calls).
+  let parsedProfile = takeFbProfile(tempToken) || userProfile;
+  if (typeof parsedProfile === "string" && parsedProfile.trim()) {
+    userProfile = parsedProfile;
+    const attempts = [
+      (v) => JSON.parse(v),
+      (v) => JSON.parse(decodeURIComponent(v)),
+      (v) => JSON.parse(Buffer.from(v, "base64").toString("utf8")),
+    ];
+    parsedProfile = null;
+    for (const decode of attempts) {
+      try {
+        const out = decode(userProfile);
+        if (out && typeof out === "object") {
+          parsedProfile = out;
+          break;
+        }
+      } catch {
+        /* try the next shape */
+      }
     }
+  }
+  if (!parsedProfile || typeof parsedProfile !== "object" || !parsedProfile.id) {
+    logger.error("[Channels] messenger page select missing userProfile", {
+      received: typeof userProfile,
+      sample: String(userProfile || "").slice(0, 120),
+    });
+    res.status(400);
+    throw new Error(
+      "That connection expired before we could finish. Please connect Facebook Messenger again.",
+    );
   }
   const result = await zernioSocial.selectFacebookPage({
     profileId,
@@ -478,6 +563,9 @@ exports.selectMessengerPage = asyncHandler(async (req, res) => {
     userProfile: parsedProfile,
   });
   if (!result.accountId) {
+    logger.error("[Channels] messenger page select returned no account", {
+      raw: JSON.stringify(result.raw || {}).slice(0, 300),
+    });
     res.status(502);
     throw new Error("Could not finish connecting that Page. Try again.");
   }
