@@ -45,6 +45,37 @@ const propertySchema = new mongoose.Schema(
     checkInTime: { type: String, default: "14:00" },
     checkOutTime: { type: String, default: "11:00" },
     policies: { type: String, default: "", maxlength: 4000 },
+
+    // ── Structured house rules ──────────────────────────────────────────────
+    // Free-text `policies` above is for anything unusual. These are the rules
+    // guests ask about by name, kept structured so the AI can answer them
+    // directly instead of paraphrasing a paragraph.
+    rules: {
+      childrenWelcome: { type: Boolean, default: true },
+      // Children at or above this age are charged as adults.
+      childAgeLimit: { type: Number, default: 12 },
+      cotsAvailable: { type: Boolean, default: false },
+      cotPrice: { type: Number, default: 0 },
+      petsAllowed: { type: Boolean, default: false },
+      petFee: { type: Number, default: 0 },
+      smokingAllowed: { type: Boolean, default: false },
+      partiesAllowed: { type: Boolean, default: false },
+      quietHours: { type: String, default: "" }, // "22:00 - 07:00"
+      minAge: { type: Number, default: 0 }, // 0 = no minimum check-in age
+    },
+
+    // How guests can pay at the property — the AI tells them, and it shapes
+    // what a direct booking confirmation should say.
+    paymentMethods: {
+      cash: { type: Boolean, default: true },
+      card: { type: Boolean, default: false },
+      bankTransfer: { type: Boolean, default: false },
+      qris: { type: Boolean, default: false }, // Indonesia
+      eWallet: { type: Boolean, default: false }, // GoPay/OVO/DANA
+      payAtProperty: { type: Boolean, default: true },
+      depositRequired: { type: Boolean, default: false },
+      depositPercent: { type: Number, default: 0 },
+    },
     // Contact shown to guests in confirmations
     phone: { type: String, default: "" },
     email: { type: String, default: "" },

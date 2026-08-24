@@ -95,6 +95,8 @@ const updateProperty = asyncHandler(async (req, res) => {
     "amenities",
     "starRating",
     "transfers",
+    "rules",
+    "paymentMethods",
     "active",
   ];
   // Nested field: the OTAs the hotel says they're listed on (intent, not state).
@@ -222,6 +224,14 @@ const createRoomType = asyncHandler(async (req, res) => {
     baseRate: Number(b.baseRate) || 0,
     currency: b.currency || property.currency || "USD",
     amenities: Array.isArray(b.amenities) ? b.amenities : [],
+    baseOccupancy: Number(b.baseOccupancy) || 2,
+    extraGuestFee: Number(b.extraGuestFee) || 0,
+    ...(b.breakfast ? { breakfast: b.breakfast } : {}),
+    ...(b.cancellation ? { cancellation: b.cancellation } : {}),
+    ...(b.bathroom ? { bathroom: b.bathroom } : {}),
+    ...(b.smokingAllowed !== undefined
+      ? { smokingAllowed: !!b.smokingAllowed }
+      : {}),
     photos: Array.isArray(b.photos)
       ? b.photos.map((p, i) =>
           typeof p === "string" ? { url: p, position: i } : p,
@@ -247,6 +257,12 @@ const updateRoomType = asyncHandler(async (req, res) => {
     "photos",
     "active",
     "sizeSqm",
+    "baseOccupancy",
+    "extraGuestFee",
+    "breakfast",
+    "cancellation",
+    "bathroom",
+    "smokingAllowed",
   ];
   const update = {};
   for (const k of allowed) {

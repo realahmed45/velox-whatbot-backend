@@ -43,6 +43,36 @@ const roomTypeSchema = new mongoose.Schema(
     // for direct/social bookings.
     baseRate: { type: Number, default: 0 },
     currency: { type: String, default: "USD" },
+    // The rate above covers this many guests; each extra guest adds extraGuestFee.
+    // This is how hotels actually price, and the AI needs it to quote a family
+    // correctly rather than quoting the couple price.
+    baseOccupancy: { type: Number, default: 2 },
+    extraGuestFee: { type: Number, default: 0 },
+
+    // ── What the guest actually asks about ──────────────────────────────────
+    // Every field here exists because a guest asks it before booking. Without
+    // it the AI has to say "let me check with the team", which defeats the
+    // point of the concierge.
+    breakfast: {
+      included: { type: Boolean, default: false },
+      price: { type: Number, default: 0 }, // per person per night when not included
+    },
+    cancellation: {
+      policy: {
+        type: String,
+        enum: ["free_until", "non_refundable", "flexible"],
+        default: "free_until",
+      },
+      // Free cancellation up to N days before check-in (free_until only).
+      freeUntilDays: { type: Number, default: 1 },
+      note: { type: String, default: "" },
+    },
+    bathroom: {
+      type: String,
+      enum: ["private", "shared", "ensuite"],
+      default: "private",
+    },
+    smokingAllowed: { type: Boolean, default: false },
     // ── Housekeeping (PMS-lite) ─────────────────────────────────────────────
     // One entry per physical unit of this room type. Staff flip status from a
     // phone; the Calendar screen shows the board. Kept here (not a separate

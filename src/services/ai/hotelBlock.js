@@ -57,15 +57,78 @@ const buildHotelBlock = async (workspace) => {
     out.push(`  • Policies: ${property.policies.trim().slice(0, 500)}`);
   }
 
+  // House rules — guests ask these by name, so give the model the facts rather
+  // than making it paraphrase a policy paragraph.
+  const r = property.rules || {};
+  const rules = [];
+  if (r.childrenWelcome === false) rules.push("no children");
+  else if (r.childAgeLimit) {
+    rules.push(`children welcome (charged as adults from age ${r.childAgeLimit})`);
+  }
+  if (r.cotsAvailable) {
+    rules.push(`cots available${r.cotPrice ? ` (${r.cotPrice} per night)` : " free"}`);
+  }
+  rules.push(r.petsAllowed
+    ? `pets allowed${r.petFee ? ` (${r.petFee} fee)` : ""}`
+    : "no pets");
+  rules.push(r.smokingAllowed ? "smoking allowed" : "no smoking");
+  if (r.partiesAllowed === false) rules.push("no parties or events");
+  if (r.quietHours) rules.push(`quiet hours ${r.quietHours}`);
+  if (r.minAge) rules.push(`minimum check-in age ${r.minAge}`);
+  if (rules.length) out.push(`  • House rules: ${rules.join(", ")}`);
+
+  // How they can pay — the AI should be able to answer this outright.
+  const pm = property.paymentMethods || {};
+  const pays = [];
+  if (pm.cash) pays.push("cash");
+  if (pm.card) pays.push("card");
+  if (pm.bankTransfer) pays.push("bank transfer");
+  if (pm.qris) pays.push("QRIS");
+  if (pm.eWallet) pays.push("e-wallet (GoPay/OVO/DANA)");
+  if (pays.length) {
+    out.push(
+      `  • Payment accepted: ${pays.join(", ")}` +
+        (pm.payAtProperty ? " — payable at the property" : "") +
+        (pm.depositRequired && pm.depositPercent
+          ? `. A ${pm.depositPercent}% deposit is required to confirm.`
+          : ""),
+    );
+  }
+
   out.push(
     "",
     "ROOMS (the [rt:...] bracket is the machine id of the room — machine-only, NEVER show it to guests):",
   );
   roomTypes.forEach((rt) => {
+    const cur = rt.currency || property.currency || "USD";
     const bits = [`  • ${rt.name}`];
     if (rt.bedConfig) bits.push(`— ${rt.bedConfig}`);
     bits.push(`— sleeps ${rt.maxOccupancy || 2}`);
-    bits.push(`— ${rt.currency || property.currency || "USD"} ${rt.baseRate || 0}/night`);
+    // Price, including how extra guests are charged (a family must not be
+    // quoted the two-person rate).
+    let price = `— ${cur} ${rt.baseRate || 0}/night`;
+    if (rt.baseOccupancy) price += ` for ${rt.baseOccupancy} guests`;
+    if (rt.extraGuestFee) {
+      price += `, +${cur} ${rt.extraGuestFee} per extra guest per night`;
+    }
+    bits.push(price);
+    if (rt.bathroom && rt.bathroom !== "private") {
+      bits.push(`— ${rt.bathroom} bathroom`);
+    }
+    // Breakfast and cancellation are the two most-asked questions after price.
+    const bf = rt.breakfast || {};
+    if (bf.included) bits.push("— breakfast included");
+    else if (bf.price) bits.push(`— breakfast ${cur} ${bf.price} per person`);
+    const cx = rt.cancellation || {};
+    if (cx.policy === "non_refundable") bits.push("— non-refundable");
+    else if (cx.policy === "flexible") bits.push("— free cancellation any time");
+    else if (cx.freeUntilDays !== undefined) {
+      bits.push(
+        `— free cancellation until ${cx.freeUntilDays} day${
+          cx.freeUntilDays === 1 ? "" : "s"
+        } before check-in`,
+      );
+    }
     bits.push(`[rt:${rt._id}]`);
     out.push(bits.join(" "));
   });
