@@ -41,6 +41,23 @@ router.get(
   channelCtrl.telegramStatus,
 );
 
+// Messenger headless connect: the hotel picks their Facebook Page inside
+// Botlify instead of on the provider's branded screen.
+router.get(
+  "/messenger/pages",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.listMessengerPages,
+);
+router.post(
+  "/messenger/pages",
+  protect,
+  requireWorkspace,
+  requireOwner,
+  channelCtrl.selectMessengerPage,
+);
+
 // Disconnect a channel (owner only).
 router.delete(
   "/:platform",

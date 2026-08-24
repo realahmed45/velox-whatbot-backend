@@ -97,6 +97,13 @@ const createHostedAuthLink = async ({ platform, profileId, callbackUrl, ...opts 
   if (platform === "whatsapp") {
     params.onboarding = opts.onboarding || "business_app";
   }
+  // Messenger: skip the provider's own branded page-picker. Without this the
+  // hotel is bounced to a Zernio-branded screen mid-connect, which looks like
+  // they left Botlify. Headless returns the raw OAuth data to us instead and we
+  // render the page choice ourselves.
+  if (platform === "messenger" && opts.headless !== false) {
+    params.headless = true;
+  }
 
   logger.info(`[ZernioSocial] creating ${platform} auth link`, {
     profileId: pid,
@@ -418,10 +425,54 @@ const connectTelegramChat = async ({ chatId, profileId }) => {
   };
 };
 
+// ── Facebook page selection (headless Messenger connect) ────────────────────
+// After headless OAuth the provider hands us tempToken + userProfile; we list
+// the user's Pages and post their choice back, so the whole flow stays inside
+// Botlify.
+
+const listFacebookPages = async ({ profileId, tempToken }) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const pid = profileId || (await getDefaultProfileId());
+  const { data } = await client().get("/connect/facebook/select-page", {
+    params: { profileId: pid, tempToken },
+  });
+  const pages = Array.isArray(data) ? data : data?.pages || data?.data || [];
+  return pages.map((p) => ({
+    id: p.id || p.pageId || p._id,
+    name: p.name || p.title || "Facebook Page",
+    picture:
+      p.picture?.data?.url || p.pictureUrl || p.profilePictureUrl || null,
+  }));
+};
+
+const selectFacebookPage = async ({
+  profileId,
+  pageId,
+  tempToken,
+  userProfile,
+}) => {
+  if (!isConfigured()) throw new Error("Messaging provider not configured");
+  const pid = profileId || (await getDefaultProfileId());
+  const { data } = await client().post("/connect/facebook/select-page", {
+    profileId: pid,
+    pageId,
+    tempToken,
+    userProfile,
+  });
+  const account = data?.account || data?.data || data || {};
+  return {
+    accountId: account?._id || account?.id || account?.accountId || null,
+    username: account?.username || account?.name || null,
+    raw: data,
+  };
+};
+
 module.exports = {
   PLATFORMS,
   DM_PLATFORMS,
   toProviderPlatform,
+  listFacebookPages,
+  selectFacebookPage,
   createTelegramCode,
   checkTelegramCode,
   connectTelegramChat,

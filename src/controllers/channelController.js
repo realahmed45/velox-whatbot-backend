@@ -105,9 +105,13 @@ exports.getConnectUrl = asyncHandler(async (req, res) => {
   const base =
     process.env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
   // Embed workspace id in the callback so it knows which workspace to attach.
+  // Carry the caller's origin through the round trip so the callback can send
+  // them back to the same place (wizard step vs Settings).
+  const from = req.query.from === "onboarding" ? "onboarding" : "channels";
   const callbackUrl =
     `${base}/api/channels/${platform}/callback` +
-    `?ws=${encodeURIComponent(workspaceId)}`;
+    `?ws=${encodeURIComponent(workspaceId)}` +
+    `&from=${from}`;
 
   try {
     // WhatsApp: let the caller pick the Embedded Signup mode.
@@ -139,11 +143,35 @@ exports.getConnectUrl = asyncHandler(async (req, res) => {
 // callback). Attach the account to the workspace named in ?ws=.
 exports.oauthCallback = asyncHandler(async (req, res) => {
   const platform = normalizePlatform(req.params.platform);
-  const { ws, accountId, error, error_description } = req.query;
-  const dash = `${CLIENT_URL()}/dashboard/channels`;
+  const { ws, accountId, error, error_description, from } = req.query;
+  // Return the user to wherever they started. Mid-onboarding that's the wizard
+  // step they left; otherwise Settings > Channels. Without this a hotel
+  // connecting WhatsApp during setup got dumped at /dashboard/channels and the
+  // onboarding gate then bounced them to pricing — losing their progress.
+  const ALLOWED_RETURNS = {
+    onboarding: "/onboarding/hotel?step=messaging",
+    channels: "/dashboard/channels",
+  };
+  const dash = `${CLIENT_URL()}${
+    ALLOWED_RETURNS[String(from || "")] || ALLOWED_RETURNS.channels
+  }`;
 
   if (!zernioSocial.isSupportedPlatform(platform)) {
     return res.redirect(302, `${dash}?error=unsupported_platform`);
+  }
+
+  // Headless Messenger: the provider returns raw OAuth data instead of a
+  // finished account, so the user picks their Page in OUR UI. Hand the
+  // short-lived token to the frontend and let it call the endpoints below.
+  if (platform === "messenger" && req.query.tempToken) {
+    const params = new URLSearchParams({
+      pick: "facebook",
+      tempToken: String(req.query.tempToken),
+      ...(req.query.userProfile
+        ? { userProfile: String(req.query.userProfile) }
+        : {}),
+    });
+    return res.redirect(302, `${dash}?${params.toString()}`);
   }
   if (error) {
     logger.warn(`[Channels] ${platform} connect cancelled`, {
@@ -407,6 +435,71 @@ exports.telegramStatus = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     status: "connected",
+    username: result.username,
+    webhookError: saved.webhookError || null,
+  });
+});
+
+// ── Facebook page picker (headless Messenger connect) ───────────────────────
+
+// @GET /api/channels/messenger/pages?tempToken=...
+// The Pages this user manages, so they choose one inside Botlify.
+exports.listMessengerPages = asyncHandler(async (req, res) => {
+  const tempToken = String(req.query.tempToken || "").trim();
+  if (!tempToken) {
+    res.status(400);
+    throw new Error("Missing connection token — please start again.");
+  }
+  const profileId = await resolveWorkspaceProfileId(req.workspace._id);
+  const pages = await zernioSocial.listFacebookPages({ profileId, tempToken });
+  res.json({ success: true, pages });
+});
+
+// @POST /api/channels/messenger/pages — { pageId, tempToken, userProfile }
+exports.selectMessengerPage = asyncHandler(async (req, res) => {
+  const { pageId, tempToken, userProfile } = req.body || {};
+  if (!pageId || !tempToken) {
+    res.status(400);
+    throw new Error("Pick a Page to connect.");
+  }
+  const profileId = await resolveWorkspaceProfileId(req.workspace._id);
+  let parsedProfile = userProfile;
+  if (typeof userProfile === "string") {
+    try {
+      parsedProfile = JSON.parse(userProfile);
+    } catch {
+      parsedProfile = undefined;
+    }
+  }
+  const result = await zernioSocial.selectFacebookPage({
+    profileId,
+    pageId,
+    tempToken,
+    userProfile: parsedProfile,
+  });
+  if (!result.accountId) {
+    res.status(502);
+    throw new Error("Could not finish connecting that Page. Try again.");
+  }
+  const saved = await saveChannelAccount({
+    workspace: req.workspace,
+    platform: "messenger",
+    accountId: result.accountId,
+    info: { username: result.username, name: result.username },
+  });
+  if (!saved.ok) {
+    res.status(409);
+    throw new Error(
+      saved.reason === "already_connected"
+        ? "That Facebook Page is already connected to another account."
+        : "Could not save the connection.",
+    );
+  }
+  logger.info(
+    `[Channels] messenger connected ws=${req.workspace._id} page=${pageId}`,
+  );
+  res.json({
+    success: true,
     username: result.username,
     webhookError: saved.webhookError || null,
   });
