@@ -4,6 +4,7 @@ const {
   protect,
   requireWorkspace,
   requireOwner,
+  requirePermission,
 } = require("../middleware/auth");
 const {
   listProperties,
@@ -39,12 +40,20 @@ router.post("/properties/:id/rooms", requireOwner, createRoomType);
 router.put("/rooms/:roomId", requireOwner, updateRoomType);
 
 // Availability
-router.get("/rooms/:roomId/availability", roomAvailability);
-router.get("/rooms/:roomId/check", checkRange);
+router.get(
+  "/rooms/:roomId/availability",
+  requirePermission("calendar"),
+  roomAvailability,
+);
+router.get("/rooms/:roomId/check", requirePermission("calendar"), checkRange);
 
 // Bookings
-router.get("/bookings", listBookings);
-router.post("/bookings", createManualBooking);
-router.patch("/bookings/:id/status", updateBookingStatus);
+router.get("/bookings", requirePermission("bookings"), listBookings);
+router.post("/bookings", requirePermission("bookings"), createManualBooking);
+router.patch(
+  "/bookings/:id/status",
+  requirePermission("bookings"),
+  updateBookingStatus,
+);
 
 module.exports = router;

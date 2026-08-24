@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { protect, requireWorkspace } = require("../middleware/auth");
+const {
+  protect,
+  requireWorkspace,
+  requirePermission,
+} = require("../middleware/auth");
 const {
   today,
   checkIn,
@@ -20,17 +24,33 @@ router.use(protect);
 router.use(requireWorkspace);
 
 // Front desk
-router.get("/today", today);
-router.post("/bookings/:id/check-in", checkIn);
-router.post("/bookings/:id/check-out", checkOut);
+router.get("/today", requirePermission("bookings"), today);
+router.post(
+  "/bookings/:id/check-in",
+  requirePermission("bookings"),
+  checkIn,
+);
+router.post(
+  "/bookings/:id/check-out",
+  requirePermission("bookings"),
+  checkOut,
+);
 
 // Folio (extras charged during the stay)
-router.post("/bookings/:id/folio", addFolioLine);
-router.delete("/bookings/:id/folio/:lineId", removeFolioLine);
+router.post(
+  "/bookings/:id/folio",
+  requirePermission("bookings"),
+  addFolioLine,
+);
+router.delete(
+  "/bookings/:id/folio/:lineId",
+  requirePermission("bookings"),
+  removeFolioLine,
+);
 
 // Housekeeping
-router.get("/units", listUnits);
-router.patch("/units", updateUnit);
+router.get("/units", requirePermission("calendar"), listUnits);
+router.patch("/units", requirePermission("calendar"), updateUnit);
 
 // Public booking page link
 router.put("/property/slug", propertySlug);
@@ -39,8 +59,12 @@ router.put("/property/slug", propertySlug);
 router.get("/demand", demand);
 
 // Unified guest profiles (one person across every channel and OTA).
-router.get("/guests", listGuestProfiles);
-router.get("/guests/:id", getGuestProfile);
-router.post("/guests/:id/preferences", addGuestPreference);
+router.get("/guests", requirePermission("guests"), listGuestProfiles);
+router.get("/guests/:id", requirePermission("guests"), getGuestProfile);
+router.post(
+  "/guests/:id/preferences",
+  requirePermission("guests"),
+  addGuestPreference,
+);
 
 module.exports = router;
