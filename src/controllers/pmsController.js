@@ -35,8 +35,25 @@ function ensureUnits(roomType) {
   return true;
 }
 
-/** The workspace's property (v1 is one property per workspace). */
-async function getProperty(workspaceId) {
+/**
+ * Resolve which property a request is about.
+ *
+ * A workspace can hold several properties (a group with three villas is one
+ * account). The client passes ?propertyId=... to pick one; without it we fall
+ * back to the oldest active property so single-property hotels — the common
+ * case — never have to think about it.
+ */
+async function getProperty(workspaceId, propertyId = null) {
+  if (propertyId) {
+    const chosen = await Property.findOne({
+      _id: propertyId,
+      workspaceId,
+      active: true,
+    });
+    if (chosen) return chosen;
+    // Fall through when the id is bogus or belongs to another workspace, so a
+    // stale id in the UI degrades to the default rather than erroring.
+  }
   return Property.findOne({ workspaceId, active: true }).sort({ createdAt: 1 });
 }
 
@@ -350,7 +367,7 @@ const updateUnit = asyncHandler(async (req, res) => {
 
 // @PUT /api/pms/property/slug — generate (or return) the public page slug.
 const propertySlug = asyncHandler(async (req, res) => {
-  const property = await getProperty(req.workspace._id);
+  const property = await getProperty(req.workspace._id, req.query.propertyId);
   if (!property) {
     res.status(404);
     throw new Error("No property set up yet");
@@ -376,7 +393,7 @@ const propertySlug = asyncHandler(async (req, res) => {
 
 // @GET /api/pms/demand
 const demand = asyncHandler(async (req, res) => {
-  const property = await getProperty(req.workspace._id);
+  const property = await getProperty(req.workspace._id, req.query.propertyId);
   if (!property) {
     res.status(404);
     throw new Error("No property set up yet");

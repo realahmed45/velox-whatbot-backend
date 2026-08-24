@@ -110,10 +110,18 @@ exports.getConnectUrl = asyncHandler(async (req, res) => {
     `?ws=${encodeURIComponent(workspaceId)}`;
 
   try {
+    // WhatsApp: let the caller pick the Embedded Signup mode.
+    //   ?mode=business_app (default) — number lives on the WhatsApp Business
+    //     app, which is the normal hotel front-desk setup
+    //   ?mode=api — number is already on Cloud API with another provider
+    const mode = String(req.query.mode || "").trim();
     const { url } = await zernioSocial.createHostedAuthLink({
       platform,
       profileId,
       callbackUrl,
+      ...(mode === "api" || mode === "business_app"
+        ? { onboarding: mode }
+        : {}),
     });
     res.json({ url });
   } catch (err) {

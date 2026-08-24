@@ -31,6 +31,24 @@ const createProperty = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error("Property name is required");
   }
+
+  // Properties are billed individually, so the plan caps how many a workspace
+  // can run. Checked here rather than in the UI so it holds for API callers too.
+  const { getPlan } = require("../config/plans");
+  const limit = getPlan(req.workspace.subscription?.plan)?.limits?.properties;
+  if (limit && limit > 0) {
+    const existing = await Property.countDocuments({
+      workspaceId: req.workspace._id,
+      active: true,
+    });
+    if (existing >= limit) {
+      res.status(403);
+      throw new Error(
+        `Your plan covers ${limit} propert${limit === 1 ? "y" : "ies"}. ` +
+          "Upgrade to add another.",
+      );
+    }
+  }
   const property = await Property.create({
     workspaceId: req.workspace._id,
     name: b.name,

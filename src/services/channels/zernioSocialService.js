@@ -87,10 +87,16 @@ const createHostedAuthLink = async ({ platform, profileId, callbackUrl, ...opts 
     params.redirectUrl = callbackUrl;
     params.redirect_url = callbackUrl;
   }
-  // WhatsApp only: `api` runs Meta's Embedded Signup (WABA + number picker).
-  // Omitting it defaults to coexistence with the consumer WhatsApp Business
-  // app, which is not what a hotel connecting a business number wants.
-  if (platform === "whatsapp") params.onboarding = opts.onboarding || "api";
+  // WhatsApp only. Two Meta Embedded Signup modes, and the default matters:
+  //   business_app (coexistence) — the number is on the consumer WhatsApp
+  //     Business app. This is the NORMAL hotel case: they run WhatsApp on a
+  //     phone at the front desk and want the AI alongside it.
+  //   api — the number is already on Cloud API somewhere else.
+  // Defaulting to `api` made Meta demand a fresh phone verification for numbers
+  // that were already live on the Business app, which is what fails.
+  if (platform === "whatsapp") {
+    params.onboarding = opts.onboarding || "business_app";
+  }
 
   logger.info(`[ZernioSocial] creating ${platform} auth link`, {
     profileId: pid,
