@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "test": "node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testV2Flow.js",
+    "test": "node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testOnePlace.js && node scripts/testV2Flow.js",
     "test:booking": "node scripts/testBookingEngine.js",
     "test:revenue": "node scripts/testRevenueEngine.js",
     "test:flow": "node scripts/testV2Flow.js",
     "migrate:hotels": "node scripts/migrateToHotels.js",
-    "test:ota": "node scripts/testOtaSync.js"
+    "test:ota": "node scripts/testOtaSync.js",
+    "test:oneplace": "node scripts/testOnePlace.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
