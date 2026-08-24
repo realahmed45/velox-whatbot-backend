@@ -12,8 +12,11 @@ const getConversations = asyncHandler(async (req, res) => {
   const { status, search, channel, page = 1, limit = 30 } = req.query;
   const filter = { workspaceId: req.workspace._id };
   if (status && status !== "all") filter.status = status;
-  if (channel === "instagram") {
-    filter.channelType = "instagram";
+  // Filter by platform so the inbox can be split per channel. Anything not in
+  // the supported list is ignored rather than returning nothing.
+  const CHANNELS = ["whatsapp", "instagram", "messenger", "telegram"];
+  if (channel && CHANNELS.includes(channel)) {
+    filter.channelType = channel;
   }
 
   let query = Conversation.find(filter)
@@ -59,7 +62,7 @@ const getConversations = asyncHandler(async (req, res) => {
       ct.username ||
       obj.participantName ||
       obj.participantUsername ||
-      "Instagram user";
+      "Guest";
     obj.contact = {
       _id: ct._id,
       name: displayName,
@@ -74,11 +77,38 @@ const getConversations = asyncHandler(async (req, res) => {
     return obj;
   });
 
+  // Per-channel counts so the inbox can show a tab per platform with unread
+  // badges without the client fetching every conversation.
+  const counts = await Conversation.aggregate([
+    { $match: { workspaceId: req.workspace._id } },
+    {
+      $group: {
+        _id: "$channelType",
+        total: { $sum: 1 },
+        unread: { $sum: { $ifNull: ["$unreadByAgentCount", 0] } },
+        needsHuman: {
+          $sum: {
+            $cond: [{ $eq: ["$status", "awaiting_human"] }, 1, 0],
+          },
+        },
+      },
+    },
+  ]);
+  const byChannel = {};
+  for (const c of counts) {
+    byChannel[c._id || "instagram"] = {
+      total: c.total,
+      unread: c.unread,
+      needsHuman: c.needsHuman,
+    };
+  }
+
   res.json({
     success: true,
     conversations: shaped,
     total,
     page: parseInt(page),
+    byChannel,
   });
 });
 
