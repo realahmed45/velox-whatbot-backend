@@ -43,12 +43,60 @@ const WEBHOOK_TOKEN = process.env.CHANNEX_WEBHOOK_TOKEN || "";
 
 const isConfigured = () => !!KEY;
 
-const client = () =>
-  axios.create({
+// ── ARI throttle ─────────────────────────────────────────────────────────────
+// Channex allows 20 ARI writes per minute per property. The revenue engine in
+// auto mode applies one suggestion per room type in a loop, so a hotel with
+// enough rooms would otherwise walk straight into a 429 and silently stop
+// pushing prices. Spacing the writes is cheaper than discovering that on a live
+// property, and certification expects a queue with retry/backoff anyway.
+const ARI_PATHS = /\/(availability|restrictions)$/;
+const ARI_MIN_GAP_MS = Math.ceil(60_000 / 20); // 20/min → one every 3s
+let ariChain = Promise.resolve();
+let lastAriAt = 0;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Serialise ARI writes and keep them at least ARI_MIN_GAP_MS apart. */
+const throttleAri = () => {
+  const run = ariChain.then(async () => {
+    const wait = lastAriAt + ARI_MIN_GAP_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastAriAt = Date.now();
+  });
+  // Keep the chain alive even if a caller rejects downstream.
+  ariChain = run.catch(() => {});
+  return run;
+};
+
+const client = () => {
+  const instance = axios.create({
     baseURL: BASE,
     headers: { "user-api-key": KEY, "Content-Type": "application/json" },
     timeout: 20000,
   });
+
+  instance.interceptors.request.use(async (config) => {
+    if (ARI_PATHS.test(config.url || "")) await throttleAri();
+    return config;
+  });
+
+  // One retry on 429, honouring Retry-After. Anything still failing after that
+  // surfaces to the caller rather than being swallowed.
+  instance.interceptors.response.use(undefined, async (err) => {
+    const cfg = err.config || {};
+    if (err.response?.status === 429 && !cfg.__retried) {
+      cfg.__retried = true;
+      const after = Number(err.response.headers?.["retry-after"]);
+      const waitMs = Number.isFinite(after) && after > 0 ? after * 1000 : 5000;
+      logger.warn(`[Channex] 429 rate limited — retrying in ${waitMs}ms`);
+      await sleep(waitMs);
+      return instance.request(cfg);
+    }
+    throw err;
+  });
+
+  return instance;
+};
 
 /** Unwrap a JSON:API item → flat {id, ...attributes}. */
 const flat = (item) =>
