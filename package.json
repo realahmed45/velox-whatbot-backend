@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "test": "node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testOnePlace.js && node scripts/testV2Flow.js",
+    "test": "node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testOnePlace.js && node scripts/testChannelRouting.js && node scripts/testV2Flow.js",
     "test:booking": "node scripts/testBookingEngine.js",
     "test:revenue": "node scripts/testRevenueEngine.js",
     "test:flow": "node scripts/testV2Flow.js",

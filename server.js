@@ -347,6 +347,18 @@ cron.schedule("*/2 * * * *", () => {
   );
 });
 
+// Drain the Channex booking-revisions feed every 2 minutes. Channex calls this
+// feed "the primary way to get bookings" — our webhook acks 200 before it
+// processes, and Channex only retries on 5xx, so without this a booking that
+// failed mid-store would be lost silently. Revisions stay in the feed until we
+// ack them, so a failure here is retried rather than dropped.
+const { pollChannexBookings } = require("./src/jobs/channexPollJob");
+cron.schedule("*/2 * * * *", () => {
+  pollChannexBookings().catch((e) =>
+    logger.warn("[Cron] pollChannexBookings error: " + e.message),
+  );
+});
+
 // Move OTA connections forward while nobody is watching. Booking.com's own
 // approval takes 1–5 days; this is what lets the hotelier forget about it and
 // simply get an email when their channel goes live.

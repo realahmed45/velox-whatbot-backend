@@ -370,12 +370,20 @@ const TOOLS = [
       let pushed = false;
       let pushError = null;
       const property = await Property.findById(rt.propertyId);
-      if (property && property.channel && property.channel.provider === "channex" && rt.channexRatePlanId) {
+      // Route through the provider abstraction rather than naming Channex: a
+      // hardcoded provider meant the rate changed in Botlify while the OTA kept
+      // selling the old price on every non-Channex hotel.
+      const { getProvider, providerRoomId } = require("../channels");
+      const channel = getProvider(property);
+      if (
+        channel &&
+        providerRoomId(property, rt) &&
+        typeof channel.pushRateRange === "function"
+      ) {
         try {
-          const channex = require("../channels/channexService");
           const from = day(args.from) || day(new Date());
           const to = day(args.to) || new Date(from.getTime() + 30 * DAY);
-          await channex.pushRateRange(property, rt, from, to, rate);
+          await channel.pushRateRange(property, rt, from, to, rate);
           pushed = true;
         } catch (e) {
           pushError = e.message;

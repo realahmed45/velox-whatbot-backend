@@ -112,6 +112,66 @@ async function getBooking(channexBookingId) {
   return flat(data?.data);
 }
 
+/**
+ * Pull un-acknowledged booking revisions and ingest them.
+ *
+ * This is the safety net under the webhook, and Channex's own docs call the
+ * revisions feed "the primary way to get bookings". It matters because our
+ * webhook acks 200 before processing: Channex only retries on 5xx, so a booking
+ * that failed to process would otherwise be lost for good — discovered when a
+ * guest turns up with a reservation Botlify never recorded.
+ *
+ * A revision stays in the feed until we ack it, so anything that throws is
+ * simply retried on the next run rather than dropped. Re-seeing a revision is
+ * free: ingestOtaBooking is idempotent on otaReservationId.
+ */
+async function pollBookingRevisions({ limit = 100 } = {}) {
+  if (!isConfigured()) return { ok: false, reason: "not_configured" };
+
+  const { data } = await client().get("/booking_revisions/feed", {
+    params: { "order[inserted_at]": "asc", limit },
+  });
+  const revisions = flatList(data?.data);
+
+  let ingested = 0;
+  let failed = 0;
+  for (const rev of revisions) {
+    try {
+      const result = await handleBookingEvent(rev);
+      // Only ack what we actually stored. An unknown property or a failed fetch
+      // leaves the revision in the feed so a later run (or a fixed mapping) can
+      // still pick it up.
+      if (result?.ok) {
+        await ackBookingRevision(rev.id);
+        ingested++;
+      } else {
+        failed++;
+        logger.warn("[Channex] revision not ingested", {
+          revisionId: rev.id,
+          reason: result?.reason,
+        });
+      }
+    } catch (err) {
+      failed++;
+      logger.error("[Channex] revision processing failed", {
+        revisionId: rev.id,
+        err: err.message,
+      });
+    }
+  }
+  if (revisions.length) {
+    logger.info(
+      `[Channex] revisions feed: ${ingested} ingested, ${failed} left for retry`,
+    );
+  }
+  return { ok: true, seen: revisions.length, ingested, failed };
+}
+
+/** Tell Channex we have stored this revision so it leaves the feed. */
+async function ackBookingRevision(revisionId) {
+  await client().post(`/booking_revisions/${revisionId}/ack`);
+}
+
 // ── Import: Channex property → our Property + RoomTypes ─────────────────────
 
 /**
@@ -499,6 +559,8 @@ module.exports = {
   registerWebhook,
   verifyWebhookToken,
   handleBookingEvent,
+  pollBookingRevisions,
+  ackBookingRevision,
   handleReviewEvent,
   sourceFromOta,
 };

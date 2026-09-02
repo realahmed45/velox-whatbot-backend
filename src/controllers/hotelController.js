@@ -461,8 +461,18 @@ const importByConnection = asyncHandler(async (req, res) => {
   }
 
   // Don't let one workspace hijack another's connected hotel.
-  const idField =
-    name === "channex" ? "channel.channexPropertyId" : "channel.beds24PropertyId";
+  // Per-provider id fields: a ternary would silently route any future provider
+  // into the Beds24 field and corrupt the ownership check, so map explicitly and
+  // fail loudly on a provider we don't have a field for.
+  const ID_FIELDS = {
+    channex: "channel.channexPropertyId",
+    beds24: "channel.beds24PropertyId",
+  };
+  const idField = ID_FIELDS[name];
+  if (!idField) {
+    res.status(500);
+    throw new Error(`No property-id field configured for provider "${name}".`);
+  }
   const existing = await Property.findOne({
     [idField]: targetId,
     workspaceId: { $ne: req.workspace._id },

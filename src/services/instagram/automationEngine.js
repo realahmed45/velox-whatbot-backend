@@ -371,12 +371,21 @@ const recentlyTriggered = async (
 };
 
 // ── Outbound transport (multi-channel) ───────────────────────────────────────
-// Post-pivot a conversation may live on WhatsApp/TikTok (workspace.channels)
-// instead of Instagram. These helpers resolve the correct provider account for
-// a conversation so every send site routes through the right channel.
+// Post-pivot a conversation may live on WhatsApp, Messenger or Telegram
+// (workspace.channels) instead of Instagram. These helpers resolve the correct
+// provider account for a conversation so every send site routes through the
+// right channel.
+
+// Instagram is the one channel that still lives on the legacy
+// workspace.instagram subdoc; every other DM channel rides workspace.channels.
+// Deriving this from the channel name rather than a hardcoded list is what lets
+// Messenger and Telegram send at all — they were silently falling through to
+// Instagram's token before, which is undefined on a hotel that never connected it.
+const ridesChannelsArray = (channelType) =>
+  !!channelType && channelType !== "instagram";
 
 const channelEntryConnected = (workspace, channelType) =>
-  (channelType === "whatsapp" || channelType === "tiktok") &&
+  ridesChannelsArray(channelType) &&
   (workspace.channels || []).some(
     (c) =>
       c.platform === channelType && ["connected", "error"].includes(c.status),
@@ -385,13 +394,13 @@ const channelEntryConnected = (workspace, channelType) =>
 /**
  * Resolve how to send an outbound message for this conversation.
  * Returns { channel, send(recipientId, text, opts) } — Instagram sends keep
- * using the workspace token via the existing dispatcher; WhatsApp/TikTok
- * conversations decrypt the workspace.channels accountId and send through
- * zernioSocialService.
+ * using the workspace token via the existing dispatcher; every other channel
+ * decrypts its workspace.channels accountId and sends through that channel's
+ * own provider.
  */
 const resolveSendTransport = async (workspace, conversation) => {
   const channel = conversation?.channelType || "instagram";
-  if (channel === "whatsapp" || channel === "tiktok") {
+  if (ridesChannelsArray(channel)) {
     // channels.accountId is select:false on the schema — fetch it explicitly.
     const wsDoc = await Workspace.findById(workspace._id).select(
       "+channels.accountId",
