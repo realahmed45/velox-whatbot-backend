@@ -98,6 +98,19 @@ async function createTransfer({
 
   let doc;
 
+  // Is there a driver roster to dispatch to? The hotel's own if they run a
+  // service, otherwise Botlify's shared pool. Checked before the branch below
+  // so "hotel has its own service" and "hotel has drivers entered" stay
+  // separate facts — a hotel can say yes at onboarding and add drivers later.
+  const Driver = require("../../models/Driver");
+  const driverPool = settings.hasOwnService
+    ? { scope: "hotel", workspaceId: workspace._id }
+    : { scope: "platform" };
+  const driversAvailable = await Driver.countDocuments({
+    ...driverPool,
+    active: true,
+  });
+
   if (settings.hasOwnService) {
     // ── 1. Hotel's own driver — confirmed at their flat price ──────────────
     doc = await TransferBooking.create({
@@ -107,6 +120,16 @@ async function createTransfer({
       currency: property.currency || "USD",
       status: "confirmed",
       notes: settings.ownServiceNotes || "",
+      dispatch: { state: driversAvailable ? "searching" : "idle" },
+    });
+  } else if (driversAvailable) {
+    // ── 1b. No service of their own, but we have drivers — dispatch ours ───
+    doc = await TransferBooking.create({
+      ...base,
+      provider: "platform",
+      currency: property.currency || "USD",
+      status: "pending",
+      dispatch: { state: "searching" },
     });
   } else if (settings.offerPartnerService && mozioService.isConfigured()) {
     // ── 2. Partner (Mozio) transfer on the hotel's behalf ──────────────────
@@ -134,16 +157,44 @@ async function createTransfer({
     });
   }
 
+  // Start the driver rotation. Best-effort: a dispatch failure must not lose
+  // the transfer record itself — the hotel can still arrange it by hand, and
+  // the sweep job retries anything left searching.
+  if (doc.dispatch?.state === "searching") {
+    try {
+      const dispatchService = require("./dispatchService");
+      await dispatchService.offerNext(doc._id);
+      doc = await TransferBooking.findById(doc._id);
+    } catch (err) {
+      logger.warn(`[transfer] dispatch failed for ${doc._id}: ${err.message}`);
+    }
+  }
+
   await afterTransferChange(workspace, property, doc, "created");
 
   const label = whenLabel(pickupAt, workspace.timezone);
   const what = direction === "pickup" ? "airport pickup" : "airport drop-off";
-  const confirmationText =
-    doc.status === "confirmed"
-      ? `Your ${what} is arranged for ${label} ✈️` +
-        (doc.price > 0 ? ` — ${doc.currency} ${doc.price}` : "") +
-        (doc.flightNumber ? ` (flight ${doc.flightNumber})` : "")
-      : `We've noted your ${what} request for ${label} — the hotel will confirm the details shortly. 🚗`;
+  // What the guest is told. A driver who has already accepted is named with
+  // their number so the guest can reach them directly; while we're still
+  // finding someone we say exactly that rather than implying a car is booked.
+  const dispatchState = doc.dispatch?.state;
+  let confirmationText;
+  if (dispatchState === "assigned" && doc.driverSnapshot?.phone) {
+    const { guestHandoffText } = require("./dispatchService");
+    confirmationText =
+      `Your ${what} is set for ${label} ✈️ ` + guestHandoffText(doc);
+  } else if (dispatchState === "searching") {
+    confirmationText =
+      `Your ${what} is booked for ${label} ✈️ — we're assigning your driver now ` +
+      `and will send you their name and number shortly. 🚗`;
+  } else if (doc.status === "confirmed") {
+    confirmationText =
+      `Your ${what} is arranged for ${label} ✈️` +
+      (doc.price > 0 ? ` — ${doc.currency} ${doc.price}` : "") +
+      (doc.flightNumber ? ` (flight ${doc.flightNumber})` : "");
+  } else {
+    confirmationText = `We've noted your ${what} request for ${label} — the hotel will confirm the details shortly. 🚗`;
+  }
 
   logger.info(
     `[transfer] created ws=${workspace._id} provider=${doc.provider} status=${doc.status} dir=${direction}`,

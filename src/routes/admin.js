@@ -49,4 +49,19 @@ router.post("/commissions/mark-paid-bulk", markCommissionsPaidBulk);
 router.post("/commissions/:id/verify", verifyCommission);
 router.post("/commissions/:id/mark-paid", markCommissionPaid);
 
+// Botlify's own driver pool — dispatched for hotels that have no taxi service
+// of their own. A hotel's own drivers are managed from its dashboard instead.
+const {
+  listPlatformDrivers,
+  createPlatformDriver,
+  updatePlatformDriver,
+  deletePlatformDriver,
+  platformDriverLink,
+} = require("../controllers/driverController");
+router.get("/drivers", listPlatformDrivers);
+router.post("/drivers", createPlatformDriver);
+router.patch("/drivers/:id", updatePlatformDriver);
+router.delete("/drivers/:id", deletePlatformDriver);
+router.get("/drivers/:id/link", platformDriverLink);
+
 module.exports = router;
