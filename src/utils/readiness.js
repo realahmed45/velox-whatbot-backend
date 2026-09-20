@@ -117,6 +117,27 @@ function checkReadiness() {
     warnings.push("CLOUDINARY_CLOUD_NAME — photo uploads will fail");
   } else ready.push("media uploads");
 
+  // Driver dispatch. Never critical: without a delivery channel the rotation
+  // still runs and the link still works — the driver just isn't pinged, which
+  // the hotel notices as "nobody accepted" rather than as a silent failure.
+  const smsReady =
+    isSet(env.TWILIO_ACCOUNT_SID) &&
+    isSet(env.TWILIO_AUTH_TOKEN) &&
+    isSet(env.TWILIO_FROM_NUMBER);
+  if (smsReady) {
+    ready.push("driver dispatch (SMS)");
+  } else if (isSet(env.BREVO_API_KEY)) {
+    warnings.push(
+      "TWILIO_* not set — drivers are notified by email only; without an email " +
+        "address on a driver their pickup offer is never delivered",
+    );
+  } else {
+    warnings.push(
+      "TWILIO_* and BREVO_API_KEY both unset — drivers cannot be notified of " +
+        "pickups at all (their link still works if they open it)",
+    );
+  }
+
   if (!isSet(env.MOZIO_API_KEY)) {
     warnings.push(
       "MOZIO_API_KEY — transfers are recorded as 'arrange manually' (not auto-booked)",
