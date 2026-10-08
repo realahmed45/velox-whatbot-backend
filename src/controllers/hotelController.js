@@ -399,7 +399,12 @@ const resolveByOtaId = (list, otaPropertyId, providerName) => {
 };
 
 const importByConnection = asyncHandler(async (req, res) => {
-  const { provider: wanted, otaPropertyId, providerPropertyId } = req.body || {};
+  const {
+    provider: wanted,
+    otaPropertyId,
+    providerPropertyId,
+    requestedOtas,
+  } = req.body || {};
 
   const chosen = pickProvider(wanted);
   if (!chosen) {
@@ -486,6 +491,22 @@ const importByConnection = asyncHandler(async (req, res) => {
     req.workspace._id,
     targetId,
   );
+
+  // The hotelier told us every channel they sell on, not just the one we
+  // imported from. Record the rest so the connection tracker knows what it is
+  // waiting for and the dashboard can report each one honestly.
+  if (Array.isArray(requestedOtas) && requestedOtas.length) {
+    try {
+      property.channel.requestedOtas = requestedOtas
+        .map((o) => String(o).trim())
+        .filter(Boolean);
+      await property.save();
+    } catch (err) {
+      logger.warn("[hotel] could not record requested OTAs", {
+        err: err.message,
+      });
+    }
+  }
 
   // Best-effort webhook — a missed registration is covered by the poll job.
   try {
