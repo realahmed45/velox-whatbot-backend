@@ -1012,10 +1012,20 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
       currency: "USD",
     });
     const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
+    // Straight on to setting the hotel up, NOT to the dashboard. Picking a plan
+    // is the first step of onboarding, not the last — sending them to /dashboard
+    // here skipped the whole wizard and dropped them into an empty product. A
+    // hotel that's already set up is switching plans, so it goes back to billing.
+    const isSetUp = await require("../models/Property").exists({
+      workspaceId: req.workspace._id,
+      active: true,
+    });
     return res.json({
       success: true,
       activated: true,
-      url: `${clientUrl}/dashboard/billing?checkout=success`,
+      url: isSetUp
+        ? `${clientUrl}/dashboard/billing?checkout=success`
+        : `${clientUrl}/onboarding/hotel`,
     });
   }
   const cycle = billingCycle === "annual" ? "annual" : "monthly";
@@ -1033,10 +1043,19 @@ const createCreemCheckout = asyncHandler(async (req, res) => {
   }
 
   const clientUrl = process.env.CLIENT_URL || "https://www.botlify.site";
+  // A hotel that hasn't been set up yet comes back to the wizard, not to a
+  // billing receipt — paying is step one of onboarding. One that already has a
+  // property is upgrading, and belongs back on the billing screen.
+  const alreadySetUp = await require("../models/Property").exists({
+    workspaceId: req.workspace._id,
+    active: true,
+  });
   const url = await creemService.createCheckout({
     productId,
     email: req.user.email,
-    successUrl: `${clientUrl}/dashboard/billing?checkout=success`,
+    successUrl: alreadySetUp
+      ? `${clientUrl}/dashboard/billing?checkout=success`
+      : `${clientUrl}/onboarding/hotel`,
     requestId: String(req.workspace._id),
     metadata: {
       workspace_id: String(req.workspace._id),

@@ -55,6 +55,9 @@ const day = (n) => {
   const Driver = require("../src/models/Driver");
   const TransferBooking = require("../src/models/TransferBooking");
   const Review = require("../src/models/Review");
+  const Contact = require("../src/models/Contact");
+  const Conversation = require("../src/models/Conversation");
+  const Message = require("../src/models/Message");
   const CommissionEntry = require("../src/models/CommissionEntry");
 
   try {
@@ -72,6 +75,9 @@ const day = (n) => {
           Driver.deleteMany({ workspaceId: { $in: ids } }),
           TransferBooking.deleteMany({ workspaceId: { $in: ids } }),
           Review.deleteMany({ workspaceId: { $in: ids } }),
+          Contact.deleteMany({ workspaceId: { $in: ids } }),
+          Conversation.deleteMany({ workspaceId: { $in: ids } }),
+          Message.deleteMany({ workspaceId: { $in: ids } }),
           CommissionEntry.deleteMany({ workspaceId: { $in: ids } }),
           Workspace.deleteMany({ _id: { $in: ids } }),
         ]);
@@ -369,6 +375,114 @@ const day = (n) => {
       },
     ]);
     log("reviews: 2 (one AI draft awaiting approval)");
+
+    // ── Guest conversations, including the OTA inboxes ──────────────────
+    // The point of the inbox is that a question from Booking.com and one from
+    // WhatsApp land in the same place and get the same AI. Seed both, with the
+    // AI already having answered, so that is visible rather than described.
+    const THREADS = [
+      {
+        channel: "booking_com",
+        guest: "Marta Nowak",
+        handle: "marta.nowak",
+        turns: [
+          ["in", "Hi! Is it possible to check in early, around 11am? Our flight lands at 9."],
+          ["out", "Hello Marta! Check-in is normally from 14:00, but the room looks free that morning — I can hold it from 11:00 for you at no extra charge. Shall I note that down?"],
+          ["in", "That would be wonderful, thank you!"],
+          ["out", "Done — your room will be ready from 11:00 on the 24th. Safe travels!"],
+        ],
+      },
+      {
+        channel: "airbnb",
+        guest: "Kenji Tanaka",
+        handle: "kenji_t",
+        turns: [
+          ["in", "Does the villa have parking for a rental car?"],
+          ["out", "Yes — there is free private parking on site, right by the entrance. No need to book it in advance."],
+        ],
+      },
+      {
+        channel: "booking_com",
+        guest: "The Hendersons",
+        handle: "hendersons",
+        turns: [
+          ["in", "We land at DPS at 15:40 on the 8th. Can you arrange a pickup for 4 of us?"],
+          ["out", "Of course. I have booked an airport pickup for 4 passengers on the 8th — USD 25. Your driver is Wayan, in a silver Toyota Avanza (DK 1234 AB). You can reach him on WhatsApp at +62 813 3700 1122."],
+          ["in", "Perfect, thanks!"],
+        ],
+      },
+      {
+        channel: "whatsapp",
+        guest: "Siti Rahayu",
+        handle: "+628123456789",
+        turns: [
+          ["in", "Halo, ada kamar kosong untuk malam ini?"],
+          ["out", "Halo Siti! Ya — Garden Double kami tersedia malam ini, USD 95 termasuk sarapan. Mau saya pesankan?"],
+          ["in", "Boleh, atas nama Siti Rahayu."],
+          ["out", "Sudah dipesan! Kode booking Anda akan dikirim sebentar lagi. Sampai jumpa nanti."],
+        ],
+      },
+      {
+        channel: "airbnb",
+        guest: "Chloe Dubois",
+        handle: "chloe_d",
+        turns: [
+          ["in", "Is breakfast included in the Pool Suite rate?"],
+          ["out", "It is — breakfast for two is included every morning, served by the pool from 7:00 to 10:30."],
+        ],
+      },
+    ];
+
+    let threadCount = 0;
+    let msgCount = 0;
+    for (const t of THREADS) {
+      const contact = await Contact.create({
+        workspaceId: workspace._id,
+        name: t.guest,
+        // igUserId is the generic provider-side recipient id the send path
+        // uses, whatever the channel actually is.
+        igUserId: `demo-${t.handle}`,
+        igUsername: t.handle,
+        ...(t.channel === "whatsapp" ? { phone: t.handle } : {}),
+      });
+
+      const last = t.turns[t.turns.length - 1];
+      const conversation = await Conversation.create({
+        workspaceId: workspace._id,
+        contactId: contact._id,
+        channelType: t.channel,
+        lastMessageAt: new Date(Date.now() - threadCount * 3600000),
+        lastMessagePreview: last[1],
+        unreadCount: 0,
+        status: "open",
+      });
+
+      // Walk the turns backwards in time so the thread reads in order.
+      let offset = t.turns.length;
+      for (const [dir, text] of t.turns) {
+        await Message.create({
+          workspaceId: workspace._id,
+          conversationId: conversation._id,
+          contactId: contact._id,
+          channelType: t.channel,
+          direction: dir === "in" ? "inbound" : "outbound",
+          // Outbound here is the AI answering, which is the whole point of
+          // showing these threads.
+          sender: dir === "in" ? "customer" : "bot",
+          text,
+          createdAt: new Date(
+            Date.now() - threadCount * 3600000 - offset * 240000,
+          ),
+        });
+        offset--;
+        msgCount++;
+      }
+      threadCount++;
+    }
+    log(
+      `inbox: ${threadCount} conversations (${msgCount} messages) across ` +
+        "Booking.com, Airbnb and WhatsApp",
+    );
 
     console.log(
       "\n" +

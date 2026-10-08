@@ -14,7 +14,15 @@ const getConversations = asyncHandler(async (req, res) => {
   if (status && status !== "all") filter.status = status;
   // Filter by platform so the inbox can be split per channel. Anything not in
   // the supported list is ignored rather than returning nothing.
-  const CHANNELS = ["whatsapp", "instagram", "messenger", "telegram"];
+  const CHANNELS = [
+    "whatsapp",
+    "instagram",
+    "messenger",
+    "telegram",
+    "booking_com",
+    "airbnb",
+    "expedia",
+  ];
   if (channel && CHANNELS.includes(channel)) {
     filter.channelType = channel;
   }

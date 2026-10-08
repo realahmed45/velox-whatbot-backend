@@ -81,7 +81,19 @@ const messageSchema = new mongoose.Schema(
     // Channel — for inbox
     channelType: {
       type: String,
-      enum: ["instagram", "messenger", "whatsapp", "telegram", "tiktok"],
+      enum: [
+        "instagram",
+        "messenger",
+        "whatsapp",
+        "telegram",
+        "tiktok",
+        // OTA guest messaging. These threads live inside the OTA's own inbox
+        // and reach us through the channel manager, not through a social
+        // provider — but to the hotelier they are just more conversations.
+        "booking_com",
+        "airbnb",
+        "expedia",
+      ],
       default: "instagram",
     },
 
