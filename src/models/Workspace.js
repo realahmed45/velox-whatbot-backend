@@ -225,6 +225,9 @@ const workspaceSchema = new mongoose.Schema(
           answer: String,
         },
       ],
+      // Set once the 20 default hotel Q&As have been seeded, so a hotelier who
+      // deletes them all isn't handed the defaults back on their next visit.
+      faqsSeeded: { type: Boolean, default: false },
       temperature: { type: Number, default: 0.4 },
       maxTokens: { type: Number, default: 240 },
       enabled: { type: Boolean, default: true },

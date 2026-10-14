@@ -1075,4 +1075,5 @@ module.exports = {
   completeVision,
   readPdfWithVision,
   healthCheck,
+  matchFaq,
 };

@@ -186,6 +186,8 @@ app.use("/api/channels", channelRoutes);
 app.use("/api/consultants", consultantRoutes);
 app.use("/api/transfers", transferRoutes);
 app.use("/api/drivers", require("./src/routes/drivers"));
+// "Train your AI" — the hotel's Q&A knowledge base + a test sandbox.
+app.use("/api/training", require("./src/routes/training"));
 // Public: a driver's own job page, authenticated by the token in the URL.
 app.use("/api/drive", require("./src/routes/drive"));
 app.use("/api/pms", require("./src/routes/pms"));
