@@ -56,12 +56,14 @@ const {
   createPlatformDriver,
   updatePlatformDriver,
   deletePlatformDriver,
-  platformDriverLink,
+  listPlatformTransfers,
+  assignPlatformDriver,
 } = require("../controllers/driverController");
 router.get("/drivers", listPlatformDrivers);
 router.post("/drivers", createPlatformDriver);
 router.patch("/drivers/:id", updatePlatformDriver);
 router.delete("/drivers/:id", deletePlatformDriver);
-router.get("/drivers/:id/link", platformDriverLink);
+router.get("/transfers", listPlatformTransfers);
+router.patch("/transfers/:id/driver", assignPlatformDriver);
 
 module.exports = router;

@@ -188,8 +188,6 @@ app.use("/api/transfers", transferRoutes);
 app.use("/api/drivers", require("./src/routes/drivers"));
 // "Train your AI" — the hotel's Q&A knowledge base + a test sandbox.
 app.use("/api/training", require("./src/routes/training"));
-// Public: a driver's own job page, authenticated by the token in the URL.
-app.use("/api/drive", require("./src/routes/drive"));
 app.use("/api/pms", require("./src/routes/pms"));
 app.use("/api/growth", require("./src/routes/growth"));
 
@@ -357,16 +355,6 @@ cron.schedule("*/2 * * * *", () => {
 // processes, and Channex only retries on 5xx, so without this a booking that
 // failed mid-store would be lost silently. Revisions stay in the feed until we
 // ack them, so a failure here is retried rather than dropped.
-// Time out driver offers nobody answered and pass the job to the next driver.
-// Every minute, because the 10-minute window is per offer — a coarser tick
-// would add dead time to every hand-off while a guest waits for a car.
-const { sweepDriverOffers } = require("./src/jobs/driverDispatchJob");
-cron.schedule("* * * * *", () => {
-  sweepDriverOffers().catch((e) =>
-    logger.warn("[Cron] sweepDriverOffers error: " + e.message),
-  );
-});
-
 const { pollChannexBookings } = require("./src/jobs/channexPollJob");
 cron.schedule("*/2 * * * *", () => {
   pollChannexBookings().catch((e) =>

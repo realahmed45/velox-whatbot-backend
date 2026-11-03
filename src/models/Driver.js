@@ -77,10 +77,6 @@ const driverSchema = new mongoose.Schema(
     // Set by an admin to park a driver without deleting their history.
     suspendedReason: { type: String, default: "" },
 
-    // The private link a driver opens to accept or decline a job. Random,
-    // unguessable, and rotatable if it leaks — see rotateDispatchToken().
-    dispatchToken: { type: String, index: true, unique: true, sparse: true },
-
     // ── Stats (denormalised so dispatch doesn't aggregate on every job) ─────
     stats: {
       offered: { type: Number, default: 0 },

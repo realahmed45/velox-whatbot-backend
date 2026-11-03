@@ -98,32 +98,22 @@ async function createTransfer({
 
   let doc;
 
-  // Is there a driver roster to dispatch to? The hotel's own if they run a
-  // service, otherwise Botlify's shared pool. Checked before the branch below
-  // so "hotel has its own service" and "hotel has drivers entered" stay
-  // separate facts — a hotel can say yes at onboarding and add drivers later.
-  const Driver = require("../../models/Driver");
-  const driverPool = settings.hasOwnService
-    ? { scope: "hotel", workspaceId: workspace._id }
-    : { scope: "platform" };
-  const driversAvailable = await Driver.countDocuments({
-    ...driverPool,
-    active: true,
-  });
-
+  // Drivers are assigned by hand. A hotel with its own service assigns one of
+  // its own drivers from the dashboard; a hotel without one is served by a
+  // Botlify driver, assigned by the Botlify team in /admin. Either way the
+  // pickup waits in "searching" (= awaiting a driver) until someone does, and
+  // the guest is sent the driver's details the moment it happens.
   if (settings.hasOwnService) {
-    // ── 1. Hotel's own driver — confirmed at their flat price ──────────────
     doc = await TransferBooking.create({
       ...base,
       provider: "own",
       price: Number(settings.ownServicePrice) || 0,
       currency: property.currency || "USD",
-      status: "confirmed",
+      status: "pending",
       notes: settings.ownServiceNotes || "",
-      dispatch: { state: driversAvailable ? "searching" : "idle" },
+      dispatch: { state: "searching" },
     });
-  } else if (driversAvailable) {
-    // ── 1b. No service of their own, but we have drivers — dispatch ours ───
+  } else {
     doc = await TransferBooking.create({
       ...base,
       provider: "platform",
@@ -131,43 +121,10 @@ async function createTransfer({
       status: "pending",
       dispatch: { state: "searching" },
     });
-  } else if (settings.offerPartnerService && mozioService.isConfigured()) {
-    // ── 2. Partner (Mozio) transfer on the hotel's behalf ──────────────────
-    doc = await bookViaMozio({
-      base,
-      property,
-      airportCode,
-      direction,
-      pickupAt,
-      passengers,
-      guestName,
-      guestPhone,
-      contact,
-      flightNumber: transfer.flightNumber || "",
-      workspace,
-    });
-  } else {
-    // ── 3. Nothing automated — the hotel arranges it manually ──────────────
-    doc = await TransferBooking.create({
-      ...base,
-      provider: "own",
-      status: "pending",
-      currency: property.currency || "USD",
-      notes: "hotel to arrange",
-    });
-  }
-
-  // Start the driver rotation. Best-effort: a dispatch failure must not lose
-  // the transfer record itself — the hotel can still arrange it by hand, and
-  // the sweep job retries anything left searching.
-  if (doc.dispatch?.state === "searching") {
-    try {
-      const dispatchService = require("./dispatchService");
-      await dispatchService.offerNext(doc._id);
-      doc = await TransferBooking.findById(doc._id);
-    } catch (err) {
-      logger.warn(`[transfer] dispatch failed for ${doc._id}: ${err.message}`);
-    }
+    // Botlify owns this one — make sure the team hears about it.
+    notifyBotlifyTeam(property, doc).catch((err) =>
+      logger.warn(`[transfer] team notice failed: ${err.message}`),
+    );
   }
 
   await afterTransferChange(workspace, property, doc, "created");
@@ -362,6 +319,25 @@ async function afterTransferChange(workspace, property, doc, event) {
       logger.warn("[transfer] notify email failed", { err: e.message });
     }
   }
+}
+
+/** A pickup for Botlify's own drivers needs someone on the team to assign it. */
+async function notifyBotlifyTeam(property, doc) {
+  const to = process.env.ADMIN_NOTIFY_EMAIL || process.env.ADMIN_EMAIL;
+  if (!to) return;
+  const { sendEmail } = require("../emailService");
+  const base = process.env.CLIENT_URL || "https://www.botlify.site";
+  const when = new Date(doc.pickupAt).toUTCString();
+  await sendEmail({
+    to,
+    subject: `🚗 Assign a driver: ${doc.guestName || "Guest"} — ${property.name}`,
+    html:
+      `<p><b>${property.name}</b> needs a Botlify driver.</p>` +
+      `<p>Guest: ${doc.guestName || "—"}${doc.guestPhone ? ` (${doc.guestPhone})` : ""}<br>` +
+      `When: ${when}<br>Passengers: ${doc.passengers}` +
+      `${doc.flightNumber ? `<br>Flight: ${doc.flightNumber}` : ""}</p>` +
+      `<p><a href="${base}/admin">Assign a driver in Admin →</a></p>`,
+  });
 }
 
 async function notifyHotel(workspace, property, doc) {

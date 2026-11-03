@@ -13,7 +13,6 @@ const {
   createHotelDriver,
   updateHotelDriver,
   deleteHotelDriver,
-  hotelDriverLink,
 } = require("../controllers/driverController");
 
 router.use(protect, requireWorkspace);
@@ -22,6 +21,5 @@ router.get("/", listHotelDrivers);
 router.post("/", requireOwner, createHotelDriver);
 router.patch("/:id", requireOwner, updateHotelDriver);
 router.delete("/:id", requireOwner, deleteHotelDriver);
-router.get("/:id/link", requireOwner, hotelDriverLink);
 
 module.exports = router;

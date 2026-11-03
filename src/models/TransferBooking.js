@@ -63,31 +63,15 @@ const transferBookingSchema = new mongoose.Schema(
       vehicleLabel: { type: String, default: "" },
     },
     dispatch: {
-      // idle      : nothing to do (own driver, or manual)
-      // searching : an offer is out, waiting on a reply
-      // assigned  : a driver accepted
-      // exhausted : every candidate declined or timed out — needs a human
+      // searching : waiting for someone to assign a driver
+      // assigned  : a driver is on it, and the guest has their details
+      // (idle / exhausted are kept for records written before manual assignment)
       state: {
         type: String,
         enum: ["idle", "searching", "assigned", "exhausted"],
         default: "idle",
         index: true,
       },
-      // Every driver we asked, in order, with what happened. This is the audit
-      // trail when a hotel asks why a particular driver got the job.
-      offers: [
-        {
-          driverId: { type: mongoose.Schema.Types.ObjectId, ref: "Driver" },
-          offeredAt: { type: Date },
-          expiresAt: { type: Date },
-          respondedAt: { type: Date },
-          outcome: {
-            type: String,
-            enum: ["pending", "accepted", "declined", "timeout"],
-            default: "pending",
-          },
-        },
-      ],
       lastError: { type: String, default: "" },
     },
     // Mozio linkage
@@ -112,7 +96,6 @@ const transferBookingSchema = new mongoose.Schema(
 );
 
 transferBookingSchema.index({ workspaceId: 1, pickupAt: -1 });
-// The sweep that times out unanswered offers reads exactly this.
-transferBookingSchema.index({ "dispatch.state": 1, "dispatch.offers.expiresAt": 1 });
+transferBookingSchema.index({ provider: 1, status: 1, pickupAt: 1 });
 
 module.exports = mongoose.model("TransferBooking", transferBookingSchema);

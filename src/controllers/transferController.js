@@ -13,6 +13,7 @@ const Property = require("../models/Property");
 const { createTransfer } = require("../services/transfers/transferService");
 const mozioService = require("../services/transfers/mozioService");
 const logger = require("../utils/logger");
+const { assignDriver } = require("../services/transfers/dispatchService");
 
 const STATUSES = ["pending", "confirmed", "completed", "cancelled", "failed"];
 
@@ -141,4 +142,36 @@ const updateStatus = asyncHandler(async (req, res) => {
   res.json({ success: true, transfer });
 });
 
-module.exports = { list, create, updateStatus };
+// @PATCH /:id/driver — the hotel puts one of its own drivers on a pickup.
+// The guest is sent the driver's name, car and WhatsApp number straight away.
+const setDriver = asyncHandler(async (req, res) => {
+  const t = await TransferBooking.findOne({
+    _id: req.params.id,
+    workspaceId: req.workspace._id,
+  });
+  if (!t) {
+    res.status(404);
+    throw new Error("Pickup not found.");
+  }
+  if (t.provider === "platform") {
+    res.status(400);
+    throw new Error("Botlify is arranging this driver for you.");
+  }
+  const r = await assignDriver({
+    transferId: t._id,
+    driverId: req.body?.driverId,
+    scope: "hotel",
+    workspaceId: req.workspace._id,
+  });
+  if (!r.ok) {
+    res.status(r.reason === "closed" ? 400 : 404);
+    throw new Error(
+      r.reason === "closed"
+        ? "This pickup is already finished or cancelled."
+        : "Pick one of your active drivers.",
+    );
+  }
+  res.json({ success: true, transfer: r.transfer, guestTold: r.guestTold });
+});
+
+module.exports = { list, create, updateStatus, setDriver };

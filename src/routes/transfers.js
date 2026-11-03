@@ -7,6 +7,7 @@ const {
   list,
   create,
   updateStatus,
+  setDriver,
 } = require("../controllers/transferController");
 
 router.use(protect, requireWorkspace);
@@ -14,5 +15,6 @@ router.use(protect, requireWorkspace);
 router.get("/", list);
 router.post("/", create);
 router.patch("/:id/status", updateStatus);
+router.patch("/:id/driver", setDriver);
 
 module.exports = router;

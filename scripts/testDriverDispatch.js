@@ -1,10 +1,11 @@
 /**
- * Driver dispatch — "ask driver one, wait ten minutes, then ask the next".
+ * Airport pickups — a person assigns the driver, the guest is told.
  *
- * The promise to the hotel is that a guest always ends up with a driver's
- * number, without anyone watching a screen. That only holds if the rotation
- * really advances on silence, really stops on acceptance, and never puts two
- * drivers on one car. Those are the things worth a test.
+ * Drivers are contacted by hand, so what has to be right is the bookkeeping
+ * around that: a pickup waits for a driver; a hotel can only use its own
+ * drivers and the Botlify team only Botlify's; assigning confirms the pickup
+ * and produces the message the guest receives; and a finished pickup can't be
+ * re-assigned.
  *
  * Run: node scripts/testDriverDispatch.js
  */
@@ -25,185 +26,80 @@ const ok = (cond, label) => {
 const say = (s) => console.log("\n" + s);
 
 (async () => {
-  await mongoose.connect(process.env.MONGODB_URI, {
-    serverSelectionTimeoutMS: 20000,
-  });
+  await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
 
   const Driver = require("../src/models/Driver");
   const TransferBooking = require("../src/models/TransferBooking");
   const Property = require("../src/models/Property");
-  const dispatch = require("../src/services/transfers/dispatchService");
+  const { createTransfer } = require("../src/services/transfers/transferService");
+  const { assignDriver, guestHandoffText } = require("../src/services/transfers/dispatchService");
 
   const wsId = new mongoose.Types.ObjectId();
-  const tag = "DISPATCH_" + Date.now();
-  let property, drivers = [], transfer;
-
-  const mkTransfer = async () =>
-    TransferBooking.create({
-      workspaceId: wsId,
-      propertyId: property._id,
-      direction: "pickup",
-      guestName: "Test Guest",
-      guestPhone: "+628111222333",
-      passengers: 2,
-      pickupAt: new Date(Date.now() + 86400000),
-      provider: "platform",
-      status: "pending",
-      dispatch: { state: "searching" },
-    });
+  const otherWs = new mongoose.Types.ObjectId();
+  const tag = "ASSIGN_" + Date.now();
+  const workspace = { _id: wsId, timezone: "Asia/Makassar" };
+  const pickup = { direction: "pickup", pickupAt: new Date(Date.now() + 86400000).toISOString(), guestName: "Test Guest", guestPhone: "+628111222333", passengers: 2, flightNumber: "SQ938" };
 
   try {
-    property = await Property.create({
-      workspaceId: wsId,
-      name: "Dispatch Test Hotel",
-      city: tag,
-      currency: "USD",
-      // No own taxi service → draw from the platform pool.
-      transfers: { hasOwnService: false },
+    const property = await Property.create({
+      workspaceId: wsId, name: "Assign Test Hotel", city: tag, currency: "USD",
+      transfers: { hasOwnService: true, ownServicePrice: 25 },
     });
-
-    // Three platform drivers, in a known order.
-    for (let i = 1; i <= 3; i++) {
-      drivers.push(
-        await Driver.create({
-          scope: "platform",
-          name: `Driver ${i} ${tag}`,
-          phone: `+62811000000${i}`,
-          priority: i, // deterministic rotation order
-          active: true,
-        }),
-      );
-    }
-
-    say("A pickup comes in. Driver 1 is asked first.");
-    transfer = await mkTransfer();
-    let r = await dispatch.offerNext(transfer._id);
-    ok(r.ok, "an offer went out");
-    ok(
-      String(r.driverId) === String(drivers[0]._id),
-      "driver 1 got it (lowest priority number)",
-    );
-
-    say("A second call must NOT stack another offer on the same job.");
-    r = await dispatch.offerNext(transfer._id);
-    ok(r.reason === "offer_pending", "no double offer (" + r.reason + ")");
-    transfer = await TransferBooking.findById(transfer._id);
-    ok(transfer.dispatch.offers.length === 1, "still exactly one offer");
-
-    say("Driver 1 says nothing for ten minutes.");
-    // Wind the clock back rather than waiting — same code path as the sweep.
-    transfer.dispatch.offers[0].expiresAt = new Date(Date.now() - 1000);
-    await transfer.save();
-    await dispatch.sweepExpiredOffers();
-    transfer = await TransferBooking.findById(transfer._id);
-    ok(
-      transfer.dispatch.offers[0].outcome === "timeout",
-      "driver 1 is marked as missed",
-    );
-    ok(
-      transfer.dispatch.offers.length === 2 &&
-        String(transfer.dispatch.offers[1].driverId) === String(drivers[1]._id),
-      "the job moved to driver 2 on its own",
-    );
-
-    say("Driver 2 passes. It should go straight on, not wait the clock out.");
-    await dispatch.declineOffer({
-      transferId: transfer._id,
-      driverId: drivers[1]._id,
+    const own = await Driver.create({
+      scope: "hotel", workspaceId: wsId, name: "Wayan Sudiarta", nickname: "Wayan", phone: "+62 813 3700 1122",
+      vehicle: { make: "Toyota", model: "Avanza", colour: "Silver", plate: "DK 1234 AB" },
     });
-    transfer = await TransferBooking.findById(transfer._id);
-    ok(
-      transfer.dispatch.offers[1].outcome === "declined",
-      "driver 2 recorded as declined",
-    );
-    ok(
-      transfer.dispatch.offers.length === 3 &&
-        String(transfer.dispatch.offers[2].driverId) === String(drivers[2]._id),
-      "driver 3 was asked immediately",
-    );
+    const strangers = await Driver.create({ scope: "hotel", workspaceId: otherWs, name: "Other Hotel Driver " + tag, phone: "+62 811 0000 0001" });
+    const botlify = await Driver.create({ scope: "platform", name: "Botlify Driver " + tag, phone: "+62 811 0000 0002" });
 
-    say("Driver 3 accepts. The guest gets their name and number.");
-    const acc = await dispatch.acceptOffer({
-      transferId: transfer._id,
-      driverId: drivers[2]._id,
-    });
-    ok(acc.ok, "acceptance taken");
-    transfer = await TransferBooking.findById(transfer._id);
-    ok(transfer.dispatch.state === "assigned", "job is assigned");
-    ok(
-      String(transfer.driverId) === String(drivers[2]._id),
-      "the right driver is on the job",
-    );
-    ok(
-      transfer.driverSnapshot.phone === drivers[2].phone,
-      "their number is snapshotted for the guest",
-    );
-    ok(transfer.status === "confirmed", "transfer is confirmed");
-    const handoff = dispatch.guestHandoffText(transfer);
-    ok(
-      handoff.includes(drivers[2].phone),
-      "guest message carries the driver's number",
-    );
+    say("A guest asks for a pickup at a hotel that runs its own drivers.");
+    let r = await createTransfer({ workspace, transfer: pickup, property });
+    ok(r.ok, "pickup created");
+    ok(r.transfer.provider === "own" && r.transfer.dispatch.state === "searching", "waiting for the hotel to assign a driver");
+    ok(/assigning your driver/i.test(r.confirmationText), "guest told a driver is being assigned");
 
-    say("A late driver must not steal an assigned job.");
-    const late = await dispatch.acceptOffer({
-      transferId: transfer._id,
-      driverId: drivers[0]._id,
-    });
-    ok(!late.ok && late.reason === "taken", "second acceptance refused");
-    transfer = await TransferBooking.findById(transfer._id);
-    ok(
-      String(transfer.driverId) === String(drivers[2]._id),
-      "the original driver keeps the job",
-    );
+    say("The hotel can't use another hotel's driver, or a Botlify driver.");
+    let a = await assignDriver({ transferId: r.transfer._id, driverId: strangers._id, scope: "hotel", workspaceId: wsId });
+    ok(!a.ok, "another hotel's driver refused");
+    a = await assignDriver({ transferId: r.transfer._id, driverId: botlify._id, scope: "hotel", workspaceId: wsId });
+    ok(!a.ok, "Botlify driver refused for the hotel");
 
-    say("Nobody available → the job is flagged, not silently dropped.");
-    await Driver.updateMany(
-      { name: { $regex: tag } },
-      { $set: { active: false } },
-    );
-    const lonely = await mkTransfer();
-    const none = await dispatch.offerNext(lonely._id);
-    ok(!none.ok && none.reason === "exhausted", "reported as exhausted");
-    const after = await TransferBooking.findById(lonely._id);
-    ok(
-      after.dispatch.state === "exhausted" && !!after.dispatch.lastError,
-      "state and reason recorded for the hotel: " + after.dispatch.lastError,
-    );
+    say("The hotel assigns its own driver.");
+    a = await assignDriver({ transferId: r.transfer._id, driverId: own._id, scope: "hotel", workspaceId: wsId });
+    ok(a.ok, "assigned");
+    const t = await TransferBooking.findById(r.transfer._id);
+    ok(t.dispatch.state === "assigned" && t.status === "confirmed", "pickup confirmed");
+    const msg = guestHandoffText(t);
+    ok(/Wayan/.test(msg) && /Silver Toyota Avanza/.test(msg) && /\+62 813 3700 1122/.test(msg), "guest message: " + msg);
 
-    say("A hotel with its own driver never draws from the platform pool.");
-    await Driver.updateMany(
-      { name: { $regex: tag } },
-      { $set: { active: true } },
-    );
-    const ownDriver = await Driver.create({
-      scope: "hotel",
-      workspaceId: wsId,
-      name: "Hotel Driver " + tag,
-      phone: "+628119999999",
-      active: true,
-    });
-    drivers.push(ownDriver);
-    property.transfers.hasOwnService = true;
+    say("A different hotel can't touch this pickup.");
+    a = await assignDriver({ transferId: r.transfer._id, driverId: own._id, scope: "hotel", workspaceId: otherWs });
+    ok(!a.ok, "refused");
+
+    say("A hotel with no service of its own gets a Botlify driver.");
+    property.transfers.hasOwnService = false;
     await property.save();
-    const ownJob = await mkTransfer();
-    const ownRes = await dispatch.offerNext(ownJob._id);
-    ok(
-      String(ownRes.driverId) === String(ownDriver._id),
-      "their own driver was chosen, not ours",
-    );
+    r = await createTransfer({ workspace, transfer: pickup, property });
+    ok(r.transfer.provider === "platform" && r.transfer.status === "pending", "pickup waits for the Botlify team");
+    a = await assignDriver({ transferId: r.transfer._id, driverId: own._id, scope: "platform" });
+    ok(!a.ok, "the team can't assign a hotel's private driver");
+    a = await assignDriver({ transferId: r.transfer._id, driverId: botlify._id, scope: "platform" });
+    ok(a.ok && a.transfer.status === "confirmed", "Botlify driver assigned");
+
+    say("A cancelled pickup can't be re-assigned.");
+    await TransferBooking.updateOne({ _id: r.transfer._id }, { $set: { status: "cancelled" } });
+    a = await assignDriver({ transferId: r.transfer._id, driverId: botlify._id, scope: "platform" });
+    ok(!a.ok && a.reason === "closed", "refused");
   } catch (e) {
     fail++;
     console.log("  ERROR:", e.message, "\n", e.stack);
   } finally {
     await Promise.all([
-      Driver.deleteMany({ $or: [{ name: { $regex: tag } }, { workspaceId: wsId }] }),
+      Driver.deleteMany({ $or: [{ workspaceId: { $in: [wsId, otherWs] } }, { name: { $regex: tag } }] }),
       TransferBooking.deleteMany({ workspaceId: wsId }),
       Property.deleteMany({ workspaceId: wsId }),
     ]);
-    console.log(
-      "\n" + "=".repeat(52) + "\n  " + pass + " passed, " + fail + " failed\n" + "=".repeat(52),
-    );
+    console.log("\n" + "=".repeat(52) + "\n  " + pass + " passed, " + fail + " failed\n" + "=".repeat(52));
     await mongoose.disconnect();
     process.exit(fail ? 1 : 0);
   }

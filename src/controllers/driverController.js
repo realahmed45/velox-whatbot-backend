@@ -1,16 +1,13 @@
 /**
- * driverController — the driver roster and the driver-facing job page.
+ * driverController — the driver roster, and assigning Botlify drivers.
  *
- * Three audiences, deliberately in one file because they share validation:
+ * Two audiences, deliberately in one file because they share validation:
  *
- *  1. PUBLIC  /api/drive/:token        — what a driver opens from their link.
- *     No login: the token IS the credential, so it is long, random and
- *     rotatable. Never returns another driver's data or anything about the
- *     hotel beyond what is needed to do the job.
- *  2. HOTEL   /api/drivers             — a hotel managing its OWN drivers
- *     (scope "hotel", pinned to their workspace).
- *  3. ADMIN   /api/admin/drivers       — Botlify's shared pool (scope
- *     "platform"), used by hotels that have no taxi service of their own.
+ *  HOTEL  /api/drivers        — a hotel managing its OWN drivers (scope
+ *                               "hotel", pinned to their workspace).
+ *  ADMIN  /api/admin/drivers  — Botlify's shared pool (scope "platform"),
+ *         /api/admin/transfers  used by hotels with no taxi service of their
+ *                               own, and the pickups waiting for one of them.
  *
  * Identity fields are stored as numbers and expiry dates only. We never take an
  * uploaded document — the less of that we hold, the less there is to leak.
@@ -18,7 +15,7 @@
 const asyncHandler = require("express-async-handler");
 const Driver = require("../models/Driver");
 const TransferBooking = require("../models/TransferBooking");
-const dispatch = require("../services/transfers/dispatchService");
+const { assignDriver } = require("../services/transfers/dispatchService");
 const logger = require("../utils/logger");
 
 const ID_TYPES = ["ktp", "passport", "driving_licence", "other"];
@@ -75,106 +72,6 @@ function validate(fields, { isCreate }) {
   return null;
 }
 
-/* ── 1. PUBLIC: the driver's own job page ──────────────────────────────── */
-
-// @GET /api/drive/:token — the jobs waiting for this driver.
-const driverJobs = asyncHandler(async (req, res) => {
-  const driver = await Driver.findOne({ dispatchToken: req.params.token });
-  if (!driver) {
-    res.status(404);
-    throw new Error("This link is no longer valid. Ask for a new one.");
-  }
-
-  // Anything currently offered to them, plus what they've already taken and
-  // still have to drive. Past trips are not their problem.
-  const [offered, assigned] = await Promise.all([
-    TransferBooking.find({
-      "dispatch.state": "searching",
-      "dispatch.offers": {
-        $elemMatch: { driverId: driver._id, outcome: "pending" },
-      },
-    })
-      .sort({ pickupAt: 1 })
-      .limit(20),
-    TransferBooking.find({
-      driverId: driver._id,
-      status: { $in: ["confirmed", "pending"] },
-      pickupAt: { $gte: new Date(Date.now() - 12 * 3600000) },
-    })
-      .sort({ pickupAt: 1 })
-      .limit(20),
-  ]);
-
-  // Only what the driver needs to do the job — no rates, no OTA data.
-  const shape = (t) => ({
-    id: t._id,
-    direction: t.direction,
-    pickupAt: t.pickupAt,
-    guestName: t.guestName,
-    guestPhone: t.driverId ? t.guestPhone : "", // withheld until they accept
-    passengers: t.passengers,
-    flightNumber: t.flightNumber,
-    airportCode: t.airportCode,
-    notes: t.notes,
-    expiresAt: (t.dispatch?.offers || []).find(
-      (o) => String(o.driverId) === String(driver._id) && o.outcome === "pending",
-    )?.expiresAt,
-  });
-
-  res.json({
-    success: true,
-    driver: {
-      name: driver.name,
-      displayName: driver.displayName,
-      vehicleLabel: driver.vehicleLabel,
-      stats: driver.stats,
-    },
-    offers: offered.map(shape),
-    assigned: assigned.map(shape),
-  });
-});
-
-// @POST /api/drive/:token/:transferId/accept
-const driverAccept = asyncHandler(async (req, res) => {
-  const driver = await Driver.findOne({ dispatchToken: req.params.token });
-  if (!driver) {
-    res.status(404);
-    throw new Error("This link is no longer valid.");
-  }
-  const result = await dispatch.acceptOffer({
-    transferId: req.params.transferId,
-    driverId: driver._id,
-  });
-  if (!result.ok) {
-    res.status(result.reason === "taken" ? 409 : 400);
-    throw new Error(
-      result.reason === "taken"
-        ? "Another driver already took this job."
-        : "That job is no longer open.",
-    );
-  }
-  res.json({
-    success: true,
-    // Now they have it, they get the guest's number.
-    guestPhone: result.transfer.guestPhone,
-    transferId: result.transfer._id,
-  });
-});
-
-// @POST /api/drive/:token/:transferId/decline
-const driverDecline = asyncHandler(async (req, res) => {
-  const driver = await Driver.findOne({ dispatchToken: req.params.token });
-  if (!driver) {
-    res.status(404);
-    throw new Error("This link is no longer valid.");
-  }
-  await dispatch.declineOffer({
-    transferId: req.params.transferId,
-    driverId: driver._id,
-  });
-  res.json({ success: true });
-});
-
 /* ── 2. HOTEL: the hotel's own drivers ─────────────────────────────────── */
 
 const listHotelDrivers = asyncHandler(async (req, res) => {
@@ -197,13 +94,8 @@ const createHotelDriver = asyncHandler(async (req, res) => {
     scope: "hotel",
     workspaceId: req.workspace._id,
   });
-  await dispatch.ensureDispatchToken(driver);
   logger.info(`[drivers] hotel driver created ws=${req.workspace._id} id=${driver._id}`);
-  res.status(201).json({
-    success: true,
-    driver,
-    dispatchLink: dispatch.driverLink(driver.dispatchToken),
-  });
+  res.status(201).json({ success: true, driver });
 });
 
 const updateHotelDriver = asyncHandler(async (req, res) => {
@@ -238,24 +130,6 @@ const deleteHotelDriver = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
-/** Hand back the driver's private link, or mint a fresh one if it leaked. */
-const hotelDriverLink = asyncHandler(async (req, res) => {
-  const driver = await Driver.findOne({
-    _id: req.params.id,
-    scope: "hotel",
-    workspaceId: req.workspace._id,
-  });
-  if (!driver) {
-    res.status(404);
-    throw new Error("Driver not found.");
-  }
-  const token =
-    req.query.rotate === "1"
-      ? await dispatch.rotateDispatchToken(driver)
-      : await dispatch.ensureDispatchToken(driver);
-  res.json({ success: true, link: dispatch.driverLink(token) });
-});
-
 /* ── 3. ADMIN: Botlify's shared driver pool ────────────────────────────── */
 
 const listPlatformDrivers = asyncHandler(async (req, res) => {
@@ -278,13 +152,8 @@ const createPlatformDriver = asyncHandler(async (req, res) => {
     scope: "platform",
     workspaceId: null,
   });
-  await dispatch.ensureDispatchToken(driver);
   logger.info(`[drivers] platform driver created id=${driver._id}`);
-  res.status(201).json({
-    success: true,
-    driver,
-    dispatchLink: dispatch.driverLink(driver.dispatchToken),
-  });
+  res.status(201).json({ success: true, driver });
 });
 
 const updatePlatformDriver = asyncHandler(async (req, res) => {
@@ -318,34 +187,61 @@ const deletePlatformDriver = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
-const platformDriverLink = asyncHandler(async (req, res) => {
-  const driver = await Driver.findOne({
-    _id: req.params.id,
+/* ── 4. ADMIN: pickups waiting for a Botlify driver ──────────────────── */
+
+// @GET /api/admin/transfers — Botlify-driver pickups, open ones first.
+const listPlatformTransfers = asyncHandler(async (req, res) => {
+  const Property = require("../models/Property");
+  const transfers = await TransferBooking.find({
+    provider: "platform",
+    status: { $in: ["pending", "confirmed"] },
+    pickupAt: { $gte: new Date(Date.now() - 24 * 3600000) },
+  })
+    .sort({ pickupAt: 1 })
+    .limit(200)
+    .lean();
+  const props = await Property.find({
+    _id: { $in: [...new Set(transfers.map((t) => String(t.propertyId)))] },
+  })
+    .select("name city")
+    .lean();
+  const byId = Object.fromEntries(props.map((p) => [String(p._id), p]));
+  res.json({
+    success: true,
+    transfers: transfers.map((t) => ({
+      ...t,
+      property: byId[String(t.propertyId)] || null,
+    })),
+  });
+});
+
+// @PATCH /api/admin/transfers/:id/driver — put a Botlify driver on a pickup.
+const assignPlatformDriver = asyncHandler(async (req, res) => {
+  const r = await assignDriver({
+    transferId: req.params.id,
+    driverId: req.body?.driverId,
     scope: "platform",
   });
-  if (!driver) {
-    res.status(404);
-    throw new Error("Driver not found.");
+  if (!r.ok) {
+    res.status(r.reason === "closed" ? 400 : 404);
+    throw new Error(
+      r.reason === "closed"
+        ? "This pickup is already finished or cancelled."
+        : "Pick an active Botlify driver.",
+    );
   }
-  const token =
-    req.query.rotate === "1"
-      ? await dispatch.rotateDispatchToken(driver)
-      : await dispatch.ensureDispatchToken(driver);
-  res.json({ success: true, link: dispatch.driverLink(token) });
+  res.json({ success: true, transfer: r.transfer, guestTold: r.guestTold });
 });
 
 module.exports = {
-  driverJobs,
-  driverAccept,
-  driverDecline,
   listHotelDrivers,
   createHotelDriver,
   updateHotelDriver,
   deleteHotelDriver,
-  hotelDriverLink,
   listPlatformDrivers,
   createPlatformDriver,
   updatePlatformDriver,
   deletePlatformDriver,
-  platformDriverLink,
+  listPlatformTransfers,
+  assignPlatformDriver,
 };
