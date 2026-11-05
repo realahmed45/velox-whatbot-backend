@@ -11,7 +11,10 @@ const c = require("../controllers/trainingController");
 router.use(protect, requireWorkspace);
 
 router.get("/", c.listFaqs);
+router.get("/readiness", c.getReadiness);
 router.post("/test", c.testAi);
+router.put("/contacts", requirePermission("settings"), c.saveContacts);
+router.put("/playbook", requirePermission("settings"), c.savePlaybook);
 router.post("/reset", requirePermission("settings"), c.resetFaqs);
 router.post("/", requirePermission("settings"), c.addFaq);
 router.patch("/:id", requirePermission("settings"), c.updateFaq);

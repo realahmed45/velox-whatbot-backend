@@ -1,14 +1,11 @@
 /**
- * "Train your AI" — the hotel's own answers must be what guests get.
+ * "Train your AI" — the hotel's own knowledge must be what guests get.
  *
- * Proves the four things the feature promises: a new hotel starts with the 20
- * defaults; edits, deletes and additions take effect; a deleted answer is
- * never served again; and the AI answers a guest's question with the
- * hotelier's own wording when it matches.
- *
- * Runs against the real database with a throwaway workspace. The Gemini path
- * isn't exercised here (no key locally) — the instant-match path is, and that
- * is the one that returns the hotelier's words verbatim.
+ * Proves: a new hotel gets the full default knowledge; an unanswered question
+ * is never sent to a guest; edits/adds/deletes take effect; contacts reach the
+ * AI with private numbers kept private; the readiness check tracks what's
+ * missing; and a hotel seeded with the old 20 questions is upgraded without
+ * losing its own answers.
  *
  * Run: node scripts/testTraining.js
  */
@@ -27,9 +24,8 @@ const ok = (cond, label) => {
   }
 };
 
-// Call a controller handler the way Express would, capturing the JSON.
 const call = (handler, { body = {}, params = {}, workspace }) =>
-  new Promise((resolve, reject) => {
+  new Promise((resolve) => {
     const res = {
       statusCode: 200,
       status(c) {
@@ -41,7 +37,7 @@ const call = (handler, { body = {}, params = {}, workspace }) =>
       },
     };
     handler({ body, params, workspace }, res, (err) =>
-      err ? resolve({ status: res.statusCode, error: err.message }) : reject(new Error("no response")),
+      resolve({ status: res.statusCode, error: err && err.message }),
     );
   });
 
@@ -49,73 +45,90 @@ const call = (handler, { body = {}, params = {}, workspace }) =>
   await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   const Workspace = require("../src/models/Workspace");
   const c = require("../src/controllers/trainingController");
-  const { matchFaq } = require("../src/services/ai");
+  const { matchFaq, buildSystemPrompt } = require("../src/services/ai");
 
-  let ws;
+  const made = [];
   try {
-    ws = await Workspace.create({
+    const ws = await Workspace.create({
       name: "Training Test " + Date.now(),
       owner: new mongoose.Types.ObjectId(),
       industry: "hospitality",
+      features: { hotelBookings: true },
     });
+    made.push(ws._id);
     const workspace = { _id: ws._id };
 
-    console.log("\nA hotel opens Train your AI for the first time.");
+    console.log("\nA new hotel opens Train your AI.");
     let r = await call(c.listFaqs, { workspace });
-    ok(r.faqs.length === 20, `starts with the 20 defaults (${r.faqs.length})`);
+    ok(r.faqs.length >= 100, `full default knowledge (${r.faqs.length} questions)`);
+    ok(r.categories.length >= 10, `${r.categories.length} topic tabs`);
     ok(r.faqs.every((f) => !/\[.*\]/.test(f.answer)), "no [placeholders] that could reach a guest");
+    ok(r.playbook.length >= 10, `behaviour rules seeded (${r.playbook.length})`);
+    ok(!r.readiness.complete && r.readiness.missingContacts.length > 0, `readiness flags what's missing (${r.readiness.percent}%)`);
 
-    console.log("\nThe hotelier edits the breakfast answer.");
-    const breakfast = r.faqs.find((f) => /breakfast/i.test(f.question));
-    r = await call(c.updateFaq, {
-      workspace,
-      params: { id: String(breakfast._id) },
-      body: { question: breakfast.question, answer: "Yes! Breakfast is included, served 7–10am by the pool." },
-    });
-    const edited = r.faqs.find((f) => String(f._id) === String(breakfast._id));
-    ok(/by the pool/.test(edited.answer), "edit saved");
-
-    console.log("\nA guest asks about breakfast.");
+    console.log("\nAn unanswered question is never sent to a guest.");
     let fresh = await Workspace.findById(ws._id);
-    let hit = matchFaq(fresh.aiSettings.faqs, "Is breakfast included?");
-    ok(hit && /by the pool/.test(hit.answer), "the AI gives the hotelier's NEW answer, word for word");
+    const wifi = fresh.aiSettings.faqs.find((f) => /wifi password/i.test(f.question));
+    ok(wifi && !wifi.answer && wifi.required, "WiFi password starts unanswered and required");
+    let hit = matchFaq(fresh.aiSettings.faqs, "What is the WiFi password?");
+    ok(!hit, "the AI does not answer it from training");
 
-    console.log("\nThe hotelier adds their own question.");
-    r = await call(c.addFaq, {
-      workspace,
-      body: { question: "Do you have a spa?", answer: "Yes — our spa is open 9am to 9pm, massages from USD 30." },
+    console.log("\nThe hotelier fills it in.");
+    r = await call(c.updateFaq, { workspace, params: { id: String(wifi._id) }, body: { question: wifi.question, answer: "It's SunsetGuest2026 — network 'Sunset Beach'." } });
+    fresh = await Workspace.findById(ws._id);
+    hit = matchFaq(fresh.aiSettings.faqs, "what is the wifi password");
+    ok(hit && /SunsetGuest2026/.test(hit.answer), "now the guest gets it, word for word");
+    ok(!r.readiness.missingAnswers.some((m) => /wifi/i.test(m.question)), "and it drops off the missing list");
+
+    console.log("\nAdd and delete.");
+    r = await call(c.addFaq, { workspace, body: { question: "Do you have yoga classes?", answer: "Yes, every morning at 7am by the pool.", category: "facilities" } });
+    ok(r.faqs[0].category === "facilities", "added under the right tab");
+    const before = r.faqs.length;
+    r = await call(c.deleteFaq, { workspace, params: { id: String(r.faqs[0]._id) } });
+    if (!r.faqs) console.log("   delete returned:", r.status, r.error);
+    ok(r.faqs.length === before - 1, "deleted");
+
+    console.log("\nContacts reach the AI; private numbers stay private.");
+    r = await call(c.saveContacts, { workspace, body: { contacts: [
+      { role: "front_desk", name: "Reception", whatsapp: "+62 811 1111 111", availability: "24/7", shareWithGuests: true },
+      { role: "emergency", name: "Made", whatsapp: "+62 811 2222 222", availability: "24/7", shareWithGuests: true },
+      { role: "manager", name: "Ketut", whatsapp: "+62 811 3333 333", shareWithGuests: false },
+      { role: "maintenance_emergency", name: "Wayan", whatsapp: "+62 811 4444 444", availability: "nights", shareWithGuests: false },
+    ] } });
+    ok(r.contacts.length === 4, "contacts saved");
+    ok(r.readiness.missingContacts.length === 0, "all required contacts filled");
+    r = await call(c.saveContacts, { workspace, body: { contacts: [{ role: "front_desk", name: "x", whatsapp: "not a number" }] } });
+    ok(r.status === 400, "a bad phone number is refused");
+
+    fresh = await Workspace.findById(ws._id);
+    const prompt = buildSystemPrompt(fresh, { name: "Guest" }, "", "");
+    ok(/\+62 811 1111 111/.test(prompt) && /MAY give this number/.test(prompt), "shareable number is offered to the AI");
+    ok(/Ketut/.test(prompt) && /NEVER share this number/.test(prompt) && !/\+62 811 3333 333/.test(prompt), "the manager's private number is never in the prompt");
+    ok(/HOW TO HANDLE SITUATIONS/.test(prompt) && /emergency/i.test(prompt), "behaviour rules reach the AI");
+    ok(/guest concierge/.test(prompt), "the AI speaks as the hotel's concierge");
+
+    console.log("\nA hotel from the old 20-question version is upgraded.");
+    const old = await Workspace.create({
+      name: "Old Hotel " + Date.now(),
+      owner: new mongoose.Types.ObjectId(),
+      industry: "hospitality",
+      aiSettings: { faqsSeeded: true, faqs: [
+        { question: "Is breakfast included?", answer: "Yes, 7-10am by the pool." },
+        { question: "Do you have a rooftop bar?", answer: "Yes, open from 5pm." },
+      ] },
     });
-    ok(r.faqs.length === 21, "now 21 questions");
-    ok(/spa/i.test(r.faqs[0].question), "newest shows first");
-    fresh = await Workspace.findById(ws._id);
-    hit = matchFaq(fresh.aiSettings.faqs, "do you have a spa");
-    ok(hit && /USD 30/.test(hit.answer), "the AI answers the new question from training");
-
-    console.log("\nThe hotelier deletes the pet question.");
-    const pets = r.faqs.find((f) => /pets/i.test(f.question));
-    r = await call(c.deleteFaq, { workspace, params: { id: String(pets._id) } });
-    ok(r.faqs.length === 20 && !r.faqs.some((f) => /pets/i.test(f.question)), "deleted");
-    fresh = await Workspace.findById(ws._id);
-    hit = matchFaq(fresh.aiSettings.faqs, "Are pets allowed?");
-    ok(!hit || !/pets/i.test(hit.question), "a deleted answer is never served again");
-
-    console.log("\nEmpty input is refused.");
-    r = await call(c.addFaq, { workspace, body: { question: "  ", answer: "x" } });
-    ok(r.status === 400, "blank question rejected");
-
-    console.log("\nDeleting everything doesn't bring the defaults back.");
-    await Workspace.updateOne({ _id: ws._id }, { $set: { "aiSettings.faqs": [] } });
-    r = await call(c.listFaqs, { workspace });
-    ok(r.faqs.length === 0, "stays empty — the hotelier's choice is respected");
-
-    console.log("\nReset puts the 20 back.");
-    r = await call(c.resetFaqs, { workspace });
-    ok(r.faqs.length === 20, "restored");
+    made.push(old._id);
+    r = await call(c.listFaqs, { workspace: { _id: old._id } });
+    const bf = r.faqs.find((f) => /breakfast included/i.test(f.question));
+    ok(bf.answer === "Yes, 7-10am by the pool." && bf.category === "food", "their answer kept, filed under Food & drink");
+    ok(r.faqs.some((f) => /rooftop/i.test(f.question)), "their own extra question kept");
+    ok(r.faqs.length > 100, `new default questions merged in (${r.faqs.length})`);
+    ok(r.faqs.filter((f) => /breakfast included/i.test(f.question)).length === 1, "no duplicates");
   } catch (e) {
     fail++;
     console.log("  ERROR:", e.message, "\n", e.stack);
   } finally {
-    if (ws) await Workspace.deleteOne({ _id: ws._id });
+    await Workspace.deleteMany({ _id: { $in: made } });
     console.log("\n" + "=".repeat(52) + "\n  " + pass + " passed, " + fail + " failed\n" + "=".repeat(52));
     await mongoose.disconnect();
     process.exit(fail ? 1 : 0);

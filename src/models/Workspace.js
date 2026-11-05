@@ -223,11 +223,42 @@ const workspaceSchema = new mongoose.Schema(
         {
           question: String,
           answer: String,
+          // Topic tab in "Train your AI" (booking, arrival, food, …).
+          category: { type: String, default: "general" },
+          // The AI can't run a hotel without this one — drives the
+          // "your AI is missing a few details" prompt until answered.
+          required: { type: Boolean, default: false },
         },
       ],
-      // Set once the 20 default hotel Q&As have been seeded, so a hotelier who
-      // deletes them all isn't handed the defaults back on their next visit.
+      // Set once the defaults have been seeded, so a hotelier who deletes them
+      // all isn't handed them back on their next visit.
       faqsSeeded: { type: Boolean, default: false },
+      // Which version of the default knowledge this workspace has. Bumping it
+      // merges NEW default questions in without touching the hotelier's edits.
+      knowledgeVersion: { type: Number, default: 0 },
+
+      // The people behind the hotel — who the AI points guests to.
+      contacts: [
+        {
+          role: String, // front_desk, manager, emergency, taxi, …
+          name: { type: String, default: "" },
+          whatsapp: { type: String, default: "" },
+          email: { type: String, default: "" },
+          // "24/7", or a plain-language schedule ("Mon–Sat 8am–5pm").
+          availability: { type: String, default: "" },
+          // May the AI give this number to guests?
+          shareWithGuests: { type: Boolean, default: false },
+          notes: { type: String, default: "" },
+        },
+      ],
+
+      // How the AI behaves in tricky situations — instructions, not replies.
+      playbook: [
+        {
+          situation: String,
+          response: String,
+        },
+      ],
       temperature: { type: Number, default: 0.4 },
       maxTokens: { type: Number, default: 240 },
       enabled: { type: Boolean, default: true },

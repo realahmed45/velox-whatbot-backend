@@ -153,11 +153,19 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) =
     workspace.name || workspace.instagram?.username || "this business";
 
   // AI Role — the persona. Prefer the explicit aiRole field, then a legacy
-  // systemPrompt, then a sensible default.
+  // systemPrompt the owner actually wrote (not the schema's generic default),
+  // then a sensible default.
+  const legacyPrompt = (ai.systemPrompt || "").trim();
+  const ownPrompt =
+    legacyPrompt && !/^You are a friendly, professional assistant\./.test(legacyPrompt)
+      ? legacyPrompt
+      : "";
   const role =
     (ai.aiRole && ai.aiRole.trim()) ||
-    (ai.systemPrompt && ai.systemPrompt.trim()) ||
-    `You are the Instagram assistant for ${bizName} — a warm, sharp member of the team replying to DMs, comments and story replies. You sound like a real person who genuinely cares: friendly, concise, and helpful, never robotic or salesy.`;
+    ownPrompt ||
+    (workspace.features?.hotelBookings
+      ? `You are the guest concierge for ${bizName}, a warm, sharp member of the hotel team answering guests on WhatsApp and booking sites. You look after guests completely on your own: questions, bookings, requests and problems. Friendly, concise and genuinely helpful, never robotic.`
+      : `You are the Instagram assistant for ${bizName} — a warm, sharp member of the team replying to DMs, comments and story replies. You sound like a real person who genuinely cares: friendly, concise, and helpful, never robotic or salesy.`);
 
   const lines = [role, ""];
 
@@ -294,17 +302,57 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) =
     lines.push("", appointmentBlock.trim());
   }
 
-  if (Array.isArray(ai.faqs) && ai.faqs.length) {
+  // The hotel's own answers ("Train your AI"). Only answered ones: an empty
+  // answer means the hotelier hasn't told us yet, and guessing is worse than
+  // saying "let me check".
+  const answered = (Array.isArray(ai.faqs) ? ai.faqs : []).filter(
+    (f) => f && f.question && String(f.answer || "").trim(),
+  );
+  if (answered.length) {
     lines.push(
       "",
-      "QUICK ANSWERS — use these verbatim when the question matches:",
+      "THE HOTEL'S OWN ANSWERS. These are the facts; use them (verbatim when the question matches). If a guest asks something not covered here or in the hotel details, say you'll check with the team. Never invent facts, prices or policies:",
     );
-    ai.faqs
-      .filter((f) => f && f.question && f.answer)
-      .slice(0, 30)
-      .forEach((f, i) => {
-        lines.push(`${i + 1}. Q: ${f.question}\n   A: ${f.answer}`);
-      });
+    answered.slice(0, 300).forEach((f, i) => {
+      lines.push(`${i + 1}. Q: ${f.question}\n   A: ${f.answer}`);
+    });
+  }
+
+  // Who's who. Only numbers marked shareable may be given to guests.
+  const contacts = (v2.contacts || []).filter((c) => c && (c.name || c.whatsapp));
+  if (contacts.length) {
+    const ROLE = {
+      front_desk: "Front desk / reception",
+      manager: "Manager",
+      owner: "Owner",
+      emergency: "Emergency contact",
+      maintenance_emergency: "Emergency maintenance (nights & urgent)",
+      maintenance: "Maintenance (regular hours)",
+      cleaning: "Cleaning / housekeeping",
+      taxi: "Taxi / driver",
+      restaurant: "Restaurant / kitchen",
+    };
+    lines.push("", "HOTEL CONTACTS:");
+    for (const c of contacts) {
+      const who = [c.name, c.availability && `(${c.availability})`]
+        .filter(Boolean)
+        .join(" ");
+      lines.push(
+        c.shareWithGuests && c.whatsapp
+          ? `- ${ROLE[c.role] || c.role}: ${who}, WhatsApp ${c.whatsapp}. You MAY give this number to guests when relevant.`
+          : `- ${ROLE[c.role] || c.role}: ${who}. Internal only: NEVER share this number; say the team will follow up.`,
+      );
+    }
+    lines.push(
+      "- You cannot message staff yourself. Never claim you've contacted someone: give the guest the right shareable number, or say the team will follow up.",
+    );
+  }
+
+  // How to act in tricky situations.
+  const playbook = (v2.playbook || []).filter((p) => p && p.situation && p.response);
+  if (playbook.length) {
+    lines.push("", "HOW TO HANDLE SITUATIONS:");
+    playbook.forEach((p) => lines.push(`- ${p.situation}: ${p.response}`));
   }
 
   // Goals
