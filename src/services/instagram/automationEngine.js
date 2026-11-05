@@ -604,8 +604,20 @@ const guardSend = (workspace, contact, conversation) => {
     return "ig_disconnected";
   if (contact?.optedOut) return "contact_opted_out";
   if (conversation && conversation.botEnabled === false) return "bot_paused";
+  // Settings → WhatsApp → "WhatsApp AI replies" off: the hotelier answers
+  // WhatsApp guests themselves from the Inbox. Inbound messages are still
+  // stored (see handleWebhookEvent); only automated replies are suppressed.
+  if (
+    conversation?.channelType === "whatsapp" &&
+    workspace.aiSettings?.whatsappAiEnabled === false
+  )
+    return "whatsapp_ai_paused";
   return null;
 };
+
+// Blocks where the guest's message must still land in the Inbox — the bot is
+// just not allowed to answer it.
+const STORE_ONLY_BLOCKS = new Set(["bot_paused", "whatsapp_ai_paused"]);
 
 // ── Individual trigger handlers ──────────────────────────────────────────────
 const handlePostComment = async (
@@ -2053,7 +2065,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
       }
 
       const blocked = guardSend(workspace, contact, conv);
-      if (blocked) return;
+      // Paused conversations (human takeover, WhatsApp AI switched off) still
+      // store the inbound message so staff can answer it from the Inbox.
+      if (blocked && !STORE_ONLY_BLOCKS.has(blocked)) return;
 
       if (text) {
         await Message.create({
@@ -2082,8 +2096,10 @@ const handleWebhookEvent = async (workspaceId, event) => {
           enrichMessageSentiment(workspace, savedMsg, text).catch(() => {});
         }
 
-        // Try to enroll contact into a matching drip campaign
-        tryEnrollDripByKeyword(workspace, contact, text).catch(() => {});
+        // Try to enroll contact into a matching drip campaign (automated
+        // sends — skipped while this conversation is paused).
+        if (!blocked)
+          tryEnrollDripByKeyword(workspace, contact, text).catch(() => {});
 
         // Fire outbound webhook (canonical UI event key so user webhooks match).
         dispatchEvent(workspace._id, "dm.received", {
@@ -2093,6 +2109,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
           text,
           type,
         }).catch(() => {});
+      }
+
+      if (blocked) {
+        logger.info(
+          `[IG flow] ws=${workspace._id} message stored, no auto-reply (${blocked})`,
+        );
+        return;
       }
 
       logger.info(

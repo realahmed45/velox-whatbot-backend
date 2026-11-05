@@ -262,6 +262,10 @@ const workspaceSchema = new mongoose.Schema(
       temperature: { type: Number, default: 0.4 },
       maxTokens: { type: Number, default: 240 },
       enabled: { type: Boolean, default: true },
+      // Settings → WhatsApp → "WhatsApp AI replies". Off = guest WhatsApp
+      // messages are still stored in the Inbox, but the AI (and every other
+      // automated reply) stays silent so staff answer by hand.
+      whatsappAiEnabled: { type: Boolean, default: true },
       handoffKeywords: {
         type: [String],
         default: ["human", "agent", "support"],

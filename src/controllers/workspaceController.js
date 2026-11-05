@@ -310,6 +310,25 @@ const updateWorkspace = asyncHandler(async (req, res) => {
   allowed.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
+  // Single-flag toggle (Settings → WhatsApp → "WhatsApp AI replies"). Sent as a
+  // dotted path so it never overwrites the rest of aiSettings (FAQs, persona…).
+  // Accepts either { "aiSettings.whatsappAiEnabled": bool } or
+  // { whatsappAiEnabled: bool }.
+  // A wholesale aiSettings write (AI Assistant screen) may carry a stale copy of
+  // the flag, so it never decides it — the stored value is kept unless the
+  // dedicated key is sent.
+  const waAi =
+    req.body["aiSettings.whatsappAiEnabled"] ?? req.body.whatsappAiEnabled;
+  if (updates.aiSettings && typeof updates.aiSettings === "object") {
+    const current = req.workspace?.aiSettings?.whatsappAiEnabled;
+    updates.aiSettings = {
+      ...updates.aiSettings,
+      whatsappAiEnabled:
+        waAi !== undefined ? !!waAi : current === false ? false : true,
+    };
+  } else if (waAi !== undefined) {
+    updates["aiSettings.whatsappAiEnabled"] = !!waAi;
+  }
 
   const workspace = await Workspace.findByIdAndUpdate(
     req.workspace._id,

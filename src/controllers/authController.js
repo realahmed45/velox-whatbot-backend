@@ -48,6 +48,13 @@ const { OAuth2Client } = require("google-auth-library");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+// Email verification on signup. OFF by default for now: new email/password
+// accounts are created already verified and go straight into onboarding. Set
+// REQUIRE_EMAIL_VERIFICATION=true (backend) and
+// VITE_REQUIRE_EMAIL_VERIFICATION=true (frontend) to bring back the code step.
+const REQUIRE_EMAIL_VERIFICATION =
+  String(process.env.REQUIRE_EMAIL_VERIFICATION || "").toLowerCase() === "true";
+
 // @POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
   const { name, email, password, businessName, ref } = req.body;
@@ -73,15 +80,21 @@ const register = asyncHandler(async (req, res) => {
   // later, deliberately, during onboarding (or never, if this person only ever
   // joins someone else's workspace as an agent). Any referral code is stashed
   // on the user and applied when they create their first workspace.
-  const verificationCode = generateVerificationCode();
+  const verificationCode = REQUIRE_EMAIL_VERIFICATION
+    ? generateVerificationCode()
+    : null;
   const signupNumber = await nextSignupNumber();
   const user = await User.create({
     name,
     email,
     password,
-    isEmailVerified: false,
-    emailVerificationToken: hashToken(verificationCode),
-    emailVerificationExpires: Date.now() + 15 * 60 * 1000, // 15 minutes
+    isEmailVerified: !REQUIRE_EMAIL_VERIFICATION,
+    ...(verificationCode
+      ? {
+          emailVerificationToken: hashToken(verificationCode),
+          emailVerificationExpires: Date.now() + 15 * 60 * 1000, // 15 minutes
+        }
+      : {}),
     pendingRef: ref ? String(ref).toUpperCase().trim() : undefined,
     signupNumber,
     // Remember what they typed as their business name for the onboarding step.
@@ -91,9 +104,11 @@ const register = asyncHandler(async (req, res) => {
 
   // Send the verification code (best-effort — failure shouldn't block signup;
   // the user can request a resend from the verify screen).
-  await sendVerificationEmail({ to: user.email, name: user.name, code: verificationCode }).catch(
-    (err) => logger.error("[register] verification email failed", { err: err.message }),
-  );
+  if (verificationCode) {
+    await sendVerificationEmail({ to: user.email, name: user.name, code: verificationCode }).catch(
+      (err) => logger.error("[register] verification email failed", { err: err.message }),
+    );
+  }
 
   const accessToken = generateAccessToken(user._id);
   const refreshToken = generateRefreshToken(user._id);

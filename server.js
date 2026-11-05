@@ -193,6 +193,10 @@ app.use("/api/growth", require("./src/routes/growth"));
 
 // Public: the hotel's own direct-booking page at /book/<slug> (no auth).
 app.use("/api/book", require("./src/routes/publicBooking"));
+// The hotel's own website: managed at /api/website, served publicly at
+// /api/public/site/<slug> (rendered by the SPA at botlify.site/<slug>).
+app.use("/api/website", require("./src/routes/website"));
+app.use("/api/public", require("./src/routes/publicSite"));
 app.use("/api/agent", agentRoutes);
 
 // Public: Channex (OTA) reservation webhook — token-verified in the handler.
