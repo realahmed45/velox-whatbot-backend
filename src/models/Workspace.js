@@ -170,12 +170,14 @@ const workspaceSchema = new mongoose.Schema(
         // the transport is chosen per channel rather than assumed.
         provider: {
           type: String,
-          enum: ["zernio", "qiscus", "respondio", "360dialog"],
+          enum: ["zernio", "qiscus", "respondio", "360dialog", "aisensy"],
           default: "zernio",
         },
         // 360dialog: hash of the random token in this number's webhook URL —
         // routes inbound messages to the workspace and authenticates them.
         webhookTokenHash: { type: String, default: null, index: true },
+        // AiSensy: the same token, encrypted, so the webhook URL can be shown again.
+        webhookTokenEnc: { type: String, default: null },
         accountId: { type: String, select: false }, // encrypted provider id
         accountHash: { type: String, default: null },
         username: String,

@@ -6,17 +6,18 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "test": "node scripts/testZodomus.js && node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testOnePlace.js && node scripts/testChannelRouting.js && node scripts/testRateLimit.js && node scripts/testDriverDispatch.js && node scripts/testTraining.js && node scripts/testV2Flow.js && node scripts/testWhatsAppE2E.js && node scripts/testOtaMessaging.js && node scripts/testWhatsApp360.js",
+    "test": "node scripts/testZodomus.js && node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testOnePlace.js && node scripts/testChannelRouting.js && node scripts/testRateLimit.js && node scripts/testDriverDispatch.js && node scripts/testTraining.js && node scripts/testV2Flow.js && node scripts/testWhatsAppE2E.js && node scripts/testOtaMessaging.js && node scripts/testWhatsApp360.js && node scripts/testWhatsAppAisensy.js",
     "test:booking": "node scripts/testBookingEngine.js",
     "test:revenue": "node scripts/testRevenueEngine.js",
-    "test:flow": "node scripts/testV2Flow.js && node scripts/testWhatsAppE2E.js && node scripts/testOtaMessaging.js && node scripts/testWhatsApp360.js",
+    "test:flow": "node scripts/testV2Flow.js && node scripts/testWhatsAppE2E.js && node scripts/testOtaMessaging.js && node scripts/testWhatsApp360.js && node scripts/testWhatsAppAisensy.js",
     "migrate:hotels": "node scripts/migrateToHotels.js",
     "test:ota": "node scripts/testOtaSync.js",
     "test:oneplace": "node scripts/testOnePlace.js",
     "test:zodomus": "node scripts/testZodomus.js",
     "test:whatsapp": "node scripts/testWhatsAppE2E.js",
     "test:otamessages": "node scripts/testOtaMessaging.js",
-    "test:whatsapp360": "node scripts/testWhatsApp360.js"
+    "test:whatsapp360": "node scripts/testWhatsApp360.js",
+    "test:aisensy": "node scripts/testWhatsAppAisensy.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

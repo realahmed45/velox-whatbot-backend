@@ -10,7 +10,13 @@ const {
   requireOwner,
 } = require("../middleware/auth");
 
-// ── WhatsApp via 360dialog (the WhatsApp carrier since Nov 2026) ─────────────
+// ── WhatsApp via AiSensy (the WhatsApp carrier, Nov 2026) ───────────────────
+const aisensyCtrl = require("../controllers/aisensyController");
+router.post("/whatsapp/aisensy/hook/:token", aisensyCtrl.webhook); // public, token-authenticated
+router.post("/whatsapp/aisensy/key", protect, requireWorkspace, requireOwner, aisensyCtrl.connectKey);
+router.delete("/whatsapp/aisensy", protect, requireWorkspace, requireOwner, aisensyCtrl.disconnect);
+
+// ── WhatsApp via 360dialog (spare driver) ────────────────────────────────────
 const d360 = require("../controllers/dialog360Controller");
 // Public: 360dialog posts guest messages here; the token routes + authenticates.
 router.post("/whatsapp/360dialog/hook/:token", d360.webhook);
