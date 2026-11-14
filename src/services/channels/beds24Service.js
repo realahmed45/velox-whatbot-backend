@@ -595,7 +595,83 @@ async function pollBookings({ sinceMinutes = 10 } = {}) {
   return { ok: true, scanned, ingested };
 }
 
+// ── Guest messaging ──────────────────────────────────────────────────────────
+//
+// Beds24 relays the channel's own messaging for OTA bookings (wiki: "messages
+// can be delivered through the channel's own messaging system where the
+// channel supports it"; Airbnb and Booking.com do).
+//   GET  /bookings/messages   ?maxAge=<seconds> | ?bookingId=…
+//   POST /bookings/messages   [{ bookingId, message }]
+// Only OTA bookings can be messaged — not direct booking-page bookings.
+// Field names follow the V2 Swagger (id, bookingId, message, source, time).
+
+function normaliseBeds24Message(m, booking) {
+  const src = String(m.source || m.from || "").toLowerCase();
+  return {
+    provider: "beds24",
+    ota: sourceFromOta(booking?.referer || booking?.channel || booking?.apiSource || ""),
+    threadId: String(m.bookingId ?? booking?.id ?? ""),
+    bookingRef: String(m.bookingId ?? booking?.id ?? ""),
+    providerPropertyId: String(booking?.propertyId ?? booking?.propId ?? ""),
+    guestName: [booking?.firstName, booking?.lastName].filter(Boolean).join(" "),
+    messageId: String(m.id ?? `${m.bookingId}:${m.time}`),
+    text: m.message || m.text || "",
+    attachments: m.attachment ? [m.attachment] : [],
+    sender: src === "guest" ? "guest" : src === "host" || src === "property" ? "hotel" : "system",
+    at: m.time || m.created || new Date().toISOString(),
+  };
+}
+
+const messaging = {
+  isAvailable: () => isConfigured(),
+
+  async pollNew({ since }) {
+    const maxAge = Math.max(60, Math.ceil((Date.now() - new Date(since).getTime()) / 1000));
+    const data = await call("get", "/bookings/messages", { params: { maxAge } });
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    const bookings = new Map();
+    const out = [];
+    for (const m of rows) {
+      const id = m.bookingId;
+      if (!id) continue;
+      if (!bookings.has(id)) {
+        bookings.set(id, await getBooking(id).catch(() => null));
+      }
+      out.push(normaliseBeds24Message(m, bookings.get(id)));
+    }
+    return out;
+  },
+
+  async fetchThread(bookingId) {
+    const [data, booking] = await Promise.all([
+      call("get", "/bookings/messages", { params: { bookingId: [bookingId] } }),
+      getBooking(bookingId).catch(() => null),
+    ]);
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    return rows
+      .map((m) => normaliseBeds24Message(m, booking))
+      .sort((a, b) => new Date(a.at) - new Date(b.at));
+  },
+
+  async send({ bookingRef, threadId, text }) {
+    const bookingId = Number(bookingRef || threadId);
+    if (!bookingId) return { success: false, error: "No booking to message." };
+    try {
+      const res = await call("post", "/bookings/messages", {
+        data: [{ bookingId, message: String(text || "") }],
+      });
+      assertWriteOk(res, "message send");
+      const first = Array.isArray(res) ? res[0] : res;
+      return { success: true, messageId: first?.new?.id || null };
+    } catch (err) {
+      logger.warn("[Beds24] message send failed", { bookingId, err: err.message });
+      return { success: false, error: err.message };
+    }
+  },
+};
+
 module.exports = {
+  messaging,
   isConfigured,
   setupFromInviteCode,
   listProperties,

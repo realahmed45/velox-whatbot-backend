@@ -594,7 +594,126 @@ async function handleReviewEvent(payload) {
   });
 }
 
+// ── Guest messaging (Messages app) ───────────────────────────────────────────
+//
+// Channex relays the OTAs' own guest inboxes — Booking.com, Airbnb, Expedia —
+// as message threads. Docs: docs.channex.io → Messages collection.
+//   GET  /message_threads                 threads, newest activity first
+//   GET  /message_threads/:id/messages    messages in a thread
+//   POST /message_threads/:id/messages    {message:{message}} — reply in-thread
+// The property must have the Messages application installed (403 otherwise),
+// and Expedia Partner Solutions bookings don't support messaging (422).
+// Airbnb enquiries arrive as threads without a booking.
+
+const OTA_FROM_PROVIDER = { bookingcom: "booking_com", airbnb: "airbnb", expedia: "expedia" };
+const otaFromThreadProvider = (p = "") =>
+  OTA_FROM_PROVIDER[String(p).toLowerCase().replace(/[^a-z]/g, "")] || sourceFromOta(p);
+
+const relId = (item, rel) => item?.relationships?.[rel]?.data?.id || null;
+
+/** Normalise one Channex message (with its thread) into our shape. */
+function normaliseChannexMessage(thread, m) {
+  const attrs = m.attributes || m;
+  return {
+    provider: "channex",
+    ota: otaFromThreadProvider(thread.attributes?.provider),
+    threadId: String(thread.id),
+    bookingRef: relId(thread, "booking"),
+    providerPropertyId: relId(thread, "property"),
+    guestName: thread.attributes?.title || "",
+    messageId: String(m.id),
+    text: attrs.message || "",
+    attachments: (attrs.attachments || []).map((a) =>
+      typeof a === "string" && a.startsWith("/") ? `${BASE.replace(/\/api\/v1$/, "")}${a}` : a,
+    ),
+    sender: attrs.sender === "guest" ? "guest" : attrs.sender === "property" ? "hotel" : "system",
+    at: attrs.inserted_at || attrs.created_at || new Date().toISOString(),
+  };
+}
+
+const messaging = {
+  isAvailable: () => isConfigured(),
+
+  /** Every message in one thread, oldest first. */
+  async fetchThread(threadId) {
+    const api = client();
+    const [{ data: t }, { data: msgs }] = await Promise.all([
+      api.get(`/message_threads/${encodeURIComponent(threadId)}`),
+      api.get(`/message_threads/${encodeURIComponent(threadId)}/messages`, {
+        params: { "pagination[limit]": 50, "order[inserted_at]": "desc" },
+      }),
+    ]);
+    const thread = t?.data;
+    if (!thread) return [];
+    return (msgs?.data || [])
+      .map((m) => normaliseChannexMessage(thread, m))
+      .sort((a, b) => new Date(a.at) - new Date(b.at));
+  },
+
+  /**
+   * Messages in threads with activity since `since`. Threads come newest
+   * activity first, so we stop paging at the first one older than the cut-off.
+   */
+  async pollNew({ since }) {
+    const cutoff = new Date(since).getTime();
+    const api = client();
+    const out = [];
+    for (let page = 1; page <= 5; page++) {
+      const { data } = await api.get("/message_threads", {
+        params: {
+          "pagination[page]": page,
+          "pagination[limit]": 50,
+          "order[last_message_received_at]": "desc",
+        },
+      });
+      const threads = data?.data || [];
+      if (!threads.length) break;
+      let reachedOld = false;
+      for (const th of threads) {
+        const last = new Date(
+          th.attributes?.last_message_received_at || th.attributes?.updated_at || 0,
+        ).getTime();
+        if (last < cutoff) {
+          reachedOld = true;
+          continue;
+        }
+        try {
+          const msgs = await messaging.fetchThread(th.id);
+          out.push(...msgs.filter((m) => new Date(m.at).getTime() >= cutoff));
+        } catch (err) {
+          logger.warn("[Channex] thread fetch failed", { thread: th.id, err: err.message });
+        }
+      }
+      if (reachedOld || threads.length < 50) break;
+    }
+    return out;
+  },
+
+  /** Reply inside the OTA thread. */
+  async send({ threadId, text }) {
+    if (!threadId) return { success: false, error: "No message thread for this guest." };
+    try {
+      const { data } = await client().post(
+        `/message_threads/${encodeURIComponent(threadId)}/messages`,
+        { message: { message: String(text || "") } },
+      );
+      return { success: true, messageId: data?.data?.id || null };
+    } catch (err) {
+      const status = err.response?.status;
+      const why =
+        status === 403
+          ? "The Messages app isn't installed for this property in Channex."
+          : status === 422
+            ? "This booking site doesn't allow messages for this reservation."
+            : err.response?.data?.errors?.title || err.message;
+      logger.warn("[Channex] message send failed", { threadId, status, why });
+      return { success: false, error: why };
+    }
+  },
+};
+
 module.exports = {
+  messaging,
   isConfigured,
   listProperties,
   getProperty,

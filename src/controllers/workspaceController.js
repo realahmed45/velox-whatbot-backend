@@ -319,15 +319,21 @@ const updateWorkspace = asyncHandler(async (req, res) => {
   // dedicated key is sent.
   const waAi =
     req.body["aiSettings.whatsappAiEnabled"] ?? req.body.whatsappAiEnabled;
+  // Same pattern for the booking-site inboxes switch.
+  const otaAi = req.body["aiSettings.otaAiEnabled"] ?? req.body.otaAiEnabled;
   if (updates.aiSettings && typeof updates.aiSettings === "object") {
     const current = req.workspace?.aiSettings?.whatsappAiEnabled;
+    const currentOta = req.workspace?.aiSettings?.otaAiEnabled;
     updates.aiSettings = {
       ...updates.aiSettings,
       whatsappAiEnabled:
         waAi !== undefined ? !!waAi : current === false ? false : true,
+      otaAiEnabled:
+        otaAi !== undefined ? !!otaAi : currentOta === false ? false : true,
     };
-  } else if (waAi !== undefined) {
-    updates["aiSettings.whatsappAiEnabled"] = !!waAi;
+  } else {
+    if (waAi !== undefined) updates["aiSettings.whatsappAiEnabled"] = !!waAi;
+    if (otaAi !== undefined) updates["aiSettings.otaAiEnabled"] = !!otaAi;
   }
 
   const workspace = await Workspace.findByIdAndUpdate(

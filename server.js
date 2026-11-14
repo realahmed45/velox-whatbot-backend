@@ -375,6 +375,15 @@ cron.schedule("* * * * *", () => {
   );
 });
 
+// Guests writing in their Airbnb / Booking.com / Expedia inbox: pull every
+// minute and let the AI answer in the same thread.
+const { pollOtaMessages } = require("./src/jobs/otaMessagePollJob");
+cron.schedule("* * * * *", () => {
+  pollOtaMessages().catch((e) =>
+    logger.warn("[Cron] pollOtaMessages error: " + e.message),
+  );
+});
+
 // Move OTA connections forward while nobody is watching. Booking.com's own
 // approval takes 1–5 days; this is what lets the hotelier forget about it and
 // simply get an email when their channel goes live.

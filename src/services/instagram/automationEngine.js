@@ -242,6 +242,10 @@ const VALID_CONTACT_SOURCES = new Set([
   "instagram",
   "messenger",
   "telegram",
+  "whatsapp",
+  "booking_com",
+  "airbnb",
+  "expedia",
   "manual",
   "import",
 ]);
@@ -267,7 +271,7 @@ const upsertContact = async (
       // greetings fall back to "there" instead of a long IG number.
       igUsername: cleanUsername || undefined,
       username: cleanUsername || undefined,
-      name: (!isJunkName(name) && name) || cleanUsername || "Instagram User",
+      name: (!isJunkName(name) && name) || cleanUsername || "Guest",
       igProfilePic: profilePic || undefined,
       source: channelSource,
       acquisitionTrigger,
@@ -286,6 +290,7 @@ const upsertContact = async (
     !isJunkName(name) &&
     (!contact.name ||
       contact.name === "Instagram User" ||
+      contact.name === "Guest" ||
       isJunkName(contact.name))
   ) {
     contact.name = name;
@@ -384,6 +389,11 @@ const recentlyTriggered = async (
 const ridesChannelsArray = (channelType) =>
   !!channelType && channelType !== "instagram";
 
+// Booking-site guest inboxes (Airbnb, Booking.com, Expedia) reach us through
+// the channel manager, not workspace.channels — see services/hotel/otaMessageService.
+const OTA_CHANNEL_SET = new Set(["airbnb", "booking_com", "expedia"]);
+const isOtaChannel = (c) => OTA_CHANNEL_SET.has(c);
+
 const channelEntryConnected = (workspace, channelType) =>
   ridesChannelsArray(channelType) &&
   (workspace.channels || []).some(
@@ -400,6 +410,15 @@ const channelEntryConnected = (workspace, channelType) =>
  */
 const resolveSendTransport = async (workspace, conversation) => {
   const channel = conversation?.channelType || "instagram";
+  if (isOtaChannel(channel)) {
+    // Replies go back into the same OTA thread the guest wrote in.
+    const ota = require("../hotel/otaMessageService");
+    return {
+      channel,
+      provider: conversation?.metadata?.ota?.provider || "ota",
+      send: (_recipientId, text) => ota.send(conversation, text),
+    };
+  }
   if (ridesChannelsArray(channel)) {
     // channels.accountId is select:false on the schema — fetch it explicitly.
     const wsDoc = await Workspace.findById(workspace._id).select(
@@ -477,7 +496,10 @@ const sendAndLog = async ({
 
   const finalText = personalize(text, contact);
 
+  // Never brand or link inside an OTA inbox — Airbnb/Booking.com rules forbid
+  // promotional links and off-platform pointers in guest messages.
   const brand =
+    !isOtaChannel(conversation?.channelType) &&
     workspace.settings?.botlifyBrandingEnabled &&
     !planHasFeature(
       workspace.subscription?.plan || "starter",
@@ -512,15 +534,27 @@ const sendAndLog = async ({
     sender: "bot",
     type: "text",
     text: finalText,
-    channelType: "instagram",
+    channelType: conversation.channelType || "instagram",
     status: result.success ? "sent" : "failed",
     failureReason: result.success ? undefined : result.error,
-    metadata: { triggerType, keyword, igMessageId: result.messageId },
+    metadata: {
+      triggerType,
+      keyword,
+      igMessageId: result.messageId,
+      ...(conversation.metadata?.ota?.threadId
+        ? { otaThreadId: conversation.metadata.ota.threadId }
+        : {}),
+    },
   });
 
   // Send any images the AI chose to attach (e.g. the menu) as follow-up
   // messages, so the customer gets the text reply first, then the visual.
-  const images = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
+  // OTA inboxes take text only from us (attachments need an upload flow and
+  // image links read as off-platform content) — images are WhatsApp-only.
+  const images =
+    Array.isArray(imageUrls) && !isOtaChannel(conversation?.channelType)
+      ? imageUrls.filter(Boolean)
+      : [];
   for (const imageUrl of images.slice(0, 3)) {
     let imgResult;
     if (simulate) {
@@ -546,7 +580,7 @@ const sendAndLog = async ({
       sender: "bot",
       type: "image",
       mediaUrl: imageUrl,
-      channelType: "instagram",
+      channelType: conversation.channelType || "instagram",
       status: imgResult.success ? "sent" : "failed",
       failureReason: imgResult.success ? undefined : imgResult.error,
       metadata: { triggerType, igMessageId: imgResult.messageId },
@@ -597,7 +631,10 @@ const guardSend = (workspace, contact, conversation) => {
   // creator can preview replies even before automation is switched on.
   if (workspace.__simulate) return null;
   if (!workspace.settings?.automationEnabled) return "automation_disabled";
+  const otaThread =
+    isOtaChannel(conversation?.channelType) && !!conversation?.metadata?.ota?.provider;
   if (
+    !otaThread &&
     workspace.instagram?.status !== "connected" &&
     !channelEntryConnected(workspace, conversation?.channelType)
   )
@@ -612,12 +649,15 @@ const guardSend = (workspace, contact, conversation) => {
     workspace.aiSettings?.whatsappAiEnabled === false
   )
     return "whatsapp_ai_paused";
+  // Settings → AI → "Booking-site replies" off: OTA messages land in the inbox
+  // for staff, the AI stays quiet.
+  if (otaThread && workspace.aiSettings?.otaAiEnabled === false) return "ota_ai_paused";
   return null;
 };
 
 // Blocks where the guest's message must still land in the Inbox — the bot is
 // just not allowed to answer it.
-const STORE_ONLY_BLOCKS = new Set(["bot_paused", "whatsapp_ai_paused"]);
+const STORE_ONLY_BLOCKS = new Set(["bot_paused", "whatsapp_ai_paused", "ota_ai_paused"]);
 
 // ── Individual trigger handlers ──────────────────────────────────────────────
 const handlePostComment = async (
@@ -1020,6 +1060,7 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
     ctxBits.push(`Customer tags: ${contact.tags.join(", ")}`);
   if (conv?.summary) ctxBits.push(`Conversation so far: ${conv.summary}`);
   if (conv?.lastIntent) ctxBits.push(`Last detected intent: ${conv.lastIntent}`);
+  if (conv?.metadata?.otaContext) ctxBits.push(conv.metadata.otaContext);
   const extraContext = ctxBits.length ? ctxBits.join("\n") : null;
 
   logger.info(
@@ -1905,7 +1946,9 @@ const handleWebhookEvent = async (workspaceId, event) => {
       // Multi-channel: a WhatsApp/TikTok event (event.channel) is valid even
       // when Instagram itself isn't connected — those send through the
       // workspace.channels entry, not the Instagram connection.
+      const otaEvent = isOtaChannel(event.channel) && !!event.ota?.provider;
       if (
+        !otaEvent &&
         !["connected", "error"].includes(workspace.instagram?.status) &&
         !channelEntryConnected(workspace, event.channel)
       ) {
@@ -2072,6 +2115,17 @@ const handleWebhookEvent = async (workspaceId, event) => {
       // free-form reply window. Stamp it before any reply is attempted.
       await markInbound(conv);
 
+      // Booking-site thread: remember where to reply and what the guest booked.
+      if (event.ota?.provider) {
+        conv.metadata = {
+          ...(conv.metadata || {}),
+          ota: { ...(conv.metadata?.ota || {}), ...event.ota },
+          ...(event.otaContext ? { otaContext: event.otaContext } : {}),
+        };
+        conv.markModified("metadata");
+        await conv.save();
+      }
+
       // Persist Zernio's conversation id so the bot can reply into this thread.
       if (
         providerConversationId &&
@@ -2099,9 +2153,13 @@ const handleWebhookEvent = async (workspaceId, event) => {
           sender: "customer",
           type: "text",
           text,
-          channelType: "instagram",
+          channelType: conv.channelType || event.channel || "instagram",
           status: "received",
-          metadata: { inboundTriggerType: type },
+          metadata: {
+            inboundTriggerType: type,
+            ...(event.externalId ? { externalId: event.externalId } : {}),
+            ...(event.ota?.threadId ? { otaThreadId: event.ota.threadId } : {}),
+          },
         });
         conv.lastMessageAt = new Date();
         conv.lastMessagePreview = text.slice(0, 120);
@@ -2251,4 +2309,10 @@ module.exports = {
   markInbound,
   isInsideServiceWindow,
   _internal: { personalize, matchKeyword, isWithinBusinessHours },
+  // Used by services/hotel/otaMessageService for non-guest OTA history.
+  _ota: {
+    getOrCreateConversation,
+    upsertContactForOta: (workspaceId, senderId, msg) =>
+      upsertContact(workspaceId, senderId, { name: msg.guestName, source: msg.ota }),
+  },
 };

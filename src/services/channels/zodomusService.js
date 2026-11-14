@@ -557,7 +557,31 @@ async function ping() {
   return { ok: true, account: data?.account || data };
 }
 
+// ── Guest messaging ──────────────────────────────────────────────────────────
+// Zodomus lists "Guest Communications" as an advanced API, but its endpoints
+// are only documented behind the sandbox login (asked in our partner email).
+// Until they're confirmed this driver reports itself unavailable, so OTA
+// messaging for Zodomus properties is skipped cleanly rather than guessed at.
+// When the docs arrive: implement pollNew / fetchThread / send with the same
+// normalised shape as channexService.messaging and flip isAvailable.
+const messaging = {
+  isAvailable: () => false,
+  async pollNew() {
+    return [];
+  },
+  async fetchThread() {
+    return [];
+  },
+  async send() {
+    return {
+      success: false,
+      error: "Guest messaging through Zodomus isn't switched on yet.",
+    };
+  },
+};
+
 module.exports = {
+  messaging,
   isConfigured,
   ping,
   listChannels,

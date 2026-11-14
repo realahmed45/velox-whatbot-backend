@@ -268,6 +268,11 @@ const sendAgentMessage = asyncHandler(async (req, res) => {
     status: result.success ? "sent" : "failed",
     sentBy: req.user._id,
     failureReason: result.success ? undefined : result.error,
+    // Booking-site replies come back on the next poll — the thread id lets
+    // otaMessageService recognise this as our own message, not a new one.
+    metadata: conversation.metadata?.ota?.threadId
+      ? { otaThreadId: conversation.metadata.ota.threadId }
+      : {},
   });
 
   conversation.lastMessageAt = new Date();

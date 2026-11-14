@@ -266,6 +266,8 @@ const workspaceSchema = new mongoose.Schema(
       // messages are still stored in the Inbox, but the AI (and every other
       // automated reply) stays silent so staff answer by hand.
       whatsappAiEnabled: { type: Boolean, default: true },
+      // AI replies inside the Airbnb / Booking.com / Expedia guest inboxes.
+      otaAiEnabled: { type: Boolean, default: true },
       handoffKeywords: {
         type: [String],
         default: ["human", "agent", "support"],

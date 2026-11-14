@@ -847,6 +847,22 @@ const handleChannexWebhook = asyncHandler(async (req, res) => {
   const payload = req.body || {};
   const event = String(payload.event || payload.event_type || "").toLowerCase();
   logger.info(`[Channex webhook] event=${event}`);
+  // Guest message in a Booking.com / Airbnb / Expedia inbox → re-read that
+  // thread now (the 1-minute poll is the safety net). Checked before the
+  // booking branch because message payloads also carry a booking_id.
+  if (event.includes("message")) {
+    const p = payload.payload || payload;
+    const threadId =
+      p.message_thread_id || p.thread_id || p.message_thread?.id || p.message?.message_thread_id;
+    try {
+      const otaMessages = require("../services/hotel/otaMessageService");
+      if (threadId) await otaMessages.syncThread("channex", threadId);
+      else await otaMessages.poll();
+    } catch (err) {
+      logger.error("[Channex webhook] message sync failed", { err: err.message });
+    }
+    return;
+  }
   if (
     event.includes("booking") ||
     payload?.payload?.booking_id ||

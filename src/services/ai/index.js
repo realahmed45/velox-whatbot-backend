@@ -414,6 +414,16 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock, c
     contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `Customer identifier: ${handle}`);
   lines.push(`Channel: ${channelLabel(channel)}`);
+  if (["airbnb", "booking_com", "expedia"].includes(channel)) {
+    lines.push(
+      "",
+      "BOOKING-SITE RULES (this guest is inside the booking site's own inbox — breaking these gets the hotel's listing penalised):",
+      "- Never share phone numbers, email addresses, WhatsApp, social handles or any web link.",
+      "- Never suggest booking, paying or talking outside this platform, and never offer a discount for booking direct.",
+      "- Changes to dates, guest count or cancellations are made on the booking site: explain how, or say the team will process it, and ESCALATE if a decision is needed.",
+      "- Use the reservation details you're given; never invent a booking the guest doesn't have.",
+    );
+  }
   lines.push(
     "",
     "REPLY RULES:",
