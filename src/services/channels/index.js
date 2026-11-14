@@ -15,6 +15,7 @@
 const PROVIDERS = {
   channex: "./channexService",
   beds24: "./beds24Service",
+  zodomus: "./zodomusService",
 };
 
 /**
@@ -48,6 +49,8 @@ function providerRoomId(property, roomType) {
       return roomType?.channexRoomTypeId || null;
     case "beds24":
       return roomType?.beds24RoomId || null;
+    case "zodomus":
+      return roomType?.zodomusRooms?.[0]?.roomId || null;
     default:
       return null;
   }

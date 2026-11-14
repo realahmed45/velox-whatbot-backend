@@ -97,6 +97,16 @@ const roomTypeSchema = new mongoose.Schema(
     // Beds24 (no rate-plan equivalent: prices live per-date on the room's
     // calendar, in the price1..price16 slots, so one id is enough).
     beds24RoomId: { type: String, default: null },
+    // Zodomus: one mapping per channel the room is sold on.
+    zodomusRooms: [
+      {
+        _id: false,
+        channelId: { type: Number, required: true },
+        ota: { type: String, default: "" },
+        roomId: { type: String, required: true },
+        rateId: { type: String, default: null },
+      },
+    ],
     active: { type: Boolean, default: true },
   },
   { timestamps: true },

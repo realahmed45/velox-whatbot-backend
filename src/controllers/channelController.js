@@ -45,10 +45,60 @@ const resolveWorkspaceProfileId = async (workspaceId) => {
   return profileId;
 };
 
+/**
+ * WhatsApp connects through Meta's Embedded Signup in a popup/redirect. When
+ * the hotel finishes on Meta's side but the browser never makes it back to our
+ * callback (closed tab, phone switched apps), the number IS connected at Zernio
+ * yet Botlify shows "disconnected" and no messages route. Recover on the next
+ * status read: look under the workspace's own Zernio profile and attach the
+ * number. Throttled per workspace so a polling dashboard can't hammer Zernio.
+ */
+const strandedCheckAt = new Map();
+const STRANDED_CHECK_MS = 60 * 1000;
+async function recoverStrandedWhatsApp(ws) {
+  try {
+    if (!zernioSocial.isConfigured()) return false;
+    const entry = (ws.channels || []).find((c) => c.platform === "whatsapp");
+    if (entry?.status === "connected" || entry?.status === "error") return false;
+    const key = String(ws._id);
+    if (Date.now() - (strandedCheckAt.get(key) || 0) < STRANDED_CHECK_MS) return false;
+    strandedCheckAt.set(key, Date.now());
+
+    const full = await Workspace.findById(ws._id).select("+instagram.botlifyProfileId channels");
+    const profileId = full?.instagram?.botlifyProfileId
+      ? decrypt(full.instagram.botlifyProfileId)
+      : null;
+    if (!profileId) return false; // never started a connect — nothing to recover
+    const accounts = await zernioSocial.listAccounts("whatsapp", profileId);
+    const newest = accounts.sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
+    )[0];
+    if (!newest?.accountId) return false;
+    const r = await saveChannelAccount({
+      workspace: full,
+      platform: "whatsapp",
+      accountId: String(newest.accountId),
+      info: newest,
+    });
+    logger.info(
+      `[Channels] recovered stranded WhatsApp connect ws=${key} ok=${r.ok} reason=${r.reason || "-"}`,
+    );
+    return r.ok;
+  } catch (err) {
+    logger.warn("[Channels] stranded WhatsApp check failed", {
+      err: err.response?.data || err.message,
+    });
+    return false;
+  }
+}
+
 // ── GET /api/channels/status ─────────────────────────────────────────────────
 // One call for the dashboard: connection state of every messaging channel.
 exports.getStatus = asyncHandler(async (req, res) => {
-  const ws = req.workspace; // set by requireWorkspace
+  let ws = req.workspace; // set by requireWorkspace
+  if (await recoverStrandedWhatsApp(ws)) {
+    ws = await Workspace.findById(ws._id);
+  }
   const out = {
     instagram: {
       status: ws.instagram?.status || "disconnected",

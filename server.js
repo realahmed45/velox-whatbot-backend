@@ -366,6 +366,15 @@ cron.schedule("*/2 * * * *", () => {
   );
 });
 
+// Drain the Zodomus reservations queue every minute. Zodomus documents no
+// booking webhooks, so this poll IS the delivery path — keep it tight.
+const { pollZodomusBookings } = require("./src/jobs/zodomusPollJob");
+cron.schedule("* * * * *", () => {
+  pollZodomusBookings().catch((e) =>
+    logger.warn("[Cron] pollZodomusBookings error: " + e.message),
+  );
+});
+
 // Move OTA connections forward while nobody is watching. Booking.com's own
 // approval takes 1–5 days; this is what lets the hotelier forget about it and
 // simply get an email when their channel goes live.

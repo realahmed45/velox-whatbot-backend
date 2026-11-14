@@ -88,7 +88,7 @@ const propertySchema = new mongoose.Schema(
     channel: {
       provider: {
         type: String,
-        enum: ["none", "channex", "beds24", "ical"],
+        enum: ["none", "channex", "beds24", "zodomus", "ical"],
         default: "none",
       },
       status: {
@@ -101,6 +101,17 @@ const propertySchema = new mongoose.Schema(
       channexGroupId: { type: String, default: null },
       // Beds24 id (their numeric property id, stored as a string for parity)
       beds24PropertyId: { type: String, default: null },
+      // Zodomus is per channel: one link per OTA the hotel is listed on, each
+      // with that OTA's own property id (Booking.com hotel id, Airbnb listing…).
+      zodomus: [
+        {
+          _id: false,
+          channelId: { type: Number, required: true },
+          ota: { type: String, default: "" }, // booking_com | airbnb | expedia …
+          otaPropertyId: { type: String, required: true },
+          activatedAt: Date,
+        },
+      ],
       // Which OTAs are live on the Channex side (informational, from import).
       // Written from REAL connection state — never from user intent.
       connectedOtas: [{ type: String }], // e.g. ["booking_com", "airbnb"]

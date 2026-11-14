@@ -385,7 +385,7 @@ const workspaceSchema = new mongoose.Schema(
       greeting: {
         type: String,
         default:
-          "Hey {name}! 👋 Thanks for following — really appreciate the support! Feel free to DM me anytime.",
+          "Hey {first_name}! 👋 Thanks so much for reaching out. How can we help you today?",
       },
       followUp1: {
         type: String,

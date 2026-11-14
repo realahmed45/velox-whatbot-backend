@@ -4,6 +4,7 @@ const RoomType = require("../models/RoomType");
 const HotelBooking = require("../models/HotelBooking");
 const channexService = require("../services/channels/channexService");
 const beds24Service = require("../services/channels/beds24Service");
+const zodomusService = require("../services/channels/zodomusService");
 const {
   createBooking,
   cancelBooking,
@@ -251,6 +252,59 @@ const importBeds24Property = asyncHandler(async (req, res) => {
   res.json({ success: true, property, roomTypes, webhook });
 });
 
+// ─── Zodomus connect ────────────────────────────────────────────────────────
+
+// @GET /api/hotel/zodomus/channels — the OTAs our Zodomus account can connect.
+const listZodomusChannels = asyncHandler(async (req, res) => {
+  if (!zodomusService.isConfigured()) {
+    res.status(503);
+    throw new Error("Channel sync isn't switched on yet. Your AI still takes direct bookings.");
+  }
+  const channels = await zodomusService.listChannels();
+  res.json({
+    success: true,
+    channels: channels.map((c) => ({
+      channelId: c.id,
+      name: c.name,
+      ota: zodomusService.sourceFromChannel(c.name),
+    })),
+  });
+});
+
+// @POST /api/hotel/zodomus/connect — { ota, otaPropertyId, propertyId? }
+// Activates the hotel's listing on that OTA and maps its rooms onto ours.
+const connectZodomusChannel = asyncHandler(async (req, res) => {
+  if (!zodomusService.isConfigured()) {
+    res.status(503);
+    throw new Error("Channel sync isn't switched on yet.");
+  }
+  const { ota, otaPropertyId } = req.body || {};
+  if (!ota || !otaPropertyId) {
+    res.status(400);
+    throw new Error("Choose the booking site and enter your property ID on it.");
+  }
+  const property = await resolveProperty(req);
+  if (!property) {
+    res.status(404);
+    throw new Error("Set up your property first.");
+  }
+  const clash = await Property.findOne({
+    _id: { $ne: property._id },
+    "channel.zodomus": { $elemMatch: { ota, otaPropertyId: String(otaPropertyId) } },
+  });
+  if (clash) {
+    res.status(409);
+    throw new Error("This listing is already connected to another account.");
+  }
+  const result = await zodomusService.connectChannel(property, {
+    ota,
+    otaPropertyId: String(otaPropertyId).trim(),
+  });
+  const fresh = await Property.findById(property._id);
+  const sync = await refreshConnectionState(fresh).catch(() => null);
+  res.json({ success: true, ...result, connection: sync });
+});
+
 // ─── Connection state ───────────────────────────────────────────────────────
 //
 // One place the UI can ask "where is my OTA connection, really?" — used by the
@@ -273,7 +327,9 @@ const connectionPayload = (property, sync, readiness) => ({
   propertyName: property.name,
   provider: property.channel?.provider || "none",
   providerConfigured: !!(
-    property.channel?.channexPropertyId || property.channel?.beds24PropertyId
+    property.channel?.channexPropertyId ||
+    property.channel?.beds24PropertyId ||
+    property.channel?.zodomus?.length
   ),
   state: sync?.state || "not_started",
   message: sync?.message || "",
@@ -839,6 +895,8 @@ module.exports = {
   importChannexProperty,
   listBeds24Properties,
   importBeds24Property,
+  listZodomusChannels,
+  connectZodomusChannel,
   getConnection,
   refreshConnection,
   importByConnection,

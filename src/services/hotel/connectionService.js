@@ -231,7 +231,7 @@ async function refreshConnectionState(property) {
 /** Does the property carry a provider-side id (i.e. was it ever imported)? */
 function hasProviderId(property) {
   const ch = property?.channel || {};
-  return !!(ch.channexPropertyId || ch.beds24PropertyId);
+  return !!(ch.channexPropertyId || ch.beds24PropertyId || ch.zodomus?.length);
 }
 
 /**
@@ -262,6 +262,22 @@ async function providerConnectedOtas(provider, property) {
       }
     }
     return [...names].filter(Boolean);
+  }
+  if (ch.provider === "zodomus" && ch.zodomus?.length) {
+    // One link per OTA. A link counts as live when Zodomus's property check
+    // passes for it; a rejection means it is still waiting on the OTA side.
+    // (Check response fields are unverified until sandbox access; a clean,
+    // non-error answer is the conservative signal available today.)
+    const live = [];
+    for (const link of ch.zodomus) {
+      try {
+        await provider.checkProperty(link.channelId, link.otaPropertyId);
+        live.push(link.ota || provider.sourceFromChannel(link.channelId));
+      } catch {
+        /* pending on the OTA side — reported as pending, not as an error */
+      }
+    }
+    return dedupe(live).filter(Boolean);
   }
   return [];
 }

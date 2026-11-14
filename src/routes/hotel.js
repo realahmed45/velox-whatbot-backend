@@ -14,6 +14,8 @@ const {
   importChannexProperty,
   listBeds24Properties,
   importBeds24Property,
+  listZodomusChannels,
+  connectZodomusChannel,
   getConnection,
   refreshConnection,
   importByConnection,
@@ -42,6 +44,10 @@ router.post("/channex/import", requireOwner, importChannexProperty);
 // Beds24 (OTA) connect/import — the alternative channel manager
 router.get("/beds24/properties", requireOwner, listBeds24Properties);
 router.post("/beds24/import", requireOwner, importBeds24Property);
+
+// Zodomus (OTA) — the primary provider: per-OTA connect, rooms mapped on connect
+router.get("/zodomus/channels", requireOwner, listZodomusChannels);
+router.post("/zodomus/connect", requireOwner, connectZodomusChannel);
 
 // Connection state machine — provider-agnostic. `connection` is readable by
 // any team member (the status card appears on Today); changing it is owner-only.

@@ -689,12 +689,32 @@ const handleDMKeyword = async (workspace, contact, conv, text) => {
   return true;
 };
 
-const handleWelcome = async (workspace, contact, conv) => {
+// The Instagram-era schema default. Hotels never chose it, so treat it as
+// "no custom greeting" rather than sending "thanks for following" to a guest
+// who asked for a room on WhatsApp.
+const LEGACY_DEFAULT_GREETING =
+  "Hey {name}! 👋 Thanks for following — really appreciate the support! Feel free to DM me anytime.";
+
+/** Will the AI answer this workspace's messages? Mirrors handleAIReply's gates. */
+const aiWillReply = (workspace) => {
+  if (!wsHasFeature(workspace, FEATURES.AI_BOT)) return false;
+  const aiCfg = workspace.aiSettings || workspace.aiBot || {};
+  return aiCfg.enabled !== false;
+};
+
+const handleWelcome = async (workspace, contact, conv, opts = {}) => {
   if (conv.botReplyCount > 0) return false;
   if (workspace.dmMessages?.enabled === false) return false;
+  // A guest whose first message is a real question ("room for 2 next
+  // weekend?") must get an ANSWER, not a canned hello that ignores it. When the
+  // AI is on, it greets and answers in one reply, so the static welcome steps
+  // aside. It still fires for content-less openers or when the AI is off.
+  if (opts.hasContent && aiWillReply(workspace)) return false;
   // Fall back to a professional default so an enabled-but-blank welcome
   // still greets the user instead of silently doing nothing.
-  const greeting = workspace.dmMessages?.greeting || DEFAULT_MESSAGES.welcome;
+  const custom = workspace.dmMessages?.greeting;
+  const greeting =
+    custom && custom !== LEGACY_DEFAULT_GREETING ? custom : DEFAULT_MESSAGES.welcome;
   await sendAndLog({
     workspace,
     contact,
@@ -2186,7 +2206,11 @@ const handleWebhookEvent = async (workspaceId, event) => {
         return;
       }
       // Welcome greeting fires on the very first message, before AI takes over.
-      if (await handleWelcome(workspace, contact, conv)) {
+      if (
+        await handleWelcome(workspace, contact, conv, {
+          hasContent: !!(text || incomingImageUrl),
+        })
+      ) {
         logger.info(`[IG flow] handled by WELCOME`);
         return;
       }
