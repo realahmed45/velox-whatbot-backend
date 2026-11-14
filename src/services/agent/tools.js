@@ -630,7 +630,7 @@ const TOOLS = [
   {
     name: "message_guest",
     description:
-      "Send a WhatsApp/Instagram message to a guest by booking code. Use for 'tell BK-1234 their room is ready'.",
+      "Send a message to a guest (WhatsApp or their booking-site inbox) by booking code. Use for 'tell BK-1234 their room is ready'.",
     confirm: true,
     parameters: {
       type: "object",

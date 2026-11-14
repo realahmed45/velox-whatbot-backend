@@ -137,7 +137,19 @@ const matchFaq = (faqs, message) => {
 /**
  * Build the system prompt — tuned for GPT-4o mini's superior instruction-following.
  */
-const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) => {
+// How each guest channel is named to the AI, and whether it renders markdown.
+const CHANNEL_LABELS = {
+  whatsapp: "WhatsApp",
+  airbnb: "Airbnb guest inbox",
+  booking_com: "Booking.com guest inbox",
+  expedia: "Expedia guest inbox",
+  messenger: "Facebook Messenger",
+  telegram: "Telegram",
+  web: "the hotel's website chat",
+};
+const channelLabel = (c) => CHANNEL_LABELS[c] || "guest messaging";
+
+const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock, channel = "whatsapp") => {
   const v2 = pickAiCfg(workspace);
   const legacy = workspace.aiBot || {};
   const ai = {
@@ -150,7 +162,7 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) =
   };
 
   const bizName =
-    workspace.name || workspace.instagram?.username || "this business";
+    workspace.name || "this hotel";
 
   // AI Role — the persona. Prefer the explicit aiRole field, then a legacy
   // systemPrompt the owner actually wrote (not the schema's generic default),
@@ -163,9 +175,8 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) =
   const role =
     (ai.aiRole && ai.aiRole.trim()) ||
     ownPrompt ||
-    (workspace.features?.hotelBookings
-      ? `You are the guest concierge for ${bizName}, a warm, sharp member of the hotel team answering guests on WhatsApp and booking sites. You look after guests completely on your own: questions, bookings, requests and problems. Friendly, concise and genuinely helpful, never robotic.`
-      : `You are the Instagram assistant for ${bizName} — a warm, sharp member of the team replying to DMs, comments and story replies. You sound like a real person who genuinely cares: friendly, concise, and helpful, never robotic or salesy.`);
+    // Every Botlify workspace is a hotel now — one concierge persona.
+    `You are the guest concierge for ${bizName}, a warm, sharp member of the hotel team answering guests on WhatsApp and inside the Airbnb, Booking.com and Expedia guest inboxes. You look after guests completely on your own: questions, bookings, requests and problems. Friendly, concise and genuinely helpful, never robotic.`;
 
   const lines = [role, ""];
 
@@ -402,7 +413,7 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) =
   const handle =
     contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `Customer identifier: ${handle}`);
-  lines.push("Channel: Instagram DM");
+  lines.push(`Channel: ${channelLabel(channel)}`);
   lines.push(
     "",
     "REPLY RULES:",
@@ -411,7 +422,7 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock) =
     "  Example: • Classic Hoodie — PKR 2,500 | Sizes: S M L XL | In stock ✅",
     "- If a customer asks about a specific product, give the full details: name, price, sizes, stock, link.",
     "- Split long replies into 2–3 short messages naturally (use newlines, not walls of text).",
-    "- Plain text only — Instagram DMs don't render markdown. No **bold**, no #headers, no tables.",
+    "- Plain text only — guest inboxes and WhatsApp don't render markdown. No **bold**, no #headers, no tables.",
     "- Never invent prices, links, addresses, or policies you weren't told.",
     "- Never pretend to be human. Never fabricate facts. Never argue — stay calm and kind even if the customer is upset.",
     "",
@@ -667,6 +678,7 @@ const generateReply = async ({
   contact,
   extraContext = null,
   incomingImageUrl = null,
+  channel = "whatsapp",
 }) => {
   const ai = {
     ...(workspace.aiBot || {}),
@@ -729,6 +741,7 @@ const generateReply = async ({
     contact,
     extraContext,
     hotelBlock || appointmentBlock,
+    channel,
   );
 
   // If the customer sent a photo, build a multimodal user turn so the vision

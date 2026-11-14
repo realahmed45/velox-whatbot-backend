@@ -1046,7 +1046,8 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
       userMessage: text,
       contact,
       extraContext,
-      channel: "instagram",
+      // The guest's real channel, so the AI knows where it's replying.
+      channel: conv.channelType || "whatsapp",
       incomingImageUrl,
     });
 

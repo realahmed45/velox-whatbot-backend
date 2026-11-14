@@ -129,7 +129,7 @@ const PLANS = {
     features: [...hotelFeatures],
     highlights: [
       "Booking.com + Airbnb sync (free)",
-      "AI concierge on WhatsApp & Instagram",
+      "AI replies on WhatsApp & in Airbnb, Booking.com and Expedia inboxes",
       "Bot books rooms & reservations 24/7",
       "Airport pickup & drop-off for guests",
       "Unified inbox with human takeover",
@@ -150,7 +150,7 @@ const PLANS = {
     features: [...hotelFeatures],
     highlights: [
       "Booking.com + Airbnb sync (free, 0% commission)",
-      "AI concierge on WhatsApp & Instagram",
+      "AI replies on WhatsApp & in Airbnb, Booking.com and Expedia inboxes",
       "Bot books rooms & reservations 24/7",
       "Airport pickup & drop-off for guests",
       "Unified inbox with human takeover",
