@@ -60,6 +60,8 @@ async function recoverStrandedWhatsApp(ws) {
     if (!zernioSocial.isConfigured()) return false;
     const entry = (ws.channels || []).find((c) => c.platform === "whatsapp");
     if (entry?.status === "connected" || entry?.status === "error") return false;
+    // Only Zernio connects can strand this way; 360dialog connects are direct.
+    if (entry && entry.provider && entry.provider !== "zernio") return false;
     const key = String(ws._id);
     if (Date.now() - (strandedCheckAt.get(key) || 0) < STRANDED_CHECK_MS) return false;
     strandedCheckAt.set(key, Date.now());
@@ -109,6 +111,7 @@ exports.getStatus = asyncHandler(async (req, res) => {
     const entry = (ws.channels || []).find((c) => c.platform === platform);
     out[platform] = {
       status: entry?.status || "disconnected",
+      provider: entry?.provider || null,
       username: entry?.username || null,
       displayName: entry?.displayName || null,
       profilePicture: entry?.profilePicture || null,
@@ -726,6 +729,19 @@ exports.whatsappHealth = asyncHandler(async (req, res) => {
   if (!entry?.accountId) {
     res.status(404);
     throw new Error("WhatsApp isn't connected yet.");
+  }
+  if (entry.provider === "360dialog") {
+    // Health = are guest messages arriving. 360dialog has no per-number
+    // health call in its public API; the webhook heartbeat is the honest signal.
+    return res.json({
+      success: true,
+      health: {
+        status: entry.status === "connected" ? "CONNECTED" : String(entry.status || "unknown").toUpperCase(),
+        displayNumber: entry.phoneNumber || null,
+        lastMessageAt: entry.lastWebhookAt || null,
+        provider: "360dialog",
+      },
+    });
   }
   try {
     const info = await zernioSocial.getWhatsAppNumberInfo(

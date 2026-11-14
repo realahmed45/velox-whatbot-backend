@@ -10,6 +10,16 @@ const {
   requireOwner,
 } = require("../middleware/auth");
 
+// ── WhatsApp via 360dialog (the WhatsApp carrier since Nov 2026) ─────────────
+const d360 = require("../controllers/dialog360Controller");
+// Public: 360dialog posts guest messages here; the token routes + authenticates.
+router.post("/whatsapp/360dialog/hook/:token", d360.webhook);
+// Public: browser returns here from the 360dialog Connect popup (signed state).
+router.get("/whatsapp/360dialog/callback", d360.callback);
+router.post("/whatsapp/360dialog/key", protect, requireWorkspace, requireOwner, d360.connectKey);
+router.get("/whatsapp/360dialog/connect", protect, requireWorkspace, requireOwner, d360.connectUrl);
+router.delete("/whatsapp/360dialog", protect, requireWorkspace, requireOwner, d360.disconnect);
+
 // ── Public callback (NO auth — Zernio redirects the browser here) ────────────
 // Must be registered BEFORE any auth middleware.
 router.get("/:platform/callback", channelCtrl.oauthCallback);

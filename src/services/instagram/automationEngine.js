@@ -434,6 +434,7 @@ const resolveSendTransport = async (workspace, conversation) => {
         zernio: "../channels/zernioSocialService",
         qiscus: "../channels/qiscusService",
         respondio: "../channels/respondIoService",
+        "360dialog": "../channels/dialog360Service",
       };
       const modPath = providerModules[entry.provider || "zernio"];
       try {
