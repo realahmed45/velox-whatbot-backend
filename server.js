@@ -214,6 +214,15 @@ app.post(
   require("./src/controllers/hotelController").handleBeds24Webhook,
 );
 
+// Public: WuBook (WooDoo) — reservation push {rcode, lcode} and Wired JSON
+// notifications (guest messages, reservations). Token-verified in the handlers.
+app.post(
+  "/api/wubook/push",
+  express.urlencoded({ extended: false }),
+  require("./src/controllers/hotelController").handleWubookPush,
+);
+app.post("/api/wubook/webhook", require("./src/controllers/hotelController").handleWubookWebhook);
+
 // Public: business-category picker list for onboarding.
 app.get("/api/verticals", require("./src/controllers/verticalController").listVerticals);
 
@@ -364,6 +373,14 @@ cron.schedule("*/2 * * * *", () => {
   pollChannexBookings().catch((e) =>
     logger.warn("[Cron] pollChannexBookings error: " + e.message),
   );
+});
+
+// WuBook: pull (and mark) new/changed reservations every 2 minutes — the
+// safety net under the push callback registered at import.
+cron.schedule("*/2 * * * *", () => {
+  require("./src/services/channels/wubookService")
+    .pollBookings()
+    .catch((e) => logger.warn("[Cron] wubook pollBookings error: " + e.message));
 });
 
 // Drain the Zodomus reservations queue every minute. Zodomus documents no

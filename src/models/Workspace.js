@@ -170,7 +170,7 @@ const workspaceSchema = new mongoose.Schema(
         // the transport is chosen per channel rather than assumed.
         provider: {
           type: String,
-          enum: ["zernio", "qiscus", "respondio", "360dialog", "aisensy"],
+          enum: ["zernio", "qiscus", "respondio", "360dialog", "aisensy", "wasender"],
           default: "zernio",
         },
         // 360dialog: hash of the random token in this number's webhook URL —

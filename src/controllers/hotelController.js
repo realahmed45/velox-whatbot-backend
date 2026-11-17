@@ -5,6 +5,7 @@ const HotelBooking = require("../models/HotelBooking");
 const channexService = require("../services/channels/channexService");
 const beds24Service = require("../services/channels/beds24Service");
 const zodomusService = require("../services/channels/zodomusService");
+const wubookService = require("../services/channels/wubookService");
 const {
   createBooking,
   cancelBooking,
@@ -252,6 +253,87 @@ const importBeds24Property = asyncHandler(async (req, res) => {
   res.json({ success: true, property, roomTypes, webhook });
 });
 
+// ─── WuBook connect ─────────────────────────────────────────────────────────
+
+// @GET /api/hotel/wubook/status
+const wubookStatus = asyncHandler(async (req, res) => {
+  res.json({ success: true, configured: wubookService.isConfigured(), messaging: wubookService.messagingConfigured() });
+});
+
+// @POST /api/hotel/wubook/import  { lcode } — mirror the WuBook property's rooms
+// and linked booking sites into this workspace's property.
+const importWubookProperty = asyncHandler(async (req, res) => {
+  if (!wubookService.isConfigured()) {
+    res.status(503);
+    throw new Error("Channel sync is being switched on for your account — we'll email you.");
+  }
+  const lcode = String(req.body?.lcode || "").replace(/\D/g, "");
+  if (!lcode) {
+    res.status(400);
+    throw new Error("Enter your WuBook property code (numbers only).");
+  }
+  const taken = await Property.findOne({ "channel.wubookLcode": lcode, workspaceId: { $ne: req.workspace._id } });
+  if (taken) {
+    res.status(409);
+    throw new Error("This WuBook property is already connected to another Botlify account.");
+  }
+  // Attach to the workspace's existing property (onboarding usually created
+  // it) so rooms and bookings land in one place.
+  const current = await resolveProperty(req);
+  if (current && !current.channel?.wubookLcode) {
+    await Property.updateOne({ _id: current._id }, { $set: { "channel.wubookLcode": lcode } });
+  }
+  let result;
+  try {
+    result = await wubookService.importProperty(req.workspace._id, lcode, { name: current?.name });
+  } catch (err) {
+    logger.warn("[hotel] wubook import failed", { err: err.message });
+    res.status(400);
+    throw new Error(
+      /fault|failed \(/i.test(err.message)
+        ? "WuBook didn't recognise that property code for our account. Check the code in WooDoo."
+        : "Couldn't reach WuBook: " + err.message,
+    );
+  }
+  const sync = await refreshConnectionState(result.property).catch(() => null);
+  res.json({
+    success: true,
+    property: result.property,
+    roomTypes: result.roomTypes.map((r) => ({ _id: r._id, name: r.name, unitsCount: r.unitsCount })),
+    channels: result.channels,
+    connection: sync,
+  });
+});
+
+// @POST /api/wubook/push?token=…  (public) — classic Wired push: {rcode, lcode}
+const handleWubookPush = asyncHandler(async (req, res) => {
+  if (!wubookService.verifyWebhookToken(req.query.token)) return res.sendStatus(401);
+  res.sendStatus(200); // ack fast
+  const { rcode, lcode } = { ...(req.query || {}), ...(req.body || {}) };
+  try {
+    await wubookService.handlePush({ rcode, lcode });
+  } catch (err) {
+    logger.error("[WuBook push] processing failed", { err: err.message });
+  }
+});
+
+// @POST /api/wubook/webhook?token=…  (public) — Wired JSON notifications:
+// new/updated guest message threads and reservation communications.
+const handleWubookWebhook = asyncHandler(async (req, res) => {
+  if (!wubookService.verifyWebhookToken(req.query.token)) return res.sendStatus(401);
+  res.sendStatus(200);
+  const what = wubookService.classifyWebhook(req.body || {});
+  try {
+    const otaMessages = require("../services/hotel/otaMessageService");
+    if (what.kind === "thread") await otaMessages.syncThread("wubook", what.composite);
+    else if (what.kind === "messages_unknown") await otaMessages.poll();
+    else if (what.kind === "reservation" && what.rcode && what.lcode) await wubookService.handlePush(what);
+    else if (what.kind === "send_failed") logger.warn("[WuBook webhook] message send failed", what.detail);
+  } catch (err) {
+    logger.error("[WuBook webhook] processing failed", { err: err.message });
+  }
+});
+
 // ─── Zodomus connect ────────────────────────────────────────────────────────
 
 // @GET /api/hotel/zodomus/channels — the OTAs our Zodomus account can connect.
@@ -329,8 +411,17 @@ const connectionPayload = (property, sync, readiness) => ({
   providerConfigured: !!(
     property.channel?.channexPropertyId ||
     property.channel?.beds24PropertyId ||
+    property.channel?.wubookLcode ||
     property.channel?.zodomus?.length
   ),
+  // The id of this property at its channel manager (WuBook lcode etc.) — lets
+  // the dashboard offer "Re-sync rooms".
+  providerPropertyId:
+    property.channel?.wubookLcode ||
+    property.channel?.channexPropertyId ||
+    property.channel?.beds24PropertyId ||
+    null,
+  linkedSites: (property.channel?.wubookChannels || []).map((c) => ({ ota: c.ota, name: c.name })),
   state: sync?.state || "not_started",
   message: sync?.message || "",
   otaStatus: sync?.otaStatus || [],
@@ -913,6 +1004,10 @@ module.exports = {
   importBeds24Property,
   listZodomusChannels,
   connectZodomusChannel,
+  wubookStatus,
+  importWubookProperty,
+  handleWubookPush,
+  handleWubookWebhook,
   getConnection,
   refreshConnection,
   importByConnection,

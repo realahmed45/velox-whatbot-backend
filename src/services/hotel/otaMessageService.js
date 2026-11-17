@@ -35,6 +35,7 @@ const DRIVERS = {
   channex: "../channels/channexService",
   beds24: "../channels/beds24Service",
   zodomus: "../channels/zodomusService",
+  wubook: "../channels/wubookService",
 };
 
 function driver(name) {
@@ -63,6 +64,7 @@ async function findProperty(provider, providerPropertyId) {
   const id = String(providerPropertyId);
   if (provider === "channex") return Property.findOne({ "channel.channexPropertyId": id });
   if (provider === "beds24") return Property.findOne({ "channel.beds24PropertyId": id });
+  if (provider === "wubook") return Property.findOne({ "channel.wubookLcode": id });
   if (provider === "zodomus") {
     return Property.findOne({ "channel.zodomus": { $elemMatch: { otaPropertyId: id } } });
   }
@@ -81,6 +83,9 @@ async function findBooking(property, msg) {
       { otaReservationId: { $regex: `^${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(#|$)` } },
       { "raw.id": ref },
       { "raw.booking_id": ref },
+      { otaReservationId: `wubook:${ref}` },
+      { "raw.reservation_code": Number.isFinite(Number(ref)) ? Number(ref) : ref },
+      { "raw.channel_reservation_code": ref },
     ],
   })
     .populate("roomTypeId", "name")

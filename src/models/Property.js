@@ -88,7 +88,7 @@ const propertySchema = new mongoose.Schema(
     channel: {
       provider: {
         type: String,
-        enum: ["none", "channex", "beds24", "zodomus", "ical"],
+        enum: ["none", "channex", "beds24", "zodomus", "wubook", "ical"],
         default: "none",
       },
       status: {
@@ -101,6 +101,19 @@ const propertySchema = new mongoose.Schema(
       channexGroupId: { type: String, default: null },
       // Beds24 id (their numeric property id, stored as a string for parity)
       beds24PropertyId: { type: String, default: null },
+      // WuBook (WooDoo): the property's lcode inside our corporate account, and
+      // the booking sites connected to it in the WooDoo panel. WuBook rooms are
+      // the master inventory; each site's rooms are mapped to them in WooDoo.
+      wubookLcode: { type: String, default: null, index: true },
+      wubookPlanId: { type: Number, default: 0 }, // pricing plan we push to (0 = WuBook Parity)
+      wubookChannels: [
+        {
+          _id: false,
+          channelId: { type: String, required: true },
+          ota: { type: String, default: "" },
+          name: { type: String, default: "" },
+        },
+      ],
       // Zodomus is per channel: one link per OTA the hotel is listed on, each
       // with that OTA's own property id (Booking.com hotel id, Airbnb listing…).
       zodomus: [

@@ -115,6 +115,9 @@ exports.getStatus = asyncHandler(async (req, res) => {
       ...(entry?.provider === "aisensy"
         ? { webhookUrl: require("./aisensyController").webhookUrlFor(entry) }
         : {}),
+      ...(entry?.provider === "wasender"
+        ? { webhookUrl: require("./wasenderController").webhookUrlFor(entry) }
+        : {}),
       username: entry?.username || null,
       displayName: entry?.displayName || null,
       profilePicture: entry?.profilePicture || null,
@@ -733,7 +736,7 @@ exports.whatsappHealth = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("WhatsApp isn't connected yet.");
   }
-  if (entry.provider === "360dialog" || entry.provider === "aisensy") {
+  if (["360dialog", "aisensy", "wasender"].includes(entry.provider)) {
     // Health = are guest messages arriving. 360dialog has no per-number
     // health call in its public API; the webhook heartbeat is the honest signal.
     return res.json({

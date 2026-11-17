@@ -10,7 +10,15 @@ const {
   requireOwner,
 } = require("../middleware/auth");
 
-// ── WhatsApp via AiSensy (the WhatsApp carrier, Nov 2026) ───────────────────
+// ── WhatsApp via WasenderAPI (the WhatsApp carrier, Nov 2026) ───────────────
+const wasenderCtrl = require("../controllers/wasenderController");
+router.post("/whatsapp/wasender/hook/:token", wasenderCtrl.webhook); // public: token + X-Webhook-Signature
+router.post("/whatsapp/wasender/start", protect, requireWorkspace, requireOwner, wasenderCtrl.start);
+router.get("/whatsapp/wasender/qr", protect, requireWorkspace, requireOwner, wasenderCtrl.qr);
+router.post("/whatsapp/wasender/key", protect, requireWorkspace, requireOwner, wasenderCtrl.connectKey);
+router.delete("/whatsapp/wasender", protect, requireWorkspace, requireOwner, wasenderCtrl.disconnect);
+
+// ── WhatsApp via AiSensy (spare driver) ─────────────────────────────────────
 const aisensyCtrl = require("../controllers/aisensyController");
 router.post("/whatsapp/aisensy/hook/:token", aisensyCtrl.webhook); // public, token-authenticated
 router.post("/whatsapp/aisensy/key", protect, requireWorkspace, requireOwner, aisensyCtrl.connectKey);
