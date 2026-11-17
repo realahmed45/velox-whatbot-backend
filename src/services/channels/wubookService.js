@@ -718,10 +718,25 @@ async function advanceOnboarding() {
         });
         advanced++;
         logger.info(`[WuBook] ${entry.ota} live lcode=${p.channel.wubookLcode} rooms=${r.rooms}`);
+        require("../notificationService").notify(p.workspaceId, {
+          type: "channel.live",
+          title: `${require("../notificationService").channelLabel(entry.ota)} is live`,
+          body: `${r.rooms} room type${r.rooms === 1 ? "" : "s"} synced. Guests there are now answered by your AI.`,
+          link: "/dashboard/settings?tab=channels",
+          channel: entry.ota,
+        });
       } catch (err) {
         const pending = /not.*(active|approved|confirm)|pending|waiting/i.test(err.message);
         if (pending) continue; // Expedia not approved yet
         logger.warn(`[WuBook] onboarding ${entry.ota} failed lcode=${p.channel.wubookLcode}: ${err.message}`);
+        require("../notificationService").notify(p.workspaceId, {
+          type: "channel.error",
+          title: `${require("../notificationService").channelLabel(entry.ota)} needs attention`,
+          body: "We couldn't finish connecting this site automatically — our team is on it.",
+          link: "/dashboard/settings?tab=channels",
+          channel: entry.ota,
+          priority: "high",
+        });
         await setOnboarding(p._id, entry.ota, {
           state: "error",
           message: "We couldn't finish connecting this site automatically — our team has been notified and will fix it.",

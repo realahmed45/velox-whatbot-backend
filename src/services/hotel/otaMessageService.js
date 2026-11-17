@@ -81,11 +81,11 @@ async function findBooking(property, msg) {
       { otaReservationId: ref },
       { otaReservationId: `beds24:${ref}` },
       { otaReservationId: { $regex: `^${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(#|$)` } },
-      { "raw.id": ref },
-      { "raw.booking_id": ref },
+      { "otaRaw.id": ref },
+      { "otaRaw.booking_id": ref },
       { otaReservationId: `wubook:${ref}` },
-      { "raw.reservation_code": Number.isFinite(Number(ref)) ? Number(ref) : ref },
-      { "raw.channel_reservation_code": ref },
+      { "otaRaw.reservation_code": Number.isFinite(Number(ref)) ? Number(ref) : ref },
+      { "otaRaw.channel_reservation_code": ref },
     ],
   })
     .populate("roomTypeId", "name")

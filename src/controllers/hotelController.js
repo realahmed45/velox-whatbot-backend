@@ -104,6 +104,7 @@ const updateProperty = asyncHandler(async (req, res) => {
     "transfers",
     "rules",
     "paymentMethods",
+    "services",
     "active",
   ];
   // Nested field: the OTAs the hotel says they're listed on (intent, not state).

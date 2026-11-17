@@ -226,6 +226,23 @@ const propertySchema = new mongoose.Schema(
       airportCode: { type: String, default: "DPS" }, // nearest airport (IATA)
     },
 
+    // ── Hotel services ──────────────────────────────────────────────────────
+    // What the property offers beyond the room (massage, spa, airport pickup,
+    // tours, laundry, restaurant…). Asked at onboarding, edited in Settings →
+    // Services, shown in the website's Services section and known by the AI.
+    services: [
+      {
+        key: { type: String, default: "" }, // preset id (e.g. "massage") or "custom"
+        name: { type: String, required: true, trim: true, maxlength: 80 },
+        description: { type: String, default: "", maxlength: 400 },
+        price: { type: Number, default: null }, // null = "ask us" / included
+        priceUnit: { type: String, default: "" }, // "per person", "per hour", "per trip"…
+        icon: { type: String, default: "" }, // lucide icon name hint for the UI
+        image: { type: String, default: "" },
+        enabled: { type: Boolean, default: true },
+      },
+    ],
+
     // ── Upsell catalog ──────────────────────────────────────────────────────
     // What the bot may offer on top of a stay. Seeded with sensible defaults at
     // onboarding; the hotel edits prices or switches items off.

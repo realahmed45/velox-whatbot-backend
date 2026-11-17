@@ -76,6 +76,21 @@ const buildHotelBlock = async (workspace) => {
   if (r.quietHours) rules.push(`quiet hours ${r.quietHours}`);
   if (r.minAge) rules.push(`minimum check-in age ${r.minAge}`);
   if (rules.length) out.push(`  • House rules: ${rules.join(", ")}`);
+  const services = (property.services || []).filter((s) => s && s.enabled !== false && s.name);
+  if (services.length) {
+    out.push(
+      `  • Services the hotel offers (offer them when relevant, quote these prices only): ${services
+        .slice(0, 20)
+        .map((s) =>
+          s.name +
+          (typeof s.price === "number" && s.price > 0
+            ? ` (${s.price} ${property.currency || ""}${s.priceUnit ? " " + s.priceUnit : ""})`
+            : "") +
+          (s.description ? ` — ${String(s.description).slice(0, 120)}` : ""),
+        )
+        .join("; ")}`,
+    );
+  }
 
   // How they can pay — the AI should be able to answer this outright.
   const pm = property.paymentMethods || {};

@@ -43,6 +43,23 @@ const wsHasFeature = (workspace, feature) => {
 const notifyHandoff = async (workspace, contact, conv) => {
   const who = contact?.name || contact?.igUsername || "A customer";
 
+  // 0. Bell — high priority: a guest is waiting for a person.
+  try {
+    const { notify, channelLabel } = require("../notificationService");
+    notify(workspace._id, {
+      type: "guest.needs_human",
+      title: `${who} needs you`,
+      body: `The AI handed this ${channelLabel(conv?.channelType)} conversation to your team.`,
+      link: `/dashboard/inbox?c=${conv?._id}`,
+      channel: conv?.channelType || "",
+      priority: "high",
+      dedupeKey: `handoff:${conv?._id}`,
+      data: { conversationId: String(conv?._id || "") },
+    });
+  } catch {
+    /* never block the handoff */
+  }
+
   // 1. Realtime → inbox lights up immediately.
   try {
     const { getIO } = require("../../socket");
@@ -2168,6 +2185,21 @@ const handleWebhookEvent = async (workspaceId, event) => {
         conv.lastMessagePreview = text.slice(0, 120);
         conv.unreadByAgentCount = (conv.unreadByAgentCount || 0) + 1;
         await conv.save();
+
+        // Bell: one live row per conversation (refreshed while unread).
+        {
+          const { notify, channelLabel } = require("../notificationService");
+          const ch = conv.channelType || event.channel || "whatsapp";
+          notify(workspace._id, {
+            type: "message.new",
+            title: `${contact.name || "A guest"} · ${channelLabel(ch)}`,
+            body: text.slice(0, 160),
+            link: `/dashboard/inbox?c=${conv._id}`,
+            channel: ch,
+            dedupeKey: `msg:${conv._id}`,
+            data: { conversationId: String(conv._id), count: conv.unreadByAgentCount },
+          });
+        }
 
         // Enrich with sentiment (async, non-blocking)
         const savedMsg = await Message.findOne({

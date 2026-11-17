@@ -248,6 +248,19 @@ function buildSite(website, property, roomTypes = []) {
       seo: c.seo || {},
     },
     rooms,
+    // The hotel's services (Settings → Services). Prices in the hotel's currency.
+    services: (property.services || [])
+      .filter((s) => s && s.enabled !== false && s.name)
+      .slice(0, 24)
+      .map((s) => ({
+        name: s.name,
+        description: s.description || "",
+        price: typeof s.price === "number" && s.price > 0 ? s.price : null,
+        priceUnit: s.priceUnit || "",
+        currency: property.currency || "USD",
+        icon: s.icon || s.key || "",
+        image: s.image || "",
+      })),
   };
 }
 

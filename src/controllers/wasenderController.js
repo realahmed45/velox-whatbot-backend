@@ -203,6 +203,21 @@ exports.webhook = async (req, res) => {
     const sessionState = wasender.parseSessionStatus(body);
     if (sessionState) {
       await setStatus(ws._id, toChannelStatus(sessionState), { lastWebhookAt: new Date() });
+      if (sessionState === "connected" || sessionState === "logged_out" || sessionState === "disconnected") {
+        const { notify } = require("../services/notificationService");
+        const up = sessionState === "connected";
+        notify(ws._id, {
+          type: up ? "whatsapp.connected" : "whatsapp.disconnected",
+          title: up ? "WhatsApp connected" : "WhatsApp disconnected",
+          body: up
+            ? "Your AI is answering guests on WhatsApp."
+            : "Guests on WhatsApp aren't being answered. Reconnect in Settings → Channels.",
+          link: "/dashboard/settings?tab=channels",
+          channel: "whatsapp",
+          priority: up ? "normal" : "high",
+          dedupeKey: "whatsapp:status",
+        });
+      }
       logger.info(`[Wasender] session ${sessionState} ws=${ws._id}`);
       return;
     }

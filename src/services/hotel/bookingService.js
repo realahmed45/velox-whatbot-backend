@@ -160,6 +160,18 @@ async function createBooking({
   logger.info(
     `[hotelBooking] created ws=${workspace._id} code=${booking.code} src=${source} ${label}`,
   );
+  {
+    const { notify, channelLabel } = require("../notificationService");
+    notify(workspace._id, {
+      type: "booking.new",
+      title: `New booking · ${booking.guestName || "Guest"}`,
+      body: `${roomType.name} · ${label}${total > 0 ? ` · ${currency} ${total}` : ""} · via ${channelLabel(source)}`,
+      link: `/dashboard/bookings?code=${booking.code}`,
+      channel: source,
+      priority: "high",
+      data: { bookingId: String(booking._id), code: booking.code },
+    });
+  }
   return { ok: true, booking, confirmationText };
 }
 
@@ -216,6 +228,7 @@ async function ingestOtaBooking({
   // findOneAndUpdate bypasses the pre("save") hook that generates `code`, so an
   // upserted OTA booking would be created with code:null — and the second one
   // would then collide on the unique index. Generate it here for inserts.
+  const before = await HotelBooking.findOne({ otaReservationId }).select("status").lean();
   const booking = await HotelBooking.findOneAndUpdate(
     { otaReservationId },
     {
@@ -226,6 +239,20 @@ async function ingestOtaBooking({
   );
 
   await afterBookingChange(property, roomType, booking, "ota_synced");
+  if (!before || (before.status !== status && status === "cancelled")) {
+    const { notify, channelLabel } = require("../notificationService");
+    const fmt = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const cancelled = status === "cancelled";
+    notify(property.workspaceId, {
+      type: cancelled ? "booking.cancelled" : "booking.new",
+      title: `${cancelled ? "Booking cancelled" : "New booking"} · ${guestName || "Guest"}`,
+      body: `${roomType.name} · ${fmt(from)} → ${fmt(to)} · via ${channelLabel(source)}`,
+      link: `/dashboard/bookings?code=${booking.code}`,
+      channel: source,
+      priority: cancelled ? "high" : "normal",
+      data: { bookingId: String(booking._id), code: booking.code },
+    });
+  }
   logger.info(
     `[hotelBooking] OTA ingest ws=${property.workspaceId} res=${otaReservationId} src=${source} status=${status}`,
   );

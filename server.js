@@ -183,6 +183,7 @@ app.use("/api/integrations", integrationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/hotel", hotelRoutes);
 app.use("/api/channels", channelRoutes);
+app.use("/api/notifications", require("./src/routes/notifications"));
 app.use("/api/consultants", consultantRoutes);
 app.use("/api/transfers", transferRoutes);
 app.use("/api/drivers", require("./src/routes/drivers"));
