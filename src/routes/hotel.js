@@ -21,6 +21,7 @@ const {
   listWubookSites,
   startWubookSite,
   checkWubookSites,
+  getEmailRelay,
   getConnection,
   refreshConnection,
   importByConnection,
@@ -57,6 +58,8 @@ router.post("/wubook/import", requireOwner, importWubookProperty);
 router.get("/wubook/sites", listWubookSites);
 router.post("/wubook/sites", requireOwner, startWubookSite);
 router.post("/wubook/sites/check", requireOwner, checkWubookSites);
+// Expedia / Trip.com guest messages via email relay: the hotel's address.
+router.get("/email-relay", getEmailRelay);
 
 // Zodomus (OTA): per-OTA connect, rooms mapped on connect
 router.get("/zodomus/channels", requireOwner, listZodomusChannels);

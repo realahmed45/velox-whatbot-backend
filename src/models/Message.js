@@ -93,6 +93,7 @@ const messageSchema = new mongoose.Schema(
         "booking_com",
         "airbnb",
         "expedia",
+        "trip_com",
       ],
       default: "instagram",
     },

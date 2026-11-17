@@ -380,6 +380,42 @@ const checkWubookSites = asyncHandler(async (req, res) => {
   res.json({ success: true, sites: property?.channel?.wubookOnboarding || [] });
 });
 
+// ─── Email relay (Expedia / Trip.com guest messages) ───────────────────────
+
+// @GET /api/hotel/email-relay → the hotel's inbound address + setup steps
+const getEmailRelay = asyncHandler(async (req, res) => {
+  const relay = require("../services/channels/emailRelayService");
+  if (!relay.isConfigured()) return res.json({ success: true, configured: false });
+  const property = await resolveProperty(req);
+  if (!property) return res.json({ success: true, configured: true, address: null });
+  const address = await relay.addressFor(property);
+  const Conversation = require("../models/Conversation");
+  const last = await Conversation.findOne({
+    workspaceId: req.workspace._id,
+    channelType: { $in: ["expedia", "trip_com"] },
+    "metadata.ota.provider": "email",
+  })
+    .sort({ lastMessageAt: -1 })
+    .select("channelType lastMessageAt")
+    .lean();
+  res.json({ success: true, configured: true, address, lastMessage: last || null });
+});
+
+// @POST /api/email/inbound?token=…  (public) — inbound email webhook (Brevo)
+const handleInboundEmail = asyncHandler(async (req, res) => {
+  const relay = require("../services/channels/emailRelayService");
+  if (!relay.verifyWebhookToken(req.query.token)) return res.sendStatus(401);
+  res.sendStatus(200); // ack fast
+  try {
+    const msgs = await relay.toOtaMessages(req.body || {});
+    const otaMessages = require("../services/hotel/otaMessageService");
+    for (const m of msgs) await otaMessages.ingest(m);
+    if (msgs.length) logger.info(`[EmailRelay] ${msgs.length} guest email(s) ingested`);
+  } catch (err) {
+    logger.error("[EmailRelay] inbound processing failed", { err: err.message });
+  }
+});
+
 // @POST /api/wubook/push?token=…  (public) — classic Wired push: {rcode, lcode}
 const handleWubookPush = asyncHandler(async (req, res) => {
   if (!wubookService.verifyWebhookToken(req.query.token)) return res.sendStatus(401);
@@ -1084,6 +1120,8 @@ module.exports = {
   listWubookSites,
   startWubookSite,
   checkWubookSites,
+  getEmailRelay,
+  handleInboundEmail,
   handleWubookPush,
   handleWubookWebhook,
   getConnection,

@@ -143,6 +143,7 @@ const CHANNEL_LABELS = {
   airbnb: "Airbnb guest inbox",
   booking_com: "Booking.com guest inbox",
   expedia: "Expedia guest inbox",
+  trip_com: "Trip.com guest inbox",
   messenger: "Facebook Messenger",
   telegram: "Telegram",
   web: "the hotel's website chat",
@@ -414,7 +415,7 @@ const buildSystemPrompt = (workspace, contact, extraContext, appointmentBlock, c
     contact?.igUsername || contact?.username || contact?.phone || "user";
   lines.push("", `Customer identifier: ${handle}`);
   lines.push(`Channel: ${channelLabel(channel)}`);
-  if (["airbnb", "booking_com", "expedia"].includes(channel)) {
+  if (["airbnb", "booking_com", "expedia", "trip_com"].includes(channel)) {
     lines.push(
       "",
       "BOOKING-SITE RULES (this guest is inside the booking site's own inbox — breaking these gets the hotel's listing penalised):",

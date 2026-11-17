@@ -90,6 +90,7 @@ const contactSchema = new mongoose.Schema(
         "booking_com",
         "airbnb",
         "expedia",
+        "trip_com",
         "manual",
         "import",
       ],

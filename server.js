@@ -224,6 +224,15 @@ app.post(
 );
 app.post("/api/wubook/webhook", require("./src/controllers/hotelController").handleWubookWebhook);
 
+// Public: inbound email (Brevo Inbound Parsing) — Expedia / Trip.com guest
+// messages through their email relays. Token-verified in the handler.
+app.post(
+  "/api/email/inbound",
+  express.json({ limit: "5mb" }),
+  express.urlencoded({ extended: true, limit: "5mb" }),
+  require("./src/controllers/hotelController").handleInboundEmail,
+);
+
 // Public: business-category picker list for onboarding.
 app.get("/api/verticals", require("./src/controllers/verticalController").listVerticals);
 

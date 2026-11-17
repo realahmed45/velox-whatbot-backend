@@ -28,7 +28,7 @@ const HotelBooking = require("../../models/HotelBooking");
 const Message = require("../../models/Message");
 const Conversation = require("../../models/Conversation");
 
-const OTA_CHANNELS = ["airbnb", "booking_com", "expedia"];
+const OTA_CHANNELS = ["airbnb", "booking_com", "expedia", "trip_com"];
 const isOtaChannel = (c) => OTA_CHANNELS.includes(c);
 
 const DRIVERS = {
@@ -36,6 +36,7 @@ const DRIVERS = {
   beds24: "../channels/beds24Service",
   zodomus: "../channels/zodomusService",
   wubook: "../channels/wubookService",
+  email: "../channels/emailRelayService",
 };
 
 function driver(name) {
@@ -65,6 +66,7 @@ async function findProperty(provider, providerPropertyId) {
   if (provider === "channex") return Property.findOne({ "channel.channexPropertyId": id });
   if (provider === "beds24") return Property.findOne({ "channel.beds24PropertyId": id });
   if (provider === "wubook") return Property.findOne({ "channel.wubookLcode": id });
+  if (provider === "email") return Property.findById(id).catch(() => null);
   if (provider === "zodomus") {
     return Property.findOne({ "channel.zodomus": { $elemMatch: { otaPropertyId: id } } });
   }
@@ -84,6 +86,7 @@ async function findBooking(property, msg) {
       { "otaRaw.id": ref },
       { "otaRaw.booking_id": ref },
       { otaReservationId: `wubook:${ref}` },
+      { guestEmail: { $regex: `^${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
       { "otaRaw.reservation_code": Number.isFinite(Number(ref)) ? Number(ref) : ref },
       { "otaRaw.channel_reservation_code": ref },
     ],
@@ -116,7 +119,7 @@ function bookingContext(booking, ota) {
 }
 
 const otaLabel = (ota) =>
-  ({ airbnb: "Airbnb", booking_com: "Booking.com", expedia: "Expedia" })[ota] || "booking site";
+  ({ airbnb: "Airbnb", booking_com: "Booking.com", expedia: "Expedia", trip_com: "Trip.com" })[ota] || "booking site";
 
 /**
  * Store one normalised message and, for a new guest message, hand it to the AI.
@@ -162,6 +165,7 @@ async function ingest(msg) {
     providerPropertyId: String(msg.providerPropertyId),
     propertyId: String(property._id),
     bookingId: booking?._id ? String(booking._id) : null,
+    ...(msg.subject ? { emailSubject: String(msg.subject).slice(0, 200) } : {}),
   };
 
   // Staff replies typed directly in the OTA extranet, and system notices:
@@ -212,7 +216,7 @@ async function send(conversation, text) {
   }
   const d = driver(ota.provider);
   if (!d) return { success: false, error: `Messaging via ${ota.provider} isn't available.` };
-  return d.send({ threadId: ota.threadId, bookingRef: ota.bookingRef, text });
+  return d.send({ threadId: ota.threadId, bookingRef: ota.bookingRef, text, conversation });
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────────

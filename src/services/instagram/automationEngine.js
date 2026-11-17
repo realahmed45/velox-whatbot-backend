@@ -263,6 +263,7 @@ const VALID_CONTACT_SOURCES = new Set([
   "booking_com",
   "airbnb",
   "expedia",
+  "trip_com",
   "manual",
   "import",
 ]);
@@ -408,7 +409,7 @@ const ridesChannelsArray = (channelType) =>
 
 // Booking-site guest inboxes (Airbnb, Booking.com, Expedia) reach us through
 // the channel manager, not workspace.channels — see services/hotel/otaMessageService.
-const OTA_CHANNEL_SET = new Set(["airbnb", "booking_com", "expedia"]);
+const OTA_CHANNEL_SET = new Set(["airbnb", "booking_com", "expedia", "trip_com"]);
 const isOtaChannel = (c) => OTA_CHANNEL_SET.has(c);
 
 const channelEntryConnected = (workspace, channelType) =>

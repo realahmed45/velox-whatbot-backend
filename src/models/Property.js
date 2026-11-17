@@ -226,6 +226,13 @@ const propertySchema = new mongoose.Schema(
       airportCode: { type: String, default: "DPS" }, // nearest airport (IATA)
     },
 
+    // Email relay for Expedia / Trip.com guest messages: the hotel's own
+    // inbound address (set once in their extranets). See emailRelayService.
+    emailRelay: {
+      token: { type: String, default: null, index: true },
+      address: { type: String, default: null },
+    },
+
     // ── Hotel services ──────────────────────────────────────────────────────
     // What the property offers beyond the room (massage, spa, airport pickup,
     // tours, laundry, restaurant…). Asked at onboarding, edited in Settings →
