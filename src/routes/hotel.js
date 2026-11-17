@@ -18,6 +18,9 @@ const {
   connectZodomusChannel,
   wubookStatus,
   importWubookProperty,
+  listWubookSites,
+  startWubookSite,
+  checkWubookSites,
   getConnection,
   refreshConnection,
   importByConnection,
@@ -50,6 +53,10 @@ router.post("/beds24/import", requireOwner, importBeds24Property);
 // WuBook (WooDoo) — the channel manager: import rooms + linked booking sites
 router.get("/wubook/status", wubookStatus);
 router.post("/wubook/import", requireOwner, importWubookProperty);
+// Zero-touch site onboarding: hotel enters its site's hotel ID, we do the rest.
+router.get("/wubook/sites", listWubookSites);
+router.post("/wubook/sites", requireOwner, startWubookSite);
+router.post("/wubook/sites/check", requireOwner, checkWubookSites);
 
 // Zodomus (OTA): per-OTA connect, rooms mapped on connect
 router.get("/zodomus/channels", requireOwner, listZodomusChannels);

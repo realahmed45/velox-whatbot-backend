@@ -500,7 +500,244 @@ function classifyWebhook(body = {}) {
   return { kind: "ignore" };
 }
 
+// ── Automatic site onboarding (hotelier enters only their site's hotel ID) ──
+//
+// Wired WooDoo functions (tdocs.wubook.net/wired/woodoo.html):
+//   get_channels_info(token)                         ctype catalogue (names)
+//   new_ota(token, lcode, ctype[, tag])              add a site → chid
+//   ota_running(token, lcode, chid)                  configured + active?
+//   bcom_start_procedure(token, lcode, chid, bhid)   start with Booking.com hotel id
+//   bcom_confirm_activation(token, lcode, chid)
+//   bcom_init_channel(token, lcode, chid, currency)
+//   bcom_rooms_rates(token, lcode, chid)             Booking.com rooms/rates to map
+//   bcom_set_room_mapping(token, lcode, chid, rmap)  {bcomRoomId: wubookRoomId}
+//   bcom_set_rate_mapping(token, lcode, chid, rmap)  {bcomRateId: pricingPlanId}
+//   exp_start_procedure / exp_init_channel(…, currency, fee, vat_taxes) /
+//   exp_rooms_rates / exp_set_room_mapping / exp_set_rate_mapping — same for Expedia
+//   new_room(token, lcode, woodoo, name, beds, defprice, avail, shortname, defboard)
+//
+// The ONE step no API can do: Booking.com and Expedia require the property
+// owner to approve the channel manager in their own extranet. We start the
+// procedure, tell the hotel exactly where to click, and a background job
+// (advanceOnboarding, every few minutes) finishes everything the moment the
+// approval lands: init → read rooms → create WuBook rooms → map rooms+rates →
+// mirror into Botlify → live. Airbnb has no Wired API connect function — the
+// host authorises Airbnb once (OAuth), so it is reported as "needs_host_login".
+//
+// State per site lives in property.channel.wubookOnboarding[]:
+//   { ota, otaHotelId, chid, state, message, updatedAt }
+//   state: starting → awaiting_approval → mapping → live | needs_host_login | error
+
+const OTA_CTYPE_NAMES = {
+  booking_com: /booking\.com|^booking$/i,
+  expedia: /expedia/i,
+  airbnb: /airbnb/i,
+  trip_com: /trip\.com|ctrip/i,
+};
+
+let ctypeCache = null;
+async function ctypeFor(ota) {
+  if (!ctypeCache) {
+    const info = (await wired("get_channels_info")) || {};
+    const rows = Array.isArray(info)
+      ? info
+      : Object.entries(info).map(([ctype, v]) => ({ ctype, ...(typeof v === "object" ? v : { name: v }) }));
+    ctypeCache = rows.map((r) => ({ ctype: Number(r.ctype ?? r.id), name: String(r.name || r.tag || "") }));
+  }
+  const re = OTA_CTYPE_NAMES[ota];
+  return ctypeCache.find((c) => re && re.test(c.name))?.ctype ?? null;
+}
+
+const APPROVAL_STEPS = {
+  booking_com:
+    "In your Booking.com extranet: Account → Connectivity provider → search “WuBook” → Connect, and accept. Botlify finishes the rest automatically.",
+  expedia:
+    "In Expedia Partner Central: Rooms and rates → Connectivity settings → choose “WuBook” as your provider. Botlify finishes the rest automatically.",
+  airbnb:
+    "Airbnb needs you to log in once to authorise the connection (Airbnb's security rule). We'll send you a secure link — no settings to change.",
+  trip_com:
+    "Trip.com connections are switched on by our team within a working day — nothing to do on your side.",
+};
+
+async function setOnboarding(propertyId, ota, patch) {
+  const prop = await Property.findById(propertyId);
+  const list = (prop.channel?.wubookOnboarding || []).filter((o) => o.ota !== ota);
+  const prev = (prop.channel?.wubookOnboarding || []).find((o) => o.ota === ota) || {};
+  list.push({ ...prev.toObject?.() ?? prev, ota, ...patch, updatedAt: new Date() });
+  await Property.updateOne({ _id: propertyId }, { $set: { "channel.wubookOnboarding": list } });
+  return list.find((o) => o.ota === ota);
+}
+
+/** WuBook short room name: ≤4 chars, unique per property. */
+function shortName(name, taken) {
+  const base = String(name || "RM").replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 3) || "RM";
+  for (let i = 0; i < 100; i++) {
+    const s = (i ? base.slice(0, 2) + String(i).padStart(2, "0") : base).slice(0, 4);
+    if (!taken.has(s)) {
+      taken.add(s);
+      return s;
+    }
+  }
+  return String(Date.now() % 10000);
+}
+
+const listRows = (r, ...keys) => {
+  if (Array.isArray(r)) return r;
+  for (const k of keys) {
+    const v = r?.[k];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") return Object.entries(v).map(([id, x]) => ({ id, ...(typeof x === "object" ? x : { name: x }) }));
+  }
+  if (r && typeof r === "object") return Object.entries(r).map(([id, x]) => ({ id, ...(typeof x === "object" ? x : { name: x }) }));
+  return [];
+};
+
+/**
+ * Start connecting one booking site. Only input from the hotel: the site's
+ * hotel/listing id. Returns the onboarding entry (state + what the hotel sees).
+ */
+async function startSiteConnection(property, { ota, otaHotelId }) {
+  const lcode = property.channel?.wubookLcode;
+  if (!lcode) throw Object.assign(new Error("Your channel account is being prepared — try again in a few minutes."), { status: 409 });
+  const id = String(otaHotelId || "").trim();
+
+  if (ota === "airbnb" || ota === "trip_com") {
+    return setOnboarding(property._id, ota, {
+      otaHotelId: id || null,
+      state: ota === "airbnb" ? "needs_host_login" : "awaiting_team",
+      message: APPROVAL_STEPS[ota],
+    });
+  }
+  if (!["booking_com", "expedia"].includes(ota)) {
+    throw Object.assign(new Error("Choose Booking.com, Expedia, Airbnb or Trip.com."), { status: 400 });
+  }
+  if (!/^\d{3,12}$/.test(id)) {
+    throw Object.assign(
+      new Error(ota === "booking_com" ? "Enter your Booking.com hotel ID (the number at the top of your extranet)." : "Enter your Expedia hotel ID."),
+      { status: 400 },
+    );
+  }
+
+  const existing = (property.channel?.wubookOnboarding || []).find((o) => o.ota === ota);
+  let chid = existing?.chid;
+  if (!chid) {
+    const ctype = await ctypeFor(ota);
+    if (!ctype) throw new Error(`WuBook doesn't offer ${ota} on this account`);
+    chid = String(await wired("new_ota", Number(lcode), ctype, `botlify-${ota}`));
+  }
+  await wired(ota === "booking_com" ? "bcom_start_procedure" : "exp_start_procedure", Number(lcode), Number(chid), Number(id));
+  logger.info(`[WuBook] ${ota} connection started lcode=${lcode} chid=${chid} hotel=${id}`);
+  return setOnboarding(property._id, ota, {
+    otaHotelId: id,
+    chid,
+    state: "awaiting_approval",
+    message: APPROVAL_STEPS[ota],
+  });
+}
+
+/** Map one approved Booking.com / Expedia site: init, rooms, rates, mirror. */
+async function completeMapping(property, entry) {
+  const lcode = Number(property.channel.wubookLcode);
+  const chid = Number(entry.chid);
+  const bcom = entry.ota === "booking_com";
+  const currency = property.currency || "USD";
+  if (bcom) await wired("bcom_init_channel", lcode, chid, currency);
+  else await wired("exp_init_channel", lcode, chid, currency, 0, 0);
+
+  const rr = await wired(bcom ? "bcom_rooms_rates" : "exp_rooms_rates", lcode, chid);
+  const otaRooms = listRows(rr, "rooms");
+  const otaRates = listRows(rr, "rates", "rateplans", "rate_plans");
+
+  // Reuse WuBook rooms with the same name (a second site of the same hotel
+  // maps onto the rooms the first site created), create the rest.
+  const wbRooms = ((await wired("fetch_rooms", lcode, 0)) || []).filter((r) => !Number(r.subroom));
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const taken = new Set(wbRooms.map((r) => r.shortname).filter(Boolean));
+  const roomMap = {};
+  for (const r of otaRooms) {
+    const otaId = String(r.id ?? r.room_id ?? r.roomid);
+    const name = r.name || r.room_name || r.title || `Room ${otaId}`;
+    let wb = wbRooms.find((x) => norm(x.name) === norm(name));
+    if (!wb) {
+      const beds = Math.max(1, Number(r.occupancy ?? r.max_occupancy ?? r.beds ?? 2) || 2);
+      const units = Math.max(1, Number(r.units ?? r.quantity ?? r.number_of_rooms ?? r.availability ?? 1) || 1);
+      const price = Math.max(1, Number(r.price ?? r.default_price ?? 100) || 100);
+      const newId = await wired("new_room", lcode, 0, String(name).slice(0, 100), beds, price, units, shortName(name, taken), "nb");
+      wb = { id: Number(Array.isArray(newId) ? newId[0] : newId), name };
+      wbRooms.push(wb);
+    }
+    roomMap[otaId] = Number(wb.id);
+  }
+  // Every OTA rate → WuBook Parity plan (pid 0), so one rate push reaches all.
+  const rateMap = {};
+  for (const rt of otaRates) rateMap[String(rt.id ?? rt.rate_id ?? rt.rateid)] = 0;
+  // Rates are sometimes nested under each room.
+  for (const r of otaRooms) for (const rt of listRows(r, "rates", "rateplans")) rateMap[String(rt.id ?? rt.rate_id)] = 0;
+
+  if (Object.keys(roomMap).length) {
+    await wired(bcom ? "bcom_set_room_mapping" : "exp_set_room_mapping", lcode, chid, roomMap);
+  }
+  if (Object.keys(rateMap).length) {
+    await wired(bcom ? "bcom_set_rate_mapping" : "exp_set_rate_mapping", lcode, chid, rateMap);
+  }
+  await importProperty(property.workspaceId, String(lcode), { name: property.name });
+  return { rooms: Object.keys(roomMap).length, rates: Object.keys(rateMap).length };
+}
+
+/**
+ * Background step: for every site waiting on the OTA's approval, check whether
+ * it has been approved; if so, finish the mapping. Safe to run repeatedly.
+ */
+async function advanceOnboarding() {
+  if (!isConfigured()) return { ok: false, reason: "not_configured" };
+  const props = await Property.find({ "channel.wubookOnboarding.state": { $in: ["awaiting_approval", "mapping"] } });
+  let advanced = 0;
+  for (const p of props) {
+    for (const entry of p.channel.wubookOnboarding.filter((o) => ["awaiting_approval", "mapping"].includes(o.state))) {
+      try {
+        if (entry.state === "awaiting_approval" && entry.ota === "booking_com") {
+          try {
+            await wired("bcom_confirm_activation", Number(p.channel.wubookLcode), Number(entry.chid));
+          } catch (err) {
+            // Not approved yet on Booking.com's side — keep waiting.
+            if (Date.now() - new Date(entry.updatedAt || 0).getTime() > 7 * 24 * 3600 * 1000) {
+              await setOnboarding(p._id, entry.ota, {
+                state: "awaiting_approval",
+                message: "Still waiting for your approval on Booking.com. " + APPROVAL_STEPS.booking_com,
+              });
+            }
+            continue;
+          }
+        }
+        await setOnboarding(p._id, entry.ota, { state: "mapping", message: "Approved — importing your rooms and rates…" });
+        const fresh = await Property.findById(p._id);
+        const r = await completeMapping(fresh, entry);
+        await setOnboarding(p._id, entry.ota, {
+          state: "live",
+          message: `Live — ${r.rooms} room type${r.rooms === 1 ? "" : "s"} synced. Guests on this site are now answered by your AI.`,
+        });
+        advanced++;
+        logger.info(`[WuBook] ${entry.ota} live lcode=${p.channel.wubookLcode} rooms=${r.rooms}`);
+      } catch (err) {
+        const pending = /not.*(active|approved|confirm)|pending|waiting/i.test(err.message);
+        if (pending) continue; // Expedia not approved yet
+        logger.warn(`[WuBook] onboarding ${entry.ota} failed lcode=${p.channel.wubookLcode}: ${err.message}`);
+        await setOnboarding(p._id, entry.ota, {
+          state: "error",
+          message: "We couldn't finish connecting this site automatically — our team has been notified and will fix it.",
+          error: err.message.slice(0, 300),
+        });
+      }
+    }
+  }
+  return { ok: true, advanced };
+}
+
 module.exports = {
+  startSiteConnection,
+  advanceOnboarding,
+  _completeMapping: completeMapping,
+  _shortName: shortName,
   isConfigured,
   messagingConfigured,
   messaging,

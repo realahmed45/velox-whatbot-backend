@@ -383,6 +383,14 @@ cron.schedule("*/2 * * * *", () => {
     .catch((e) => logger.warn("[Cron] wubook pollBookings error: " + e.message));
 });
 
+// WuBook: finish site connections as soon as the hotel approves on the OTA
+// (confirm → read rooms → create + map → import → live).
+cron.schedule("*/3 * * * *", () => {
+  require("./src/services/channels/wubookService")
+    .advanceOnboarding()
+    .catch((e) => logger.warn("[Cron] wubook advanceOnboarding error: " + e.message));
+});
+
 // Drain the Zodomus reservations queue every minute. Zodomus documents no
 // booking webhooks, so this poll IS the delivery path — keep it tight.
 const { pollZodomusBookings } = require("./src/jobs/zodomusPollJob");

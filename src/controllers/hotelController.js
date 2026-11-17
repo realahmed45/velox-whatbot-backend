@@ -305,6 +305,80 @@ const importWubookProperty = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Give the workspace's property a WuBook property code automatically, from the
+ * pool of empty WooDoo properties pre-created in our corporate account
+ * (WUBOOK_SPARE_LCODES="1001,1002,…"). WuBook's public API has no "create
+ * property" call; the pool keeps the hotelier's flow zero-touch.
+ */
+async function ensureWubookProperty(req) {
+  let property = await resolveProperty(req);
+  if (!property) {
+    property = await Property.create({ workspaceId: req.workspace._id, name: req.workspace.name || "My hotel" });
+  }
+  if (property.channel?.wubookLcode) return property;
+  const pool = String(process.env.WUBOOK_SPARE_LCODES || "")
+    .split(/[\s,]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const lcode of pool) {
+    // Atomic claim: only succeeds if no property holds this code yet.
+    const inUse = await Property.exists({ "channel.wubookLcode": lcode });
+    if (inUse) continue;
+    const claimed = await Property.findOneAndUpdate(
+      { _id: property._id, "channel.wubookLcode": null },
+      { $set: { "channel.wubookLcode": lcode, "channel.provider": "wubook", "channel.status": "pending" } },
+      { new: true },
+    );
+    if (claimed && (await Property.countDocuments({ "channel.wubookLcode": lcode })) === 1) {
+      logger.info(`[WuBook] lcode ${lcode} assigned to ws=${req.workspace._id}`);
+      const left = pool.length - (await Property.countDocuments({ "channel.wubookLcode": { $in: pool } }));
+      if (left <= 2) logger.warn(`[WuBook] only ${left} spare WuBook properties left — add more to WUBOOK_SPARE_LCODES`);
+      return claimed;
+    }
+    // Lost a race — release and try the next code.
+    await Property.updateOne({ _id: property._id }, { $set: { "channel.wubookLcode": null } });
+  }
+  return property; // no spare property: startSiteConnection explains it's being prepared
+}
+
+// @GET /api/hotel/wubook/sites → each site's connection progress
+const listWubookSites = asyncHandler(async (req, res) => {
+  const property = await resolveProperty(req);
+  res.json({
+    success: true,
+    configured: wubookService.isConfigured(),
+    lcode: property?.channel?.wubookLcode || null,
+    sites: property?.channel?.wubookOnboarding || [],
+  });
+});
+
+// @POST /api/hotel/wubook/sites  { ota, otaHotelId } — the hotelier's only input
+const startWubookSite = asyncHandler(async (req, res) => {
+  if (!wubookService.isConfigured()) {
+    res.status(503);
+    throw new Error("Channel sync is being switched on for your account — we'll email you.");
+  }
+  const property = await ensureWubookProperty(req);
+  try {
+    const site = await wubookService.startSiteConnection(property, req.body || {});
+    res.json({ success: true, site });
+  } catch (err) {
+    res.status(err.status || 400);
+    throw new Error(
+      err.status ? err.message : "WuBook couldn't start this connection. Check the hotel ID and try again.",
+    );
+  }
+});
+
+// @POST /api/hotel/wubook/sites/check — "I've approved it": finish now instead
+// of waiting for the background job.
+const checkWubookSites = asyncHandler(async (req, res) => {
+  await wubookService.advanceOnboarding();
+  const property = await resolveProperty(req);
+  res.json({ success: true, sites: property?.channel?.wubookOnboarding || [] });
+});
+
 // @POST /api/wubook/push?token=…  (public) — classic Wired push: {rcode, lcode}
 const handleWubookPush = asyncHandler(async (req, res) => {
   if (!wubookService.verifyWebhookToken(req.query.token)) return res.sendStatus(401);
@@ -1006,6 +1080,9 @@ module.exports = {
   connectZodomusChannel,
   wubookStatus,
   importWubookProperty,
+  listWubookSites,
+  startWubookSite,
+  checkWubookSites,
   handleWubookPush,
   handleWubookWebhook,
   getConnection,

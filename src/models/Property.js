@@ -106,6 +106,23 @@ const propertySchema = new mongoose.Schema(
       // the master inventory; each site's rooms are mapped to them in WooDoo.
       wubookLcode: { type: String, default: null, index: true },
       wubookPlanId: { type: Number, default: 0 }, // pricing plan we push to (0 = WuBook Parity)
+      // Automatic site onboarding (see wubookService.startSiteConnection).
+      wubookOnboarding: [
+        {
+          _id: false,
+          ota: { type: String, required: true },
+          otaHotelId: { type: String, default: null },
+          chid: { type: String, default: null },
+          state: {
+            type: String,
+            enum: ["starting", "awaiting_approval", "mapping", "live", "needs_host_login", "awaiting_team", "error"],
+            default: "starting",
+          },
+          message: { type: String, default: "" },
+          error: { type: String, default: null },
+          updatedAt: Date,
+        },
+      ],
       wubookChannels: [
         {
           _id: false,
