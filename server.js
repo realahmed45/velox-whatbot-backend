@@ -187,6 +187,7 @@ app.use("/api/notifications", require("./src/routes/notifications"));
 app.use("/api/consultants", consultantRoutes);
 app.use("/api/transfers", transferRoutes);
 app.use("/api/drivers", require("./src/routes/drivers"));
+app.use("/api/payments", require("./src/routes/payments"));
 // "Train your AI" — the hotel's Q&A knowledge base + a test sandbox.
 app.use("/api/training", require("./src/routes/training"));
 app.use("/api/pms", require("./src/routes/pms"));
@@ -345,6 +346,42 @@ cron.schedule("0 6 1 * *", () => {
   sendCommissionInvoices().catch((e) =>
     logger.warn("[Cron] sendCommissionInvoices error: " + e.message),
   );
+});
+
+// Pickups run themselves: next round of WhatsApp job offers, driver
+// reminders, auto-complete of finished trips. Every minute.
+cron.schedule("* * * * *", () => {
+  require("./src/services/transfers/autoDispatchService")
+    .tick()
+    .catch((e) => logger.warn("[Cron] dispatch tick error: " + e.message));
+});
+
+// Hotels finishing Xendit verification → flip them live. Hourly.
+cron.schedule("20 * * * *", async () => {
+  try {
+    const Workspace = require("./src/models/Workspace");
+    const { refreshWorkspace } = require("./src/controllers/paymentsController");
+    const pending = await Workspace.find({
+      "payments.accountId": { $ne: null },
+      "payments.accountStatus": { $nin: ["LIVE", "SUSPENDED"] },
+    }).limit(200);
+    for (const ws of pending) await refreshWorkspace(ws).catch(() => {});
+  } catch (e) {
+    logger.warn("[Cron] payments status sync error: " + e.message);
+  }
+});
+
+// Automatic payouts. Drivers daily 02:00 UTC (10:00 Bali); consultants on
+// the 5th at 03:00 UTC, after the month's revenue has settled.
+cron.schedule("0 2 * * *", () => {
+  require("./src/services/payments/payoutService")
+    .runPayouts("driver")
+    .catch((e) => logger.warn("[Cron] driver payouts error: " + e.message));
+});
+cron.schedule("0 3 5 * *", () => {
+  require("./src/services/payments/payoutService")
+    .runPayouts("consultant")
+    .catch((e) => logger.warn("[Cron] consultant payouts error: " + e.message));
 });
 
 // Nudge guests arriving in 2 days with the hotel's extras. 10:00 UTC daily.

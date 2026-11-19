@@ -150,12 +150,29 @@ async function createBooking({
 
   await afterBookingChange(property, roomType, booking, "created");
 
+  // Botlify Payments: guest-facing bookings get a payment link into the
+  // hotel's Xendit account (Botlify's commission split off automatically).
+  // No link (hotel not onboarded / pay-at-property) → unchanged behaviour.
+  let payment = null;
+  if (BOT_SOURCES.includes(source) && total > 0) {
+    try {
+      const { createStayPaymentLink } = require("../payments/paymentService");
+      payment = await createStayPaymentLink({ workspace, booking });
+    } catch (e) {
+      logger.warn("[hotelBooking] payment link failed", { err: e.message });
+    }
+  }
+
   const label = stayLabel(booking.checkIn, booking.checkOut, booking.nights);
+  const deposit = payment && payment.amount < total;
   const confirmationText =
     `You're booked! ✅ ${roomType.name} — ${label}` +
     (total > 0 ? `\n💰 Total: ${currency} ${total}` : "") +
     `\n🔖 Booking code: ${booking.code}` +
-    (property.address ? `\n📍 ${property.name}, ${property.address}` : "");
+    (property.address ? `\n📍 ${property.name}, ${property.address}` : "") +
+    (payment?.url
+      ? `\n💳 ${deposit ? `Pay the ${currency} ${payment.amount} deposit` : "Pay securely"} here (QRIS, bank transfer, e-wallet or card): ${payment.url}`
+      : "");
 
   logger.info(
     `[hotelBooking] created ws=${workspace._id} code=${booking.code} src=${source} ${label}`,
@@ -172,7 +189,7 @@ async function createBooking({
       data: { bookingId: String(booking._id), code: booking.code },
     });
   }
-  return { ok: true, booking, confirmationText };
+  return { ok: true, booking, payment, confirmationText };
 }
 
 /**

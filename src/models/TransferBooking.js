@@ -26,6 +26,9 @@ const transferBookingSchema = new mongoose.Schema(
       ref: "Conversation",
     },
 
+    // Short job reference drivers reply with on WhatsApp, e.g. "T4K9".
+    code: { type: String, index: true },
+
     direction: {
       type: String,
       enum: ["pickup", "dropoff"],
@@ -63,17 +66,48 @@ const transferBookingSchema = new mongoose.Schema(
       vehicleLabel: { type: String, default: "" },
     },
     dispatch: {
-      // searching : waiting for someone to assign a driver
+      // awaiting_payment : guest hasn't paid the link yet — no driver offered
+      // searching : waiting for a driver (offers going out on WhatsApp)
       // assigned  : a driver is on it, and the guest has their details
-      // (idle / exhausted are kept for records written before manual assignment)
+      // exhausted : every eligible driver was offered and none accepted —
+      //             a person must step in (team / hotel alerted)
       state: {
         type: String,
-        enum: ["idle", "searching", "assigned", "exhausted"],
+        enum: ["idle", "awaiting_payment", "searching", "assigned", "exhausted"],
         default: "idle",
         index: true,
       },
+      // Automatic WhatsApp offers: who was asked, when, and what they said.
+      round: { type: Number, default: 0 },
+      nextRoundAt: { type: Date, default: null, index: true },
+      offers: [
+        {
+          driverId: { type: mongoose.Schema.Types.ObjectId, ref: "Driver" },
+          at: { type: Date, default: Date.now },
+          response: { type: String, enum: ["none", "accepted", "declined", "late"], default: "none" },
+        },
+      ],
       lastError: { type: String, default: "" },
     },
+    // Reminders sent (so each goes out once).
+    reminders: {
+      driverDayBefore: Date,
+      driverSoon: Date,
+      guestSoon: Date,
+    },
+    completedAt: Date,
+    completedBy: { type: String, default: "" }, // "driver" | "auto" | "hotel" | "admin"
+
+    // ── Money ───────────────────────────────────────────────────────────────
+    paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
+    paymentStatus: {
+      type: String,
+      enum: ["not_required", "pending", "paid", "refunded"],
+      default: "not_required",
+    },
+    // What the Botlify driver is paid for this trip (platform transfers).
+    driverPayout: { type: Number, default: 0 },
+    driverEarningEntryId: { type: mongoose.Schema.Types.ObjectId, ref: "CommissionEntry" },
     // Mozio linkage
     mozioSearchId: { type: String, default: null },
     mozioReservationId: { type: String, default: null },
@@ -97,5 +131,18 @@ const transferBookingSchema = new mongoose.Schema(
 
 transferBookingSchema.index({ workspaceId: 1, pickupAt: -1 });
 transferBookingSchema.index({ provider: 1, status: 1, pickupAt: 1 });
+
+transferBookingSchema.pre("save", function (next) {
+  if (this.isNew && !this.code) {
+    this.code =
+      "T" +
+      Math.random()
+        .toString(36)
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 4);
+  }
+  next();
+});
 
 module.exports = mongoose.model("TransferBooking", transferBookingSchema);

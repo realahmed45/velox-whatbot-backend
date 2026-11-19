@@ -9,6 +9,7 @@
     "test": "node scripts/testZodomus.js && node scripts/testBookingEngine.js && node scripts/testRevenueEngine.js && node scripts/testOtaSync.js && node scripts/testOnePlace.js && node scripts/testChannelRouting.js && node scripts/testRateLimit.js && node scripts/testDriverDispatch.js && node scripts/testTraining.js && node scripts/testV2Flow.js && node scripts/testWhatsAppE2E.js && node scripts/testOtaMessaging.js && node scripts/testWhatsApp360.js && node scripts/testWhatsAppAisensy.js && node scripts/testWasender.js && node scripts/testWubook.js && node scripts/testWubookOnboarding.js && node scripts/testNotifications.js && node scripts/testEmailRelay.js",
     "test:booking": "node scripts/testBookingEngine.js",
     "test:revenue": "node scripts/testRevenueEngine.js",
+    "test:payments": "node scripts/testPaymentsAutomation.js",
     "test:flow": "node scripts/testV2Flow.js && node scripts/testWhatsAppE2E.js && node scripts/testOtaMessaging.js && node scripts/testWhatsApp360.js && node scripts/testWhatsAppAisensy.js && node scripts/testWasender.js && node scripts/testWubook.js && node scripts/testWubookOnboarding.js && node scripts/testNotifications.js && node scripts/testEmailRelay.js",
     "migrate:hotels": "node scripts/migrateToHotels.js",
     "test:ota": "node scripts/testOtaSync.js",

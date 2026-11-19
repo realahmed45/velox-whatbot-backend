@@ -88,10 +88,33 @@ const driverSchema = new mongoose.Schema(
       lastAcceptedAt: { type: Date, default: null },
     },
 
+    // ── Automatic payouts (Botlify drivers) ────────────────────────────────
+    // Where Xendit sends their earnings: any Indonesian bank or e-wallet.
+    payout: {
+      channelCode: { type: String, default: "" }, // ID_BCA, ID_MANDIRI, ID_GOPAY, ID_OVO, ID_DANA…
+      accountNumber: { type: String, default: "", trim: true },
+      accountHolderName: { type: String, default: "", trim: true },
+    },
+    // Lifetime earnings in the payout currency (denormalised for the admin list).
+    earnings: {
+      accrued: { type: Number, default: 0 },
+      paid: { type: Number, default: 0 },
+      currency: { type: String, default: "IDR" },
+    },
+
     notes: { type: String, default: "" },
   },
   { timestamps: true },
 );
+
+// Digits-only copy of the phone so a WhatsApp reply ("6281234…") finds its driver.
+driverSchema.add({ phoneDigits: { type: String, index: true } });
+driverSchema.pre("save", function (next) {
+  if (this.isModified("phone") || !this.phoneDigits) {
+    this.phoneDigits = String(this.phone || "").replace(/[^\d]/g, "");
+  }
+  next();
+});
 
 // The rotation's hot path: active drivers for a scope, best candidate first.
 driverSchema.index({ scope: 1, workspaceId: 1, active: 1, priority: 1 });

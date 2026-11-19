@@ -48,6 +48,16 @@ function pickDriverFields(body = {}) {
       ? body.serviceAreas.map((s) => String(s).trim()).filter(Boolean)
       : [];
   }
+  // findOneAndUpdate skips the model's save hook, so keep the lookup copy here.
+  if (out.phone !== undefined) out.phoneDigits = out.phone.replace(/[^\d]/g, "");
+  // Where automatic payouts go (Xendit channel code, e.g. ID_BCA / ID_GOPAY).
+  if (body.payout && typeof body.payout === "object") {
+    out.payout = {
+      channelCode: String(body.payout.channelCode || "").trim().toUpperCase().slice(0, 40),
+      accountNumber: String(body.payout.accountNumber || "").replace(/\s/g, "").slice(0, 40),
+      accountHolderName: String(body.payout.accountHolderName || "").trim().slice(0, 100),
+    };
+  }
   if (body.priority !== undefined) out.priority = Number(body.priority) || 100;
   if (body.active !== undefined) out.active = !!body.active;
   if (body.vehicle && typeof body.vehicle === "object") {

@@ -8,10 +8,16 @@ const mongoose = require("mongoose");
  *    bot-closed bookings) | "transfer_margin" (Mozio share).
  *
  *  kind "consultant_share": what a consultant earned from one revenue event
- *    (20% of the linked platform_revenue row). Lifecycle:
- *    accrued → verified (admin checked it) → paid (manual bank transfer done).
+ *    (20% of the linked platform_revenue row).
  *
- * Nothing here moves money; payouts are manual. The ledger is the audit trail.
+ *  kind "driver_earning": what a Botlify driver earned for one completed
+ *    pickup (revenueType "driver_fare").
+ *
+ * Lifecycle for shares/earnings: accrued → verified (eligible: the money was
+ * actually collected and the hold period passed — set automatically by
+ * payoutService, or by an admin) → processing (inside a Xendit payout) → paid.
+ * `collectedAt` on a platform_revenue row means Botlify actually received it
+ * (Creem charge, Xendit split settled, or an invoice the hotel paid).
  */
 const commissionEntrySchema = new mongoose.Schema(
   {
@@ -23,13 +29,13 @@ const commissionEntrySchema = new mongoose.Schema(
     },
     kind: {
       type: String,
-      enum: ["platform_revenue", "consultant_share"],
+      enum: ["platform_revenue", "consultant_share", "driver_earning"],
       required: true,
       index: true,
     },
     revenueType: {
       type: String,
-      enum: ["saas", "booking_commission", "transfer_margin"],
+      enum: ["saas", "booking_commission", "transfer_margin", "driver_fare"],
       required: true,
     },
     amount: { type: Number, required: true }, // USD-equivalent
@@ -47,6 +53,11 @@ const commissionEntrySchema = new mongoose.Schema(
       ref: "Consultant",
       index: true,
     },
+    driverId: { type: mongoose.Schema.Types.ObjectId, ref: "Driver", index: true },
+    paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
+    payoutId: { type: mongoose.Schema.Types.ObjectId, ref: "Payout" },
+    // platform_revenue only: when Botlify actually received the money.
+    collectedAt: { type: Date, default: null },
     // For consultant_share rows: the platform_revenue row it derives from.
     parentEntryId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -59,7 +70,7 @@ const commissionEntrySchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["accrued", "verified", "invoiced", "paid", "void"],
+      enum: ["accrued", "verified", "invoiced", "processing", "paid", "void"],
       default: "accrued",
       index: true,
     },

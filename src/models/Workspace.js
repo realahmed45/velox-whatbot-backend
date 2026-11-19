@@ -191,6 +191,23 @@ const workspaceSchema = new mongoose.Schema(
     ],
 
     // ── Consultant attribution (hotel product) ──────────────────────────────
+    // Botlify Payments (Xendit xenPlatform). The hotel is a MANAGED
+    // sub-account under Botlify's master account: guests pay into it through
+    // Botlify's payment links and Botlify's fee is split off automatically.
+    // accountStatus mirrors Xendit: INVITED → REGISTERED → AWAITING_DOCS → LIVE.
+    payments: {
+      provider: { type: String, default: null }, // "xendit"
+      accountId: { type: String, default: null },
+      accountStatus: { type: String, default: null },
+      email: { type: String, default: null },
+      // Ask guests to pay online when the AI books (false = pay at property).
+      collectOnline: { type: Boolean, default: true },
+      // Share of the room price taken online: 100 = full, 30 = 30% deposit.
+      depositPercent: { type: Number, default: 100 },
+      connectedAt: Date,
+      liveAt: Date,
+    },
+
     // Set once at onboarding when the hotel enters a consultant's referral
     // code. Drives the 20%-of-revenue share for CONSULTANT_SHARE_MONTHS.
     acquisition: {

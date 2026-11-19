@@ -109,8 +109,13 @@ const hotelBookingSchema = new mongoose.Schema(
       },
     },
 
-    // Payment tracking (informational for v1 — guest pays the hotel directly)
+    // Payment tracking. With Botlify Payments on, the guest pays a Xendit
+    // link (paymentId) and status flips to paid automatically; otherwise the
+    // guest pays the hotel directly and this is informational.
     payment: {
+      paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
+      linkUrl: { type: String, default: "" },
+      paidAt: Date,
       status: {
         type: String,
         enum: ["unpaid", "deposit", "paid", "refunded", "ota_collected"],

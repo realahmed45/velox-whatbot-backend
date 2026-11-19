@@ -187,10 +187,14 @@ const buildHotelBlock = async (workspace) => {
       "  • If the guest wants pickup, collect their flight number and arrival time.",
     );
   } else if (transfers.offerPartnerService) {
+    const { platformQuote } = require("../transfers/pricing");
+    const q = platformQuote(transfers.airportCode);
+    const fare = `${q.currency} ${Number(q.price).toLocaleString("en-US", { maximumFractionDigits: q.currency === "IDR" ? 0 : 2 })}`;
     out.push(
       "",
       "TRANSFERS:",
-      "  • We can arrange an airport transfer through a trusted partner. If the guest is interested, collect their flight number and arrival time and tell them we'll confirm the price.",
+      `  • We arrange private airport pickups and drop-offs with a vetted driver — ${fare} per car.`,
+      "  • If the guest wants one, collect their flight number, arrival (or departure) time and number of passengers. They get a secure payment link right after, and the driver's name and WhatsApp number once it's paid.",
     );
   }
 

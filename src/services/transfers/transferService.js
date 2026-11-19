@@ -2,11 +2,13 @@
  * transferService — arrange an airport pickup/drop-off for a guest.
  *
  * Decision tree (per property settings, see Property.transfers):
- *   1. Hotel runs its own service  → record it confirmed at their flat price.
- *   2. Partner service enabled + Mozio configured → search & book via Mozio;
- *      Botlify keeps MOZIO_MARGIN_RATE (default 8%) as transfer_margin revenue.
- *      Mozio failure still records a pending transfer so the hotel can step in.
- *   3. Neither → pending "hotel to arrange" record.
+ *   1. Hotel runs its own service → hotel's flat price, hotel's own drivers;
+ *      Botlify keeps TRANSFER_HOTEL_FEE_RATE via the payment split.
+ *   2. Otherwise → Botlify's driver pool at Botlify's fare (pricing.js);
+ *      the driver earns DRIVER_PAYOUT_RATE, Botlify keeps the rest.
+ *   Then: payment link (when Xendit is set up) → paid → drivers offered the job
+ *   on WhatsApp automatically (autoDispatchService).
+ *   (bookViaMozio below is kept for a future partner route; not on the main path.)
  *
  * Mirrors bookingService: persist first, then best-effort side effects
  * (socket, email, outbound webhooks) that never fail the transfer itself.
@@ -98,11 +100,11 @@ async function createTransfer({
 
   let doc;
 
-  // Drivers are assigned by hand. A hotel with its own service assigns one of
-  // its own drivers from the dashboard; a hotel without one is served by a
-  // Botlify driver, assigned by the Botlify team in /admin. Either way the
-  // pickup waits in "searching" (= awaiting a driver) until someone does, and
-  // the guest is sent the driver's details the moment it happens.
+  // Who drives: a hotel with its own service uses its own drivers; otherwise
+  // Botlify's driver pool. Either way the job is offered to drivers on
+  // WhatsApp automatically (autoDispatchService) — once the guest has paid
+  // when a payment link applies, straight away when it doesn't. Manual
+  // assignment from the dashboard / admin still works at any point.
   if (settings.hasOwnService) {
     doc = await TransferBooking.create({
       ...base,
@@ -114,10 +116,14 @@ async function createTransfer({
       dispatch: { state: "searching" },
     });
   } else {
+    const { platformQuote } = require("./pricing");
+    const quote = platformQuote(airportCode);
     doc = await TransferBooking.create({
       ...base,
       provider: "platform",
-      currency: property.currency || "USD",
+      price: quote.price,
+      currency: quote.currency,
+      driverPayout: quote.driverPayout,
       status: "pending",
       dispatch: { state: "searching" },
     });
@@ -125,6 +131,28 @@ async function createTransfer({
     notifyBotlifyTeam(property, doc).catch((err) =>
       logger.warn(`[transfer] team notice failed: ${err.message}`),
     );
+  }
+
+  // Online payment first when possible; otherwise dispatch immediately.
+  let payment = null;
+  try {
+    const { createTransferPaymentLink } = require("../payments/paymentService");
+    payment = doc.price > 0 ? await createTransferPaymentLink({ workspace, transfer: doc }) : null;
+  } catch (e) {
+    logger.warn(`[transfer] payment link failed: ${e.message}`);
+  }
+  if (payment) {
+    doc.paymentId = payment._id;
+    doc.paymentStatus = "pending";
+    doc.dispatch.state = "awaiting_payment";
+    await doc.save();
+  } else {
+    try {
+      const { startDispatch } = require("./autoDispatchService");
+      await startDispatch(doc);
+    } catch (e) {
+      logger.warn(`[transfer] auto-dispatch failed: ${e.message}`);
+    }
   }
 
   await afterTransferChange(workspace, property, doc, "created");
@@ -136,7 +164,17 @@ async function createTransfer({
   // finding someone we say exactly that rather than implying a car is booked.
   const dispatchState = doc.dispatch?.state;
   let confirmationText;
-  if (dispatchState === "assigned" && doc.driverSnapshot?.phone) {
+  const priceLabel = doc.price > 0
+    ? `${doc.currency} ${Number(doc.price).toLocaleString("en-US", { maximumFractionDigits: doc.currency === "IDR" ? 0 : 2 })}`
+    : "";
+  if (payment?.url) {
+    confirmationText =
+      `Your ${what} for ${label} is reserved ✈️ — ${priceLabel}.
+` +
+      `💳 Pay here to confirm (QRIS, bank transfer, e-wallet or card): ${payment.url}
+` +
+      `As soon as it's paid we'll assign your driver and send you their name and number. 🚗`;
+  } else if (dispatchState === "assigned" && doc.driverSnapshot?.phone) {
     const { guestHandoffText } = require("./dispatchService");
     confirmationText =
       `Your ${what} is set for ${label} ✈️ ` + guestHandoffText(doc);
@@ -156,7 +194,7 @@ async function createTransfer({
   logger.info(
     `[transfer] created ws=${workspace._id} provider=${doc.provider} status=${doc.status} dir=${direction}`,
   );
-  return { ok: true, transfer: doc, confirmationText };
+  return { ok: true, transfer: doc, payment, confirmationText };
 }
 
 /** Try search + book on Mozio; ALWAYS returns a persisted TransferBooking. */

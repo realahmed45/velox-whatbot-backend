@@ -466,6 +466,9 @@ async function markEntryPaid(entry, adminEmail, payoutReference) {
   entry.paidAt = new Date();
   entry.paidBy = adminEmail || "";
   entry.payoutReference = String(payoutReference || "").slice(0, 200);
+  // A hotel settling its commission invoice = Botlify received the money,
+  // which is what makes the consultant's share on it payable.
+  if (entry.kind === "platform_revenue" && !entry.collectedAt) entry.collectedAt = new Date();
   await entry.save();
   if (
     entry.kind === "consultant_share" &&

@@ -66,4 +66,45 @@ router.delete("/drivers/:id", deletePlatformDriver);
 router.get("/transfers", listPlatformTransfers);
 router.patch("/transfers/:id/driver", assignPlatformDriver);
 
+// Money: guest payments through Botlify + automatic payouts.
+router.get("/payments", async (req, res, next) => {
+  try {
+    const Payment = require("../models/Payment");
+    const payments = await Payment.find(req.query.status ? { status: req.query.status } : {})
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .populate("workspaceId", "name")
+      .lean();
+    const totals = await Payment.aggregate([
+      { $match: { status: "paid" } },
+      { $group: { _id: "$currency", volume: { $sum: "$amount" }, fees: { $sum: "$platformFee" }, count: { $sum: 1 } } },
+    ]);
+    res.json({ payments, totals });
+  } catch (e) {
+    next(e);
+  }
+});
+router.get("/payouts", async (req, res, next) => {
+  try {
+    const Payout = require("../models/Payout");
+    const filter = {};
+    if (req.query.type) filter.recipientType = req.query.type;
+    if (req.query.status) filter.status = req.query.status;
+    const payouts = await Payout.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ payouts });
+  } catch (e) {
+    next(e);
+  }
+});
+// Preview (dryRun) or run a payout batch now: { type: "driver"|"consultant", dryRun }
+router.post("/payouts/run", async (req, res, next) => {
+  try {
+    const type = req.body?.type === "consultant" ? "consultant" : "driver";
+    const { runPayouts } = require("../services/payments/payoutService");
+    res.json(await runPayouts(type, { dryRun: !!req.body?.dryRun }));
+  } catch (e) {
+    next(e);
+  }
+});
+
 module.exports = router;

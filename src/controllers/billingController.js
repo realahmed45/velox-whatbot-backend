@@ -1169,6 +1169,7 @@ const handleCreemWebhook = asyncHandler(async (req, res) => {
           amount: PLAN_USD_PRICES[plan]?.[cycle] || 0,
           currency: "USD",
           reference: `creem:${subId || obj.id || ""}`,
+          collected: true, // Creem has charged the card
         });
       } catch (e) {
         logger.warn("[Creem webhook] ledger record failed", { err: e.message });

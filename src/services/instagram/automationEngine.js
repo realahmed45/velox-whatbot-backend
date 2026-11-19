@@ -1279,6 +1279,10 @@ const handleAIReply = async (workspace, contact, conv, text, opts = {}) => {
               !(result.booking?.code && reply.includes(result.booking.code))
             ) {
               reply = `${reply}\n\n${result.confirmationText}`.trim();
+            } else if (result.payment?.url && !reply.includes(result.payment.url)) {
+              // The model echoed the code itself — still make sure the guest
+              // gets the payment link.
+              reply = `${reply}\n\n💳 Pay securely here: ${result.payment.url}`.trim();
             }
           } else {
             // Range fell through (taken/invalid) — tell the guest honestly
@@ -1334,12 +1338,17 @@ ${res.confirmationText}`.trim();
       if (transfer && transfer.pickupAt) {
         try {
           const { createTransfer } = require("../transfers/transferService");
-          await createTransfer({
+          const tr = await createTransfer({
             workspace,
             transfer,
             contact,
             conversation: conv,
           });
+          // Price + payment link (or "assigning your driver") always reaches
+          // the guest, whatever the model wrote.
+          if (tr?.ok && tr.confirmationText && !(tr.payment?.url && reply.includes(tr.payment.url))) {
+            reply = `${reply}\n\n${tr.confirmationText}`.trim();
+          }
         } catch (e) {
           logger.warn("[AI] transfer dispatch failed", { err: e.message });
         }

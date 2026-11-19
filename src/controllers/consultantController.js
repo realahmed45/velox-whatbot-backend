@@ -52,6 +52,7 @@ const apply = asyncHandler(async (req, res) => {
     country: String(b.country || "ID").slice(0, 10),
     city: String(b.city || "").slice(0, 100),
     payout: {
+      channelCode: String(b.payout?.channelCode || "").trim().toUpperCase().slice(0, 40),
       bankName: String(b.payout?.bankName || "").slice(0, 200),
       accountName: String(b.payout?.accountName || "").slice(0, 200),
       accountNumber: String(b.payout?.accountNumber || "").slice(0, 100),
@@ -170,6 +171,11 @@ const updateMe = asyncHandler(async (req, res) => {
       consultant.payout.accountNumber = String(p.accountNumber).slice(0, 100);
     if (p.notes != null)
       consultant.payout.notes = String(p.notes).slice(0, 1000);
+    // Automatic payouts: Xendit channel (ID_BCA, ID_MANDIRI, ID_GOPAY…).
+    if (p.channelCode != null)
+      consultant.payout.channelCode = String(p.channelCode).trim().toUpperCase().slice(0, 40);
+    if (p.currency != null && ["IDR", "USD"].includes(String(p.currency).toUpperCase()))
+      consultant.payout.currency = String(p.currency).toUpperCase();
   }
   await consultant.save();
 

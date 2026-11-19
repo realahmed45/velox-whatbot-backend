@@ -6,8 +6,8 @@
  * workspace was signed by an approved consultant within their revenue-share
  * window — a linked `consultant_share` entry at 20%.
  *
- * Payouts are MANUAL. Nothing here moves money; admin verifies entries and
- * marks them paid in the admin panel.
+ * Nothing here moves money. payoutService turns eligible consultant shares and
+ * driver earnings into automatic Xendit payouts.
  *
  * Currency note (v1): entries keep the source currency (IDR bookings stay
  * IDR). Consultant denormalized totals only accumulate USD entries; the admin
@@ -60,13 +60,19 @@ async function recordRevenue({
   sourceCurrency,
   bookingId,
   transferId,
+  paymentId,
   reference = "",
+  collected = false,
 }) {
   if (!workspaceId || !type) return null;
   if (!amount || amount <= 0) return null;
 
   const period = periodOf();
   const revenue = await CommissionEntry.create({
+    paymentId,
+    collectedAt: collected ? new Date() : null,
+    // Collected at source (Xendit split) = nothing left to invoice.
+    ...(collected && type !== "saas" ? { paidAt: new Date() } : {}),
     workspaceId,
     kind: "platform_revenue",
     revenueType: type,
@@ -79,7 +85,7 @@ async function recordRevenue({
     transferId,
     reference,
     period,
-    status: "accrued",
+    status: collected && type !== "saas" ? "paid" : "accrued",
   });
 
   // Consultant share (best-effort — a failure here must never block revenue).
@@ -148,4 +154,38 @@ async function voidRevenueEntry(entryId, reason = "") {
   }
 }
 
-module.exports = { recordRevenue, voidRevenueEntry, periodOf };
+/** Mark a revenue row as actually received (hotel paid an invoice, split settled…). */
+async function markCollected(entryId) {
+  if (!entryId) return;
+  await CommissionEntry.updateOne(
+    { _id: entryId, kind: "platform_revenue", collectedAt: null },
+    { $set: { collectedAt: new Date() } },
+  );
+}
+
+/**
+ * A Botlify driver finished a pickup: write what they earned. Idempotent per
+ * transfer — a second DONE message or the auto-complete sweep never pays twice.
+ */
+async function recordDriverEarning({ transfer, driverId, amount, currency }) {
+  if (!transfer || !driverId || !(amount > 0)) return null;
+  const existing = await CommissionEntry.findOne({ transferId: transfer._id, kind: "driver_earning" });
+  if (existing) return existing;
+  const entry = await CommissionEntry.create({
+    workspaceId: transfer.workspaceId,
+    kind: "driver_earning",
+    revenueType: "driver_fare",
+    amount,
+    currency: currency || transfer.currency || "IDR",
+    driverId,
+    transferId: transfer._id,
+    reference: transfer.code || String(transfer._id),
+    period: periodOf(),
+    status: "accrued",
+  });
+  const Driver = require("../models/Driver");
+  await Driver.updateOne({ _id: driverId }, { $inc: { "earnings.accrued": amount } });
+  return entry;
+}
+
+module.exports = { recordRevenue, voidRevenueEntry, markCollected, recordDriverEarning, periodOf };
